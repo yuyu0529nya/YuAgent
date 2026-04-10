@@ -1,35 +1,46 @@
 # YuAgent 部署说明
 
-本文档以当前 `YuAgent` 仓库的真实配置为准。
+本文档基于当前 `YuAgent` 仓库的实际部署方式整理，适用于本地开发、联调和快速演示环境。
 
-## 服务与端口
+## ✨ 部署概览
 
-- `yuagent-frontend`：`3000`
-- `yuagent-backend`：`8088`
-- `yuagent-postgres`：`5432`
-- `yuagent-rabbitmq`：`5672`
+YuAgent 当前采用 Docker Compose 统一拉起核心服务，默认可启动：
+
+- `yuagent-frontend`
+- `yuagent-backend`
+- `yuagent-postgres`
+- `yuagent-rabbitmq`
+- `yuagent-adminer`（开发模式）
+- `yuagent-api-gateway`
+
+## 🌐 服务与端口
+
+- 前端：`3000`
+- 后端：`8088`
+- PostgreSQL：`5432`
+- RabbitMQ：`5672`
 - RabbitMQ 管理台：`15672`
-- `yuagent-adminer`：`8082`
-- `yuagent-api-gateway`：`8081`
+- Adminer：`8082`
+- API Gateway：`8081`
 
-## 默认数据库参数
+## 🔐 默认账号
+
+- 管理员：`admin@yuagent.ai` / `admin123`
+- 测试用户：`test@yuagent.ai` / `test123`
+
+## 🗄️ 默认数据库参数
 
 - Database：`yuagent`
 - Username：`yuagent_user`
 - Password：`yuagent_pass`
 
-## 默认账号
+## ⚙️ 环境配置
 
-- 管理员：`admin@yuagent.ai` / `admin123`
-- 测试用户：`test@yuagent.ai` / `test123`
+当前开发环境默认读取：
 
-## 环境文件
+- [`deploy/.env`](./.env)
 
-当前开发环境直接使用：
-
-- [deploy/.env](/D:/yuagent/YuAgent/deploy/.env)
-
-关键配置如下：
+常用配置项如下：
 
 ```env
 FRONTEND_PORT=3000
@@ -41,7 +52,18 @@ DB_PASSWORD=yuagent_pass
 NEXT_PUBLIC_API_BASE_URL=http://localhost:8088/api
 ```
 
-## 启动方式
+如果你需要完整体验文件上传、OCR 和向量化链路，还需要额外确认对象存储相关配置，例如：
+
+- `FILE_STORAGE_PLATFORM`
+- `S3_ENABLED`
+- `S3_SECRET_ID`
+- `S3_SECRET_KEY`
+- `S3_REGION`
+- `S3_ENDPOINT`
+- `S3_BUCKET_NAME`
+- `OSS_*` 兼容配置
+
+## 🚀 启动方式
 
 ### 方式 1：Docker Compose
 
@@ -50,7 +72,7 @@ cd deploy
 docker compose --profile local --profile dev up -d --build
 ```
 
-### 方式 2：Windows 启动脚本
+### 方式 2：Windows 一键启动脚本
 
 ```bat
 cd deploy
@@ -64,9 +86,17 @@ cd deploy
 ./start.sh
 ```
 
-## 常用命令
+## 🔗 启动后访问地址
 
-查看状态：
+- 前端：[http://localhost:3000](http://localhost:3000)
+- 后端 API：[http://localhost:8088/api](http://localhost:8088/api)
+- Adminer：[http://localhost:8082](http://localhost:8082)
+- RabbitMQ 管理台：[http://localhost:15672](http://localhost:15672)
+- API Gateway：[http://localhost:8081](http://localhost:8081)
+
+## 🛠️ 常用命令
+
+查看容器状态：
 
 ```bash
 docker compose ps
@@ -92,7 +122,7 @@ docker compose up -d --build yuagent-backend
 docker compose down
 ```
 
-## 数据库连接
+## 🧪 数据库连接
 
 宿主机连接：
 
@@ -104,7 +134,7 @@ Username: yuagent_user
 Password: yuagent_pass
 ```
 
-命令行：
+命令行连接：
 
 ```bash
 psql -h 127.0.0.1 -p 5432 -U yuagent_user -d yuagent
@@ -116,60 +146,39 @@ psql -h 127.0.0.1 -p 5432 -U yuagent_user -d yuagent
 docker exec -it yuagent-postgres psql -U yuagent_user -d yuagent
 ```
 
-## 初始化与缺表说明
+## 📦 文件上传说明
 
-`postgres` 服务会把 [docs/sql/01_init.sql](/D:/yuagent/YuAgent/docs/sql/01_init.sql) 挂载到 `/docker-entrypoint-initdb.d/01_init.sql`。
+当前项目的上传链路依赖对象存储配置。
 
-但需要注意：
+如果对象存储配置不完整，前端上传时可能出现如下问题：
 
-- 该脚本只会在 PostgreSQL 数据目录首次初始化时执行
-- 如果你复用了旧 volume，新增表不会自动补齐
+- 生成上传凭证失败
+- 文件上传后无法进入后续 OCR / 向量化链路
 
-目前项目里已经遇到过老数据卷缺表的情况，典型缺失表包括：
+排查时优先确认：
 
-- `memory_items`
-- `agent_execution_summary`
-- `agent_execution_details`
+- 对象存储密钥是否正确
+- Endpoint 和 Bucket 是否可用
+- 后端环境变量是否已注入到容器
 
-如果页面提示 `relation does not exist`，优先做这两步：
+## 🔍 排障建议
 
-```bash
-docker exec yuagent-postgres psql -U yuagent_user -d yuagent -c "\dt"
-docker exec yuagent-postgres psql -U yuagent_user -d yuagent -c "\d memory_items"
-```
+后端接口异常优先查看：
 
-如果确认是老库缺表，可以手动执行 `01_init.sql` 中对应 DDL，或者清空数据卷后重新初始化。
+- [`deploy/logs/yu-agent.log`](./logs/yu-agent.log)
 
-## 文件上传说明
+数据库结构与初始化脚本查看：
 
-当前项目的上传链路依赖存储配置。`deploy/.env` 里默认启用了：
+- [`docs/sql/01_init.sql`](../docs/sql/01_init.sql)
 
-```env
-FILE_STORAGE_PLATFORM=amazon-s3-1
-S3_ENABLED=true
-```
-
-如果对象存储配置不完整，前端上传时可能出现“生成上传凭证失败”。排查时优先核对：
-
-- `S3_SECRET_ID`
-- `S3_SECRET_KEY`
-- `S3_REGION`
-- `S3_ENDPOINT`
-- `S3_BUCKET_NAME`
-- `OSS_*` 兼容配置
-
-## 排障建议
-
-后端接口异常先看：
-
-- [deploy/logs/yu-agent.log](/D:/yuagent/YuAgent/deploy/logs/yu-agent.log)
-
-数据库结构问题先看：
-
-- [docs/sql/01_init.sql](/D:/yuagent/YuAgent/docs/sql/01_init.sql)
-
-如果你正在核对运行中的容器，重点检查：
+如果你正在核对运行中的容器，优先检查：
 
 - `yuagent-backend`
 - `yuagent-postgres`
 - `yuagent-rabbitmq`
+
+## 📚 相关文档
+
+- [项目首页](../README.md)
+- [前端说明](../yuagent-frontend-plus/README.md)
+- [数据库初始化脚本](../docs/sql/01_init.sql)
