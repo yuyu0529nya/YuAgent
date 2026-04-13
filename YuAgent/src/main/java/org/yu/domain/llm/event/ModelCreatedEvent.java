@@ -1,0 +1,22 @@
+package org.yu.domain.llm.event;
+
+import org.yu.domain.llm.model.ModelEntity;
+
+/** 模型创建事件
+ * 
+ * @author yu
+ * @since 1.0.0 */
+public class ModelCreatedEvent extends ModelDomainEvent {
+
+    /** 模型实体 */
+    private final ModelEntity model;
+
+    public ModelCreatedEvent(String modelId, String userId, ModelEntity model) {
+        super(modelId, userId);
+        this.model = model;
+    }
+
+    public ModelEntity getModel() {
+        return model;
+    }
+}

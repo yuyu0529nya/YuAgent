@@ -50,4 +50,4 @@ NEXT_PUBLIC_API_BASE_URL=http://localhost:8088/api
 
 ## 说明
 
-当前这个前端项目已经对接 `YuAgent` 命名与服务配置，不再使用 `AgentX` 的项目名或默认接口地址。
+当前这个前端项目已经对接 `YuAgent` 命名与服务配置，不再使用旧项目名或默认接口地址。

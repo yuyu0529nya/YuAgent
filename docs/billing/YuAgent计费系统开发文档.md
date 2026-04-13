@@ -109,10 +109,10 @@ pricing_config   handler_key   具体算法类
 
 #### 4.1.1 包结构设计
 ```
-org.xhy.domain.billing.*      // 领域层
-org.xhy.application.billing.* // 应用层  
-org.xhy.infrastructure.billing.* // 基础设施层
-org.xhy.interfaces.billing.*  // 接口层
+org.yu.domain.billing.*      // 领域层
+org.yu.application.billing.* // 应用层  
+org.yu.infrastructure.billing.* // 基础设施层
+org.yu.interfaces.billing.*  // 接口层
 ```
 
 #### 4.1.2 依赖关系约束

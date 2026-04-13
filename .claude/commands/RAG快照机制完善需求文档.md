@@ -46,7 +46,7 @@ YuAgent的RAG（知识库）系统采用分层发布机制：
 
 ### 1. 数据模型扩展
 
-#### UserRagDTO (`/YuAgent/src/main/java/org/xhy/application/rag/dto/UserRagDTO.java`)
+#### UserRagDTO (`/YuAgent/src/main/java/org/yu/application/rag/dto/UserRagDTO.java`)
 **修改内容**：
 - 添加`installType`字段
 - 添加`isReferenceType()`和`isSnapshotType()`判断方法
@@ -58,14 +58,14 @@ YuAgent的RAG（知识库）系统采用分层发布机制：
 
 ### 2. 快照创建机制
 
-#### RagPublishAppService (`/YuAgent/src/main/java/org/xhy/application/rag/RagPublishAppService.java`)
+#### RagPublishAppService (`/YuAgent/src/main/java/org/yu/application/rag/RagPublishAppService.java`)
 **需要完善的功能**：
 - 发布版本时创建完整快照
 - 复制所有文件到`rag_version_files`表
 - 复制所有文档单元到`rag_version_documents`表
 - 复制相关配置和元数据
 
-#### RagVersionDomainService (`/YuAgent/src/main/java/org/xhy/domain/rag/service/RagVersionDomainService.java`)
+#### RagVersionDomainService (`/YuAgent/src/main/java/org/yu/domain/rag/service/RagVersionDomainService.java`)
 **需要添加的方法**：
 - `createCompleteSnapshot()` - 创建完整版本快照
 - `copyFilesToVersion()` - 复制文件快照
@@ -73,7 +73,7 @@ YuAgent的RAG（知识库）系统采用分层发布机制：
 
 ### 3. 快照安装机制
 
-#### UserRagDomainService (`/YuAgent/src/main/java/org/xhy/domain/rag/service/UserRagDomainService.java`)
+#### UserRagDomainService (`/YuAgent/src/main/java/org/yu/domain/rag/service/UserRagDomainService.java`)
 **需要完善的方法**：
 - `installRag()` - 安装SNAPSHOT类型时创建用户专属快照
 - 添加快照数据复制逻辑
@@ -86,7 +86,7 @@ YuAgent的RAG（知识库）系统采用分层发布机制：
 
 ### 4. 数据访问优化
 
-#### RagDataAccessService (`/YuAgent/src/main/java/org/xhy/domain/rag/service/RagDataAccessService.java`)
+#### RagDataAccessService (`/YuAgent/src/main/java/org/yu/domain/rag/service/RagDataAccessService.java`)
 **需要完善的方法**：
 ```java
 // 当前返回空列表，需要实现
@@ -101,12 +101,12 @@ private List<DocumentUnitEntity> getSnapshotDocumentsByOriginalFile(String versi
 
 ### 5. 数据转换逻辑修复
 
-#### UserRagAssembler (`/YuAgent/src/main/java/org/xhy/application/rag/assembler/UserRagAssembler.java`)
+#### UserRagAssembler (`/YuAgent/src/main/java/org/yu/application/rag/assembler/UserRagAssembler.java`)
 **需要添加的方法**：
 - `enrichWithReferenceInfo()` - 处理REFERENCE类型，获取原始RAG信息
 - `enrichWithSnapshotInfo()` - 处理SNAPSHOT类型，使用快照数据
 
-#### RagMarketAppService (`/YuAgent/src/main/java/org/xhy/application/rag/RagMarketAppService.java`)
+#### RagMarketAppService (`/YuAgent/src/main/java/org/yu/application/rag/RagMarketAppService.java`)
 **需要修改的方法**：
 - `getUserInstalledRags()` - 根据installType选择不同的数据丰富策略
 - `getInstalledRagDetail()` - 同样按类型处理

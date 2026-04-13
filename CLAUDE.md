@@ -105,8 +105,8 @@ setup_with_compose.bat   # Windows
 - ❌ **Domain → Application** (领域层禁止依赖应用层)
 
 **架构检查清单**：
-- 基础设施层类（`org.xhy.infrastructure.*`）不得import应用层类（`org.xhy.application.*`）
-- 领域层类（`org.xhy.domain.*`）不得import基础设施层或应用层类
+- 基础设施层类（`org.yu.infrastructure.*`）不得import应用层类（`org.yu.application.*`）
+- 领域层类（`org.yu.domain.*`）不得import基础设施层或应用层类
 - 违反此原则的代码必须立即重构
 
 **正确示例**：
@@ -173,8 +173,8 @@ public class MCPGatewayService {
 - **Required Imports**: 
   ```java
   import org.springframework.validation.annotation.Validated;
-  import org.xhy.infrastructure.auth.UserContext;
-  import org.xhy.interfaces.api.common.Result;
+  import org.yu.infrastructure.auth.UserContext;
+  import org.yu.interfaces.api.common.Result;
   ```
 - **User Context**: Always use `UserContext.getCurrentUserId()` for current user ID
 - **Method Structure**: Keep controllers thin, delegate to application services

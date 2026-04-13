@@ -171,7 +171,7 @@ CREATE TABLE IF NOT EXISTS public.memory_vector_store (
 
 ### 1) 配置与 Bean（第二个向量存储 Bean）
 - 新增配置前缀：`memory.embedding.vector-store.*`（与现有 `embedding.vector-store.*` 一致字段，单独指向记忆表）。
-- 新增类：`src/main/java/org/xhy/infrastructure/memory/config/MemoryEmbeddingConfig.java`
+- 新增类：`src/main/java/org/yu/infrastructure/memory/config/MemoryEmbeddingConfig.java`
   - 提供 Bean：`@Bean @Qualifier("memoryEmbeddingStore") EmbeddingStore<TextSegment>`
   - 构建方式与 `EmbeddingConfig.initEmbeddingStore()` 相同，但 `table` 使用 `memory.embedding.vector-store.table`（建议默认 `public.memory_vector_store`）。
 - 新增配置类：`MemoryEmbeddingProperties`（prefix=`memory.embedding`），字段同 `EmbeddingProperties`。
@@ -195,13 +195,13 @@ memory:
 说明：表结构由向量存储组件自动创建；本文件中的 `memory_vector_store` DDL 仅为语义说明。
 
 ### 2) 数据访问层（记忆条目）
-- 新增实体：`src/main/java/org/xhy/domain/memory/model/MemoryItemEntity.java`
+- 新增实体：`src/main/java/org/yu/domain/memory/model/MemoryItemEntity.java`
   - `@TableName("memory_items")`，字段对齐本文件定义（`id,userId,type,text,data,importance,tags,sourceSessionId,dedupeHash,status,createdAt,updatedAt`）。
-- 新增仓储：`src/main/java/org/xhy/domain/memory/repository/MemoryItemRepository.java`
+- 新增仓储：`src/main/java/org/yu/domain/memory/repository/MemoryItemRepository.java`
   - 继承 `MyBatisPlusExtRepository<MemoryItemEntity>`，提供 `selectByUserIdAndHash(...)` 等便捷方法。
 
 ### 3) 领域服务（存取与召回）
-- 新增：`src/main/java/org/xhy/domain/memory/service/MemoryDomainService.java`
+- 新增：`src/main/java/org/yu/domain/memory/service/MemoryDomainService.java`
   - 依赖：`MemoryItemRepository`、`@Qualifier("memoryEmbeddingStore") EmbeddingStore<TextSegment>`、`EmbeddingModelFactory`。
   - 方法：
     - `List<String> saveMemories(String userId, String sessionId, List<CandidateMemory> candidates)`
@@ -217,14 +217,14 @@ class MemoryResult { String itemId; String type; String text; Float importance; 
 ```
 
 ### 4) 抽取服务（对话后写入）
-- 新增：`src/main/java/org/xhy/domain/memory/service/MemoryExtractorService.java`
+- 新增：`src/main/java/org/yu/domain/memory/service/MemoryExtractorService.java`
   - 依赖：`LLMServiceFactory` + 用户默认模型（与 `ConversationAppService` 一致的选择策略）。
   - 方法：`List<CandidateMemory> extract(String userId, String sessionId, String userMsg, String aiMsg)`
   - 产出结构即 `CandidateMemory` 列表；空则返回 `[]`。
 
 ### 5) 对话流程的接入点
 - 读取注入（对话前）：
-  - 位置：`src/main/java/org/xhy/application/conversation/service/message/AbstractMessageHandler.java:477` 的 `buildHistoryMessage(...)`。
+  - 位置：`src/main/java/org/yu/application/conversation/service/message/AbstractMessageHandler.java:477` 的 `buildHistoryMessage(...)`。
   - 动作：在拼接系统提示词之前，调用 `memoryDomainService.searchRelevant(userId, userMessage, topK)`，将结果压缩为 3–6 条要点，合并到系统提示词中，或作为单独 `SystemMessage`（优先前者，减少消息数）。
 
 - 写入抽取（对话后）：
@@ -232,7 +232,7 @@ class MemoryResult { String itemId; String type; String text; Float importance; 
   - 动作：异步执行 `extract(...)` → `saveMemories(...)`，避免拉高对话延迟；失败不影响主流程。
 
 ### 6) 元数据与常量
-- 新增常量接口：`src/main/java/org/xhy/domain/memory/constant/MemoryMetadataConstant.java`
+- 新增常量接口：`src/main/java/org/yu/domain/memory/constant/MemoryMetadataConstant.java`
   - `USER_ID = "USER_ID"`、`ITEM_ID = "ITEM_ID"`、`MEMORY_TYPE = "MEMORY_TYPE"`、`TAGS = "TAGS"`。
   - 与 RAG 的 `MetadataConstant` 平行，避免混用。
 

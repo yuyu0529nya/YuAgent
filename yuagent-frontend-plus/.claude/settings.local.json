@@ -18,12 +18,12 @@
       "Bash(npm run build:*)",
       "Bash(npm install:*)",
       "Bash(npm uninstall:*)",
-      "Bash(/Users/xhy/course/YuAgent/YuAgent/mvn -f /Users/xhy/course/YuAgent/YuAgent/pom.xml clean compile)",
+      "Bash(/Users/yu/course/YuAgent/YuAgent/mvn -f /Users/yu/course/YuAgent/YuAgent/pom.xml clean compile)",
       "Bash(curl:*)",
       "Bash(docker exec:*)",
       "Bash(docker start:*)",
-      "Bash(/Users/xhy/course/YuAgent/YuAgent/mvn clean compile)",
-      "Bash(/Users/xhy/course/YuAgent/YuAgent/mvnw -f /Users/xhy/course/YuAgent/YuAgent/pom.xml clean compile)"
+      "Bash(/Users/yu/course/YuAgent/YuAgent/mvn clean compile)",
+      "Bash(/Users/yu/course/YuAgent/YuAgent/mvnw -f /Users/yu/course/YuAgent/YuAgent/pom.xml clean compile)"
     ],
     "deny": []
   }

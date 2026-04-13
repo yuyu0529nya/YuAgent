@@ -1,0 +1,48 @@
+package org.yu.application.conversation.service.message.agent;
+
+import dev.langchain4j.service.tool.ToolProvider;
+import org.springframework.stereotype.Component;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.yu.application.conversation.service.handler.context.ChatContext;
+import org.yu.application.conversation.service.message.AbstractMessageHandler;
+import org.yu.application.conversation.service.message.TracingMessageHandler;
+import org.yu.application.conversation.service.message.builtin.BuiltInToolRegistry;
+import org.yu.application.conversation.service.ChatSessionManager;
+import org.yu.application.trace.collector.TraceCollector;
+import org.yu.domain.conversation.service.MessageDomainService;
+import org.yu.domain.conversation.service.SessionDomainService;
+import org.yu.domain.llm.service.HighAvailabilityDomainService;
+import org.yu.domain.llm.service.LLMDomainService;
+import org.yu.domain.user.service.UserSettingsDomainService;
+import org.yu.infrastructure.llm.LLMServiceFactory;
+import org.yu.application.billing.service.BillingService;
+import org.yu.domain.user.service.AccountDomainService;
+
+/** Agent消息处理器 用于支持工具调用的对话模式 实现任务拆分、执行和结果汇总的工作流 使用事件驱动架构进行状态转换 */
+@Component(value = "agentMessageHandler")
+public class AgentMessageHandler extends TracingMessageHandler {
+
+    private static final Logger logger = LoggerFactory.getLogger(AgentMessageHandler.class);
+    private AgentToolManager agentToolManager;
+
+    public AgentMessageHandler(LLMServiceFactory llmServiceFactory, MessageDomainService messageDomainService,
+            HighAvailabilityDomainService highAvailabilityDomainService, SessionDomainService sessionDomainService,
+            UserSettingsDomainService userSettingsDomainService, LLMDomainService llmDomainService,
+            BuiltInToolRegistry builtInToolRegistry, BillingService billingService,
+            AccountDomainService accountDomainService, ChatSessionManager chatSessionManager,
+            TraceCollector traceCollector, AgentToolManager agentToolManager) {
+        super(llmServiceFactory, messageDomainService, highAvailabilityDomainService, sessionDomainService,
+                userSettingsDomainService, llmDomainService, builtInToolRegistry, billingService, accountDomainService,
+                chatSessionManager, traceCollector);
+        this.agentToolManager = agentToolManager;
+    }
+
+    @Override
+    protected ToolProvider provideTools(ChatContext chatContext) {
+        // 关键改造：传递用户ID给工具管理器
+        return agentToolManager.createToolProvider(agentToolManager.getAvailableTools(chatContext),
+                chatContext.getAgent().getToolPresetParams(), chatContext.getUserId() // 新增：传递用户ID
+        );
+    }
+}

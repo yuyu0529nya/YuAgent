@@ -107,7 +107,7 @@ public ProviderEntity findProvider(String providerId, String userId) {
 
 ## 7. 开发规范
 ### entity json字段处理
-entity 涉及到常量，json，需要使用对象进行包装，表字段通过 json 进行映射，并且通过 `org/xhy/infrastructure/converter`进行转换，还需要通过 `org/xhy/infrastructure/config/MyBatisTypeHandlerConfig.java` 进行注册
+entity 涉及到常量，json，需要使用对象进行包装，表字段通过 json 进行映射，并且通过 `org/yu/infrastructure/converter`进行转换，还需要通过 `org/yu/infrastructure/config/MyBatisTypeHandlerConfig.java` 进行注册
 
 
 
@@ -146,11 +146,11 @@ develop：开发版本（最新代码）
 ## 11.修订记录
 | 版本 | 日期 | 修改内容 | 修改人 |
 | --- | --- | --- | --- |
-| 1.0 | 2025-3-31 | 初始版本 | xhy |
-| 1.1 | 2025-4-03 | 添加开发规范 entity json字段处理 | xhy |
+| 1.0 | 2025-3-31 | 初始版本 | yu |
+| 1.1 | 2025-4-03 | 添加开发规范 entity json字段处理 | yu |
 | 1.1.2 | 2025-4-03 | 添加开发环境所需配置的环境变量 | liuscraft |
-| 1.1.3 | 2025-4-14 | 添加 entity 常量处理方式 |  xhy |
-| 1.1.4 | 2025-4-15 | 添加日志规范 | xhy |
+| 1.1.3 | 2025-4-14 | 添加 entity 常量处理方式 |  yu |
+| 1.1.4 | 2025-4-15 | 添加日志规范 | yu |
 
 
 本规范将随项目发展持续更新，所有开发人员有责任提出改进建议。

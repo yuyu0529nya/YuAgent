@@ -8,16 +8,16 @@ YuAgent平台的Docker容器管理系统，实现了用户隔离的MCP网关容�
 
 ### 核心组件
 
-1. **容器管理模块** (`org.xhy.domain.container`)
+1. **容器管理模块** (`org.yu.domain.container`)
    - 领域实体：`ContainerEntity` - 容器信息管理
    - 领域服务：`ContainerDomainService` - 容器生命周期管理
    - 仓储接口：`ContainerRepository` - 数据访问抽象
 
-2. **Docker服务** (`org.xhy.infrastructure.docker`)
+2. **Docker服务** (`org.yu.infrastructure.docker`)
    - `DockerService` - Docker容器操作封装
    - `PullImageResultCallback` - 镜像拉取回调
 
-3. **应用服务层** (`org.xhy.application.container`)
+3. **应用服务层** (`org.yu.application.container`)
    - `ContainerAppService` - 容器应用服务
    - `McpGatewayService` - MCP网关集成服务
    - `ContainerMonitorService` - 容器监控服务

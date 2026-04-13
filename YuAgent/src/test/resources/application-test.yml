@@ -13,7 +13,7 @@ spring:
 # MyBatis-Plus配置
 mybatis-plus:
   mapper-locations: classpath*:/mapper/**/*.xml
-  type-aliases-package: org.xhy.domain
+  type-aliases-package: org.yu.domain
   configuration:
     map-underscore-to-camel-case: true
     cache-enabled: false
@@ -26,7 +26,7 @@ mybatis-plus:
 logging:
   level:
     root: info
-    org.xhy: debug
+    org.yu: debug
 
 rag:
   markdown:

@@ -19,7 +19,7 @@
 - All‑in‑one (Docker): `cd deploy && ./start.sh` to spin up backend, frontend, DB, MQ.
 
 ## Coding Style & Naming Conventions
-- Java (backend): formatted via Spotless using `YuAgent/eclipse-formatter.xml`. 4‑space indent, PascalCase classes, camelCase methods/fields, packages start with `org.xhy.*`.
+- Java (backend): formatted via Spotless using `YuAgent/eclipse-formatter.xml`. 4‑space indent, PascalCase classes, camelCase methods/fields, packages start with `org.yu.*`.
 - TypeScript/React (frontend): 2‑space indent, React components PascalCase, files kebab‑case (e.g., `model-select-dialog.tsx`). Keep hooks in `hooks/`, UI in `components/`.
 - Run linters/formatters before pushing; keep functions small and cohesive.
 
