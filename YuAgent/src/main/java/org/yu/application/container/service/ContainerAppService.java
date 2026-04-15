@@ -1,6 +1,8 @@
 package org.yu.application.container.service;
 
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.yu.application.container.assembler.ContainerAssembler;
@@ -22,6 +24,7 @@ import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.util.List;
+import java.util.Objects;
 
 /** 容器应用服务 */
 @Service
@@ -73,6 +76,29 @@ public class ContainerAppService {
         return ContainerAssembler.toDTO(container);
     }
 
+    private ContainerEntity refreshContainerRuntimeInfo(ContainerEntity container, ContainerTemplate template) {
+        if (container == null || template == null || container.getDockerContainerId() == null
+                || container.getDockerContainerId().isBlank()) {
+            return container;
+        }
+
+        try {
+            DockerService.ContainerInfo containerInfo = dockerService.getContainerInfo(container.getDockerContainerId());
+            String actualIpAddress = extractIpAddress(containerInfo, template.getNetworkMode());
+            if (actualIpAddress != null && !Objects.equals(actualIpAddress, container.getIpAddress())) {
+                logger.info("Refreshing container runtime IP from Docker inspect: containerId={}, oldIp={}, newIp={}",
+                        container.getId(), container.getIpAddress(), actualIpAddress);
+                containerDomainService.updateContainerIpAddress(container.getId(), actualIpAddress, Operator.ADMIN);
+                container.setIpAddress(actualIpAddress);
+            }
+        } catch (Exception e) {
+            logger.warn("Failed to refresh container runtime info from Docker inspect: containerId={}",
+                    container != null ? container.getId() : null, e);
+        }
+
+        return container;
+    }
+
     /** 获取用户容器（自动创建和启动）
      *
      * @param userId 用户ID
@@ -87,6 +113,9 @@ public class ContainerAppService {
         }
 
         // 2. 检查容器健康状态并智能恢复
+        ContainerTemplate userTemplate = templateDomainService.getMcpGatewayTemplate().toContainerTemplate();
+        container = ensureUserContainerMatchesTemplate(container, userId);
+        container = refreshContainerRuntimeInfo(container, userTemplate);
         ContainerHealthCheckResult healthResult = checkContainerHealth(container);
         if (!healthResult.isHealthy()) {
             logger.info("用户容器不健康，尝试智能恢复: userId={}, issue={}", userId, healthResult.getMessage());
@@ -98,6 +127,7 @@ public class ContainerAppService {
 
                 // 重新获取最新状态
                 container = containerDomainService.findUserContainer(userId);
+                container = refreshContainerRuntimeInfo(container, userTemplate);
                 logger.info("用户容器恢复成功: userId={}, result={}", userId, recoveryResult.getMessage());
             } catch (Exception e) {
                 logger.error("用户容器智能恢复失败: userId={}, containerId={}", userId, container.getId(), e);
@@ -129,7 +159,8 @@ public class ContainerAppService {
         }
 
         // 2. 检查必要的网络信息是否存在
-        boolean hasNetworkInfo = container.getIpAddress() != null && container.getExternalPort() != null;
+        Integer healthCheckPort = resolveHealthCheckPort(container);
+        boolean hasNetworkInfo = container.getIpAddress() != null && healthCheckPort != null;
         if (!hasNetworkInfo) {
             return new ContainerHealthCheckResult(false,
                     "容器缺少网络信息: ip=" + container.getIpAddress() + ", port=" + container.getExternalPort(),
@@ -157,10 +188,10 @@ public class ContainerAppService {
 
         // 5. 检查网络连通性（可选，避免过于频繁的网络检查）
         boolean networkAccessible = dockerService.isContainerNetworkAccessible(container.getIpAddress(),
-                container.getExternalPort());
+                healthCheckPort);
         if (!networkAccessible) {
             logger.warn("容器网络连通性检查失败，但Docker容器运行正常: containerId={}, ip={}, port={}", container.getId(),
-                    container.getIpAddress(), container.getExternalPort());
+                    container.getIpAddress(), healthCheckPort);
             // 网络连通性问题不一定意味着容器不健康，可能是暂时的网络问题
         }
 
@@ -171,6 +202,21 @@ public class ContainerAppService {
     private boolean isContainerHealthy(ContainerEntity container) {
         ContainerHealthCheckResult result = checkContainerHealth(container);
         return result.isHealthy();
+    }
+
+    private Integer resolveHealthCheckPort(ContainerEntity container) {
+        if (container == null || container.getIpAddress() == null) {
+            return null;
+        }
+        if (isLocalAddress(container.getIpAddress())) {
+            return container.getExternalPort();
+        }
+        return container.getInternalPort();
+    }
+
+    private boolean isLocalAddress(String ipAddress) {
+        return "localhost".equalsIgnoreCase(ipAddress) || "host.docker.internal".equalsIgnoreCase(ipAddress)
+                || "127.0.0.1".equals(ipAddress) || "::1".equals(ipAddress) || "0:0:0:0:0:0:0:1".equals(ipAddress);
     }
 
     /** 检查用户容器状态（增强版健康检查）
@@ -428,6 +474,10 @@ public class ContainerAppService {
             // 获取容器IP地址
             DockerService.ContainerInfo containerInfo = dockerService.getContainerInfo(dockerContainerId);
             String ipAddress = extractIpAddress(containerInfo, template.getNetworkMode());
+            if ("bridge".equals(template.getNetworkMode())) {
+                ipAddress = "host.docker.internal";
+                logger.info("Using host.docker.internal for bridge container access: {}", container.getName());
+            }
 
             // 对于host网络模式，外部端口就是内部端口
             // TODO: 需要在ContainerDomainService中添加updateContainerExternalPort方法
@@ -516,6 +566,15 @@ public class ContainerAppService {
 
         // bridge网络模式返回localhost，通过端口映射访问
         if ("bridge".equals(networkMode)) {
+            if (containerInfo.getNetworkSettings() != null && containerInfo.getNetworkSettings().getNetworks() != null) {
+                String bridgeIpAddress = containerInfo.getNetworkSettings().getNetworks().values().stream()
+                        .map(network -> network.getIpAddress()).filter(ip -> ip != null && !ip.trim().isEmpty())
+                        .findFirst().orElse(null);
+                if (bridgeIpAddress != null) {
+                    logger.info("Resolved bridge container IP: {}", bridgeIpAddress);
+                    return bridgeIpAddress;
+                }
+            }
             logger.info("容器使用bridge网络模式，IP地址设为127.0.0.1（通过端口映射访问）");
             return "localhost";
         }
@@ -620,6 +679,7 @@ public class ContainerAppService {
         }
 
         // 检查审核容器健康状态并智能恢复
+        reviewContainer = ensureReviewContainerMatchesTemplate(reviewContainer);
         ContainerHealthCheckResult healthResult = checkContainerHealth(reviewContainer);
         if (!healthResult.isHealthy()) {
             logger.info("审核容器不健康，尝试智能恢复: issue={}", healthResult.getMessage());
@@ -954,6 +1014,115 @@ public class ContainerAppService {
     }
 
     /** 容器健康状态检查结果 */
+    private ContainerEntity ensureUserContainerMatchesTemplate(ContainerEntity container, String userId) {
+        ContainerTemplate template = templateDomainService.getMcpGatewayTemplate().toContainerTemplate();
+        return ensureContainerMatchesTemplate(container, template, false, userId);
+    }
+
+    private ContainerEntity ensureReviewContainerMatchesTemplate(ContainerEntity container) {
+        ContainerTemplate template = templateDomainService.getReviewContainerTemplate().toContainerTemplate();
+        return ensureContainerMatchesTemplate(container, template, true, null);
+    }
+
+    private ContainerEntity ensureContainerMatchesTemplate(ContainerEntity container, ContainerTemplate template,
+            boolean reviewContainer, String userId) {
+        if (container == null || template == null) {
+            return container;
+        }
+
+        if (!needsTemplateRefresh(container, template)) {
+            return container;
+        }
+
+        logger.warn("Detected legacy MCP gateway container runtime, refreshing. containerId={}, name={}, image={} -> {}",
+                container.getId(), container.getName(), container.getImage(), template.getImage());
+
+        safelyRemoveDockerContainer(container.getDockerContainerId());
+        String namedContainerId = dockerService.findContainerByName(container.getName());
+        if (namedContainerId != null && !Objects.equals(namedContainerId, container.getDockerContainerId())) {
+            safelyRemoveDockerContainer(namedContainerId);
+        }
+
+        containerDomainService.resetContainerRuntime(container.getId(), template.getImage(), template.getInternalPort(),
+                ContainerStatus.STOPPED, null);
+        ContainerEntity refreshedContainer = containerDomainService.getContainerById(container.getId());
+        ContainerRecoveryResult recoveryResult = reviewContainer ? recreateReviewContainer(refreshedContainer)
+                : recreateUserContainer(refreshedContainer, userId);
+        if (!recoveryResult.isSuccess()) {
+            throw new BusinessException("MCP网关容器升级失败: " + recoveryResult.getMessage());
+        }
+        return containerDomainService.getContainerById(container.getId());
+    }
+
+    private boolean needsTemplateRefresh(ContainerEntity container, ContainerTemplate template) {
+        return !Objects.equals(normalizeImageName(container.getImage()), normalizeImageName(template.getImage()))
+                || !Objects.equals(container.getInternalPort(), template.getInternalPort())
+                || !containerNetworkMatchesTemplate(container, template);
+    }
+
+    private boolean containerNetworkMatchesTemplate(ContainerEntity container, ContainerTemplate template) {
+        if (container == null || template == null || template.getNetworkMode() == null
+                || container.getDockerContainerId() == null || container.getDockerContainerId().isBlank()) {
+            return true;
+        }
+        try {
+            DockerService.ContainerInfo containerInfo = dockerService.getContainerInfo(container.getDockerContainerId());
+            return normalizeNetworkMode(containerInfo.getNetworkMode())
+                    .equals(normalizeNetworkMode(template.getNetworkMode()));
+        } catch (Exception e) {
+            logger.warn("Failed to inspect MCP gateway container network mode, forcing refresh. containerId={}",
+                    container.getId(), e);
+            return false;
+        }
+    }
+
+    private String normalizeImageName(String image) {
+        if (image == null) {
+            return null;
+        }
+        String normalized = image.trim().toLowerCase();
+        if (normalized.endsWith(":latest")) {
+            normalized = normalized.substring(0, normalized.length() - 7);
+        }
+        return normalized;
+    }
+
+    private String normalizeNetworkMode(String networkMode) {
+        if (networkMode == null) {
+            return "";
+        }
+        return networkMode.trim().toLowerCase();
+    }
+
+    private void safelyRemoveDockerContainer(String dockerContainerId) {
+        if (dockerContainerId == null || dockerContainerId.isBlank()) {
+            return;
+        }
+        try {
+            dockerService.removeContainer(dockerContainerId, true);
+        } catch (Exception e) {
+            logger.warn("Failed to remove legacy docker container during MCP gateway refresh: {}", dockerContainerId, e);
+        }
+    }
+
+    @EventListener(ApplicationReadyEvent.class)
+    public void reconcileMcpGatewayContainersOnStartup() {
+        try {
+            ContainerEntity reviewContainer = containerDomainService.findReviewContainer();
+            if (reviewContainer != null) {
+                ensureReviewContainerMatchesTemplate(reviewContainer);
+            }
+
+            for (ContainerEntity container : containerDomainService.findAllContainers()) {
+                if (ContainerType.USER.equals(container.getType()) && container.getUserId() != null) {
+                    ensureUserContainerMatchesTemplate(container, container.getUserId());
+                }
+            }
+        } catch (Exception e) {
+            logger.warn("Failed to reconcile MCP gateway containers on startup", e);
+        }
+    }
+
     public static class ContainerHealthStatus {
         private final boolean healthy;
         private final String message;

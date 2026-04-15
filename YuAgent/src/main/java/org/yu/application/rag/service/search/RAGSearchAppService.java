@@ -59,6 +59,8 @@ import java.util.concurrent.CompletableFuture;
 
 import java.util.List;
 import java.util.ArrayList;
+import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 @Service
@@ -168,7 +170,7 @@ public class RAGSearchAppService {
         List<DocumentUnitEntity> entities = hybridSearchDomainService.hybridSearch(config);
 
         // 转换为DTO并返回
-        return DocumentUnitAssembler.toDTOs(entities);
+        return toSearchResultDTOs(entities);
     }
 
     /** 基于已安装知识库的RAG搜索
@@ -239,7 +241,7 @@ public class RAGSearchAppService {
         }
 
         // 转换为DTO并返回
-        return DocumentUnitAssembler.toDTOs(entities);
+        return toSearchResultDTOs(entities);
     }
 
     /** 将ModelConfig转换为EmbeddingModelFactory.EmbeddingConfig
@@ -249,5 +251,18 @@ public class RAGSearchAppService {
     private EmbeddingModelFactory.EmbeddingConfig toEmbeddingConfig(ModelConfig modelConfig) {
         return new EmbeddingModelFactory.EmbeddingConfig(modelConfig.getApiKey(), modelConfig.getBaseUrl(),
                 modelConfig.getModelEndpoint());
+    }
+
+    private List<DocumentUnitDTO> toSearchResultDTOs(List<DocumentUnitEntity> entities) {
+        if (entities == null || entities.isEmpty()) {
+            return List.of();
+        }
+
+        Set<String> fileIds = entities.stream().map(DocumentUnitEntity::getFileId).filter(id -> id != null && !id.isBlank())
+                .collect(Collectors.toSet());
+        Map<String, String> fileNames = fileDetailDomainService.listFilesByIds(new ArrayList<>(fileIds)).stream()
+                .collect(Collectors.toMap(FileDetailEntity::getId, FileDetailEntity::getOriginalFilename,
+                        (left, right) -> left));
+        return DocumentUnitAssembler.toDTOs(entities, fileNames);
     }
 }

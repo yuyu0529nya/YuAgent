@@ -242,9 +242,12 @@ class HttpClient {
       
     } catch (error: any) {
       // 处理异常
+      const isAbortError =
+        error?.name === "AbortError" ||
+        String(error?.message || "").toLowerCase().includes("aborted");
       const errorResult = {
-        code: error.status || 500,
-        message: error.message || "未知错误",
+        code: isAbortError ? 408 : (error.status || 500),
+        message: isAbortError ? "请求超时，请稍后重试" : (error.message || "未知错误"),
         data: null,
         timestamp: Date.now(),
       };

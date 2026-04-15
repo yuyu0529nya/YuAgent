@@ -3,6 +3,8 @@ package org.yu.application.tool.service;
 import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.yu.application.container.service.ReviewContainerService;
 import org.yu.application.tool.service.state.AppToolStateProcessor;
@@ -26,9 +28,12 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
-/** 工具状态机应用服务 - 统一管理工具状态转换
- * 
- * 职责： 1. 管理需要外部依赖的状态处理器（如调用基础设施层服务） 2. 协调领域层状态机和应用层状态处理 3. 提供统一的状态转换入口 */
+/**
+ * Application-level tool state machine.
+ *
+ * <p>This layer coordinates processors that depend on infrastructure services and drives the
+ * end-to-end review/deploy/fetch workflow for uploaded MCP tools.
+ */
 @Service
 public class ToolStateStateMachineAppService {
 
@@ -38,32 +43,32 @@ public class ToolStateStateMachineAppService {
     private final MCPGatewayService mcpGatewayService;
     private final GitHubService gitHubService;
     private final ReviewContainerService reviewContainerService;
+    private final ObjectProvider<ToolAppService> toolAppServiceProvider;
 
     private final Map<ToolStatus, AppToolStateProcessor> appProcessorMap = new HashMap<>();
     private final ExecutorService executorService;
 
+    @Value("${tool.review.auto-approve:false}")
+    private boolean autoApproveManualReview;
+
     public ToolStateStateMachineAppService(ToolDomainService toolDomainService, MCPGatewayService mcpGatewayService,
-            GitHubService gitHubService, ReviewContainerService reviewContainerService) {
+            GitHubService gitHubService, ReviewContainerService reviewContainerService,
+            ObjectProvider<ToolAppService> toolAppServiceProvider) {
         this.toolDomainService = toolDomainService;
         this.mcpGatewayService = mcpGatewayService;
         this.gitHubService = gitHubService;
         this.reviewContainerService = reviewContainerService;
-
-        // 创建线程池用于异步状态处理
-        this.executorService = new ThreadPoolExecutor(5, // 核心线程数
-                10, // 最大线程数
-                60L, // 空闲线程存活时间
-                TimeUnit.SECONDS, new LinkedBlockingQueue<>(), r -> {
-                    Thread t = new Thread(r, "app-tool-state-processor-thread");
-                    t.setDaemon(true);
-                    return t;
+        this.toolAppServiceProvider = toolAppServiceProvider;
+        this.executorService = new ThreadPoolExecutor(5, 10, 60L, TimeUnit.SECONDS, new LinkedBlockingQueue<>(),
+                runnable -> {
+                    Thread thread = new Thread(runnable, "app-tool-state-processor-thread");
+                    thread.setDaemon(true);
+                    return thread;
                 }, new ThreadPoolExecutor.CallerRunsPolicy());
     }
 
-    /** 初始化应用层状态处理器 */
     @PostConstruct
     public void init() {
-        // 注册状态处理器（按状态流转顺序）
         registerAppProcessor(new AppWaitingReviewProcessor());
         registerAppProcessor(new AppGithubUrlValidateProcessor(gitHubService));
         registerAppProcessor(new AppDeployingProcessor(mcpGatewayService, reviewContainerService));
@@ -71,111 +76,104 @@ public class ToolStateStateMachineAppService {
         registerAppProcessor(new AppManualReviewProcessor());
         registerAppProcessor(new AppPublishingProcessor(gitHubService));
 
-        logger.info("工具状态处理器初始化完成，已注册 {} 个处理器。", appProcessorMap.size());
+        logger.info("Initialized {} app-level tool state processors", appProcessorMap.size());
     }
 
-    /** 注册应用层状态处理器
-     *
-     * @param processor 状态处理器 */
     private void registerAppProcessor(AppToolStateProcessor processor) {
-        if (appProcessorMap.containsKey(processor.getStatus())) {
-            logger.warn("状态 {} 的处理器已被覆盖。原处理器: {}, 新处理器: {}", processor.getStatus(),
-                    appProcessorMap.get(processor.getStatus()).getClass().getName(), processor.getClass().getName());
+        AppToolStateProcessor existing = appProcessorMap.put(processor.getStatus(), processor);
+        if (existing != null) {
+            logger.warn("Tool status processor overridden: status={}, old={}, new={}", processor.getStatus(),
+                    existing.getClass().getName(), processor.getClass().getName());
         }
-        appProcessorMap.put(processor.getStatus(), processor);
     }
 
-    /** 提交工具进行状态处理（统一入口）
-     *
-     * @param toolEntity 工具实体 */
     public void submitToolForProcessing(ToolEntity toolEntity) {
         if (toolEntity == null) {
-            throw new BusinessException("工具不存在");
+            throw new BusinessException("Tool does not exist");
         }
 
-        logger.info("提交工具ID: {} (当前状态: {}) 到状态处理队列。", toolEntity.getId(), toolEntity.getStatus());
+        logger.info("Queue tool state processing: toolId={}, status={}", toolEntity.getId(), toolEntity.getStatus());
         executorService.submit(() -> processToolState(toolEntity));
     }
 
-    /** 处理工具状态转换（核心逻辑）
-     *
-     * @param toolEntity 工具实体 */
     public void processToolState(ToolEntity toolEntity) {
-        final ToolStatus currentStatus = toolEntity.getStatus();
-
+        ToolStatus currentStatus = toolEntity.getStatus();
         AppToolStateProcessor appProcessor = appProcessorMap.get(currentStatus);
-
         if (appProcessor != null) {
             processProcessor(toolEntity, appProcessor);
         }
     }
 
-    /** 使用应用层处理器处理状态
-     *
-     * @param toolEntity 工具实体
-     * @param processor 应用层状态处理器 */
     private void processProcessor(ToolEntity toolEntity, AppToolStateProcessor processor) {
-        final ToolStatus initialStatus = toolEntity.getStatus();
-
-        logger.info("开始处理工具ID: {} 的状态: {}", toolEntity.getId(), initialStatus);
+        ToolStatus initialStatus = toolEntity.getStatus();
+        logger.info("Start processing tool state: toolId={}, status={}", toolEntity.getId(), initialStatus);
 
         try {
-            // 执行状态处理
             processor.process(toolEntity);
 
-            // 获取下一个状态
             ToolStatus nextStatus = processor.getNextStatus();
+            if (nextStatus == null || nextStatus == initialStatus) {
+                logger.info("Tool state processing finished without auto transition: toolId={}, status={}",
+                        toolEntity.getId(), initialStatus);
+                return;
+            }
 
-            if (nextStatus != null && nextStatus != initialStatus) {
-                // 更新状态并持久化
-                toolEntity.setStatus(nextStatus);
-                toolDomainService.updateToolEntity(toolEntity);
+            toolEntity.setStatus(nextStatus);
+            toolDomainService.updateToolEntity(toolEntity);
+            logger.info("Tool state transitioned: toolId={}, from={}, to={}", toolEntity.getId(), initialStatus,
+                    nextStatus);
 
-                logger.info("工具ID: {} 状态从 {} 更新为 {}。", toolEntity.getId(), initialStatus, nextStatus);
-
-                // 如果进入手动审核状态，暂停自动流转
-                if (nextStatus == ToolStatus.MANUAL_REVIEW) {
-                    logger.info("工具ID: {} 进入MANUAL_REVIEW状态，等待人工审核。", toolEntity.getId());
+            if (nextStatus == ToolStatus.MANUAL_REVIEW) {
+                if (autoApproveManualReview) {
+                    autoApproveTool(toolEntity);
                     return;
                 }
 
-                // 递归处理下一个状态
-                processToolState(toolEntity);
-            } else {
-                logger.info("工具ID: {} 在状态 {} 处理完成，没有自动的下一状态或状态未改变。", toolEntity.getId(), initialStatus);
+                logger.info("Tool entered manual review and is waiting for admin approval: toolId={}",
+                        toolEntity.getId());
+                return;
             }
-        } catch (Exception e) {
-            logger.error("处理工具ID: {} 的状态 {} 时发生错误: {}", toolEntity.getId(), initialStatus, e.getMessage(), e);
 
-            // 更新为失败状态
+            processToolState(toolEntity);
+        } catch (Exception e) {
+            logger.error("Tool state processing failed: toolId={}, status={}, error={}", toolEntity.getId(),
+                    initialStatus, e.getMessage(), e);
+
             toolEntity.setStatus(ToolStatus.FAILED);
             toolEntity.setFailedStepStatus(initialStatus);
             toolEntity.setRejectReason("状态处理失败: " + e.getMessage());
-
             toolDomainService.updateToolEntity(toolEntity);
-
-            logger.info("工具ID: {} 状态已更新为 {}，失败步骤: {}，原因: {}", toolEntity.getId(), toolEntity.getStatus(), initialStatus,
-                    e.getMessage());
         }
     }
 
-    /** 处理人工审核完成
-     *
-     * @param tool 工具实体
-     * @param approved 是否通过审核
-     * @return 工具ID */
+    public void autoApprovePendingManualReview(ToolEntity toolEntity) {
+        if (toolEntity == null) {
+            throw new BusinessException("Tool does not exist");
+        }
+        autoApproveTool(toolEntity);
+    }
+
+    private void autoApproveTool(ToolEntity toolEntity) {
+        logger.info("Auto-approving manual review for toolId={}", toolEntity.getId());
+        toolEntity.setStatus(ToolStatus.APPROVED);
+        toolDomainService.updateToolEntity(toolEntity);
+
+        ToolAppService toolAppService = toolAppServiceProvider.getIfAvailable();
+        if (toolAppService != null) {
+            toolAppService.autoInstallApprovedTool(toolEntity.getId());
+        }
+    }
+
     public String manualReviewComplete(ToolEntity tool, boolean approved) {
         String toolId = toolDomainService.manualReviewComplete(tool, approved);
 
         if (approved) {
-            logger.info("工具ID: {} 人工审核通过，状态更新为 APPROVED。", toolId);
-            // 继续状态处理流程
+            logger.info("Manual review approved: toolId={}", toolId);
             submitToolForProcessing(tool);
         } else {
-            logger.info("工具ID: {} 人工审核失败，状态更新为 FAILED。", toolId);
+            logger.info("Manual review rejected: toolId={}", toolId);
         }
 
         return toolId;
     }
-
 }

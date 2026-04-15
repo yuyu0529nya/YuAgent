@@ -115,7 +115,11 @@ public class MCPGatewayService {
                 if (statusCode >= 200 && statusCode < 300 && responseBody != null) {
                     Map result = JsonUtils.parseObject(responseBody, Map.class);
                     logger.info("部署响应: {}", result);
-                    return result.containsKey("success");
+                    Object successValue = result.get("success");
+                    if (successValue instanceof Boolean success) {
+                        return success;
+                    }
+                    return Boolean.parseBoolean(String.valueOf(successValue));
                 } else {
                     String errorMsg = String.format("工具部署失败，状态码: %d，响应: %s", statusCode, responseBody);
                     logger.error(errorMsg);
@@ -133,7 +137,7 @@ public class MCPGatewayService {
      * @return 工具定义列表
      * @throws BusinessException 如果API调用失败 */
     public List<ToolDefinition> listTools(String toolName) throws Exception {
-        String url = properties.getBaseUrl() + "/" + toolName + "/sse/sse?api_key=" + properties.getApiKey();
+        String url = properties.getBaseUrl() + "/" + toolName + "/sse?api_key=" + properties.getApiKey();
         HttpMcpTransport transport = new HttpMcpTransport.Builder().sseUrl(url).timeout(Duration.ofSeconds(10))
                 .logRequests(false).logResponses(true).build();
         McpClient client = new DefaultMcpClient.Builder().transport(transport).build();
@@ -157,7 +161,7 @@ public class MCPGatewayService {
      * @throws BusinessException 如果API调用失败 */
     public List<ToolDefinition> listToolsFromReviewContainer(String toolName, String containerIp, Integer containerPort)
             throws Exception {
-        String url = "http://" + containerIp + ":" + containerPort + "/" + toolName + "/sse/sse?api_key="
+        String url = "http://" + containerIp + ":" + containerPort + "/" + toolName + "/sse?api_key="
                 + properties.getApiKey();
 
         logger.info("从审核容器获取工具列表: {}", url);

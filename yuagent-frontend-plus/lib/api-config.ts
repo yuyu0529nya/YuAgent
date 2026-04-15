@@ -132,6 +132,7 @@ export const API_ENDPOINTS = {
   RAG_ALL_DATASETS: "/rag/datasets/all", // 获取所有数据集
   RAG_DATASET_DETAIL: (id: string) => `/rag/datasets/${id}`, // 获取数据集详情
   RAG_UPLOAD_FILE: "/rag/datasets/files", // 上传文件到数据集
+  RAG_IMPORT_FILE_BY_URL: "/rag/datasets/files/import-by-url", // 通过网络链接导入文件
   RAG_DATASET_FILES: (id: string) => `/rag/datasets/${id}/files`, // 分页查询数据集文件
   RAG_ALL_DATASET_FILES: (id: string) => `/rag/datasets/${id}/files/all`, // 获取数据集所有文件
   RAG_DATASET_FILE_DELETE: (datasetId: string, fileId: string) => `/rag/datasets/${datasetId}/files/${fileId}`, // 删除数据集文件

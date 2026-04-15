@@ -70,6 +70,7 @@ public abstract class AbstractMessageHandler {
 
     /** 连接超时时间（毫秒） */
     protected static final long CONNECTION_TIMEOUT = 3000000L;
+    private static final int CHAT_MEMORY_MAX_MESSAGES = 40;
 
     protected final LLMServiceFactory llmServiceFactory;
     protected final MessageDomainService messageDomainService;
@@ -462,7 +463,8 @@ public abstract class AbstractMessageHandler {
 
     /** 初始化内存 */
     protected MessageWindowChatMemory initMemory() {
-        return MessageWindowChatMemory.builder().maxMessages(1000).chatMemoryStore(new InMemoryChatMemoryStore())
+        return MessageWindowChatMemory.builder().maxMessages(CHAT_MEMORY_MAX_MESSAGES)
+                .chatMemoryStore(new InMemoryChatMemoryStore())
                 .build();
     }
 
@@ -471,7 +473,9 @@ public abstract class AbstractMessageHandler {
             ToolProvider toolProvider, AgentEntity agent) {
 
         // 通过内置工具注册器获取所有适用的内置工具
-        Map<ToolSpecification, ToolExecutor> builtInTools = builtInToolRegistry.createToolsForAgent(agent);
+        Map<ToolSpecification, ToolExecutor> builtInTools = shouldSkipBuiltInTools(memory)
+                ? Collections.emptyMap()
+                : builtInToolRegistry.createToolsForAgent(agent);
 
         AiServices<Agent> agentService = AiServices.builder(Agent.class).streamingChatModel(model).chatMemory(memory);
 
@@ -486,6 +490,36 @@ public abstract class AbstractMessageHandler {
         }
 
         return agentService.build();
+    }
+
+    private boolean shouldSkipBuiltInTools(MessageWindowChatMemory memory) {
+        try {
+            List<ChatMessage> messages = memory.messages();
+            if (messages == null || messages.isEmpty()) {
+                return false;
+            }
+            ChatMessage lastMessage = messages.get(messages.size() - 1);
+            if (!(lastMessage instanceof UserMessage userMessage)) {
+                return false;
+            }
+            String text = userMessage.singleText();
+            if (StringUtils.isBlank(text)) {
+                return false;
+            }
+            String normalized = text.trim().toLowerCase(Locale.ROOT);
+            if (normalized.length() <= 12
+                    && (normalized.contains("你好")
+                            || normalized.contains("您好")
+                            || normalized.contains("hello")
+                            || normalized.contains("hi")
+                            || normalized.contains("在吗")
+                            || normalized.contains("在不在"))) {
+                return true;
+            }
+            return normalized.matches("[0-9\\s+\\-*/().=？?]+");
+        } catch (Exception ignore) {
+            return false;
+        }
     }
 
     /** 创建用户消息实体 */

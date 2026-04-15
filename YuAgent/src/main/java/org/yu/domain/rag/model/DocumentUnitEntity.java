@@ -3,60 +3,42 @@ package org.yu.domain.rag.model;
 import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
+import com.baomidou.mybatisplus.annotation.TableName;
 import java.io.Serial;
 import java.io.Serializable;
-
 import org.yu.infrastructure.entity.BaseEntity;
 
-import com.baomidou.mybatisplus.annotation.TableName;
-
-/** @author shilong.zang
- * @date 20:24 <br/>
- */
 @TableName("document_unit")
 public class DocumentUnitEntity extends BaseEntity implements Serializable {
 
     @Serial
     private static final long serialVersionUID = 7001509997040094844L;
 
-    /** 主键 */
     @TableId(type = IdType.ASSIGN_UUID)
     private String id;
 
-    /** 文档ID */
     private String fileId;
 
-    /** 页码 */
     private Integer page;
 
-    /** 当前页内容 */
+    private Integer sourcePage;
+
+    private String titlePath;
+
+    private String segmentType;
+
+    private Integer segmentOrder;
+
+    private String metadataJson;
+
     private String content;
 
-    /** 是否进行向量化 */
     private Boolean isVector;
 
-    /** ocr识别状态 */
     private Boolean isOcr;
 
-    /** 相似度分数（非持久化字段，用于RAG搜索结果） */
     @TableField(exist = false)
     private Double similarityScore;
-
-    public Double getSimilarityScore() {
-        return similarityScore;
-    }
-
-    public void setSimilarityScore(Double similarityScore) {
-        this.similarityScore = similarityScore;
-    }
-
-    public Boolean getIsOcr() {
-        return isOcr;
-    }
-
-    public void setIsOcr(Boolean isOcr) {
-        this.isOcr = isOcr;
-    }
 
     public String getId() {
         return id;
@@ -82,6 +64,46 @@ public class DocumentUnitEntity extends BaseEntity implements Serializable {
         this.page = page;
     }
 
+    public Integer getSourcePage() {
+        return sourcePage;
+    }
+
+    public void setSourcePage(Integer sourcePage) {
+        this.sourcePage = sourcePage;
+    }
+
+    public String getTitlePath() {
+        return titlePath;
+    }
+
+    public void setTitlePath(String titlePath) {
+        this.titlePath = titlePath;
+    }
+
+    public String getSegmentType() {
+        return segmentType;
+    }
+
+    public void setSegmentType(String segmentType) {
+        this.segmentType = segmentType;
+    }
+
+    public Integer getSegmentOrder() {
+        return segmentOrder;
+    }
+
+    public void setSegmentOrder(Integer segmentOrder) {
+        this.segmentOrder = segmentOrder;
+    }
+
+    public String getMetadataJson() {
+        return metadataJson;
+    }
+
+    public void setMetadataJson(String metadataJson) {
+        this.metadataJson = metadataJson;
+    }
+
     public String getContent() {
         return content;
     }
@@ -96,5 +118,21 @@ public class DocumentUnitEntity extends BaseEntity implements Serializable {
 
     public void setIsVector(Boolean isVector) {
         this.isVector = isVector;
+    }
+
+    public Boolean getIsOcr() {
+        return isOcr;
+    }
+
+    public void setIsOcr(Boolean isOcr) {
+        this.isOcr = isOcr;
+    }
+
+    public Double getSimilarityScore() {
+        return similarityScore;
+    }
+
+    public void setSimilarityScore(Double similarityScore) {
+        this.similarityScore = similarityScore;
     }
 }

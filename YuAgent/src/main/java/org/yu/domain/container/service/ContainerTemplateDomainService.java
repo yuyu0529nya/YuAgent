@@ -5,6 +5,7 @@ import org.springframework.stereotype.Service;
 import org.yu.domain.container.constant.ContainerType;
 import org.yu.domain.container.model.ContainerTemplateEntity;
 import org.yu.domain.container.repository.ContainerTemplateRepository;
+import org.yu.infrastructure.config.ContainerConfig;
 import org.yu.infrastructure.entity.Operator;
 import org.yu.infrastructure.exception.BusinessException;
 
@@ -14,10 +15,22 @@ import java.util.List;
 @Service
 public class ContainerTemplateDomainService {
 
-    private final ContainerTemplateRepository templateRepository;
+    private static final String LEGACY_MCP_GATEWAY_IMAGE = "ghcr.io/lucky-aeon/mcp-gateway";
+    private static final String LEGACY_MCP_GATEWAY_IMAGE_WITH_TAG = "ghcr.io/lucky-aeon/mcp-gateway:latest";
+    private static final String LEGACY_MCP_GATEWAY_MIRROR_IMAGE = "ghcr.nju.edu.cn/lucky-aeon/mcp-gateway";
+    private static final String LEGACY_MCP_GATEWAY_MIRROR_IMAGE_WITH_TAG = "ghcr.nju.edu.cn/lucky-aeon/mcp-gateway:latest";
+    private static final String LEGACY_API_PREMIUM_GATEWAY_IMAGE = "ghcr.io/lucky-aeon/api-premium-gateway";
+    private static final String LEGACY_API_PREMIUM_GATEWAY_IMAGE_WITH_TAG = "ghcr.io/lucky-aeon/api-premium-gateway:latest";
+    private static final String DEFAULT_MCP_GATEWAY_IMAGE = "yuagent-mcp-gateway";
+    private static final String DEFAULT_MCP_GATEWAY_TAG = "latest";
+    private static final int DEFAULT_MCP_GATEWAY_PORT = 8080;
 
-    public ContainerTemplateDomainService(ContainerTemplateRepository templateRepository) {
+    private final ContainerTemplateRepository templateRepository;
+    private final ContainerConfig containerConfig;
+
+    public ContainerTemplateDomainService(ContainerTemplateRepository templateRepository, ContainerConfig containerConfig) {
         this.templateRepository = templateRepository;
+        this.containerConfig = containerConfig;
     }
 
     /** 创建容器模板
@@ -50,7 +63,7 @@ public class ContainerTemplateDomainService {
         }
 
         templateRepository.insert(template);
-        return template;
+        return normalizeMcpGatewayTemplate(template);
     }
 
     /** 更新容器模板
@@ -163,7 +176,7 @@ public class ContainerTemplateDomainService {
             // 如果没有配置默认模板，返回内置模板
             return createBuiltinMcpGatewayTemplate();
         }
-        return template;
+        return normalizeMcpGatewayTemplate(template);
     }
 
     /** 获取审核容器默认模板 */
@@ -173,7 +186,7 @@ public class ContainerTemplateDomainService {
             // 如果没有配置审核容器模板，返回内置模板
             return createBuiltinReviewContainerTemplate();
         }
-        return template;
+        return normalizeMcpGatewayTemplate(template);
     }
 
     /** 根据类型获取所有模板
@@ -296,13 +309,13 @@ public class ContainerTemplateDomainService {
         template.setName("MCP网关默认模板");
         template.setDescription("内置的MCP网关容器模板，用于用户容器创建");
         template.setType(ContainerType.USER);
-        template.setImage("ghcr.io/lucky-aeon/mcp-gateway");
-        template.setImageTag("latest");
-        template.setInternalPort(8080);
+        template.setImage(DEFAULT_MCP_GATEWAY_IMAGE);
+        template.setImageTag(DEFAULT_MCP_GATEWAY_TAG);
+        template.setInternalPort(DEFAULT_MCP_GATEWAY_PORT);
         template.setCpuLimit(1.0);
         template.setMemoryLimit(512);
         template.setVolumeMountPath("/app/data");
-        template.setNetworkMode("bridge");
+        template.setNetworkMode(containerConfig.getDefaultMcpGatewayNetworkMode());
         template.setRestartPolicy("unless-stopped");
         template.setEnabled(true);
         template.setIsDefault(true);
@@ -317,13 +330,13 @@ public class ContainerTemplateDomainService {
         template.setName("审核容器默认模板");
         template.setDescription("内置的审核容器模板，用于工具审核环境");
         template.setType(ContainerType.REVIEW);
-        template.setImage("ghcr.io/lucky-aeon/mcp-gateway");
-        template.setImageTag("latest");
-        template.setInternalPort(8080);
+        template.setImage(DEFAULT_MCP_GATEWAY_IMAGE);
+        template.setImageTag(DEFAULT_MCP_GATEWAY_TAG);
+        template.setInternalPort(DEFAULT_MCP_GATEWAY_PORT);
         template.setCpuLimit(1.0);
         template.setMemoryLimit(512);
         template.setVolumeMountPath("/app/data");
-        template.setNetworkMode("bridge");
+        template.setNetworkMode(containerConfig.getDefaultMcpGatewayNetworkMode());
         template.setRestartPolicy("unless-stopped");
         template.setEnabled(true);
         template.setIsDefault(true);
@@ -333,6 +346,27 @@ public class ContainerTemplateDomainService {
     }
 
     /** 模板统计信息内部类 */
+    private ContainerTemplateEntity normalizeMcpGatewayTemplate(ContainerTemplateEntity template) {
+        String fullImageName = template.getFullImageName();
+        boolean needsUpdate = LEGACY_MCP_GATEWAY_IMAGE.equalsIgnoreCase(template.getImage())
+                || LEGACY_MCP_GATEWAY_IMAGE_WITH_TAG.equalsIgnoreCase(fullImageName)
+                || LEGACY_MCP_GATEWAY_MIRROR_IMAGE.equalsIgnoreCase(template.getImage())
+                || LEGACY_MCP_GATEWAY_MIRROR_IMAGE_WITH_TAG.equalsIgnoreCase(fullImageName)
+                || LEGACY_API_PREMIUM_GATEWAY_IMAGE.equalsIgnoreCase(template.getImage())
+                || LEGACY_API_PREMIUM_GATEWAY_IMAGE_WITH_TAG.equalsIgnoreCase(fullImageName)
+                || !containerConfig.getDefaultMcpGatewayNetworkMode().equalsIgnoreCase(template.getNetworkMode());
+        if (!needsUpdate) {
+            return template;
+        }
+
+        template.setImage(DEFAULT_MCP_GATEWAY_IMAGE);
+        template.setImageTag(DEFAULT_MCP_GATEWAY_TAG);
+        template.setInternalPort(DEFAULT_MCP_GATEWAY_PORT);
+        template.setNetworkMode(containerConfig.getDefaultMcpGatewayNetworkMode());
+        templateRepository.updateById(template);
+        return template;
+    }
+
     public static class TemplateStatistics {
         private final long totalTemplates;
         private final long enabledTemplates;

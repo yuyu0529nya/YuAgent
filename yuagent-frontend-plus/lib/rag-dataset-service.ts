@@ -9,6 +9,7 @@ import type {
   QueryDatasetRequest,
   QueryDatasetFileRequest,
   UploadFileRequest,
+  ImportFileByUrlRequest,
   PageResponse,
   ApiResponse,
   ProcessFileRequest,
@@ -170,7 +171,8 @@ export async function uploadFile(datasetId: string, file: File): Promise<ApiResp
     
     const response = await httpClient.post<ApiResponse<FileDetail>>(
       API_ENDPOINTS.RAG_UPLOAD_FILE,
-      formData
+      formData,
+      { timeout: 5 * 60 * 1000 }
     )
     
     return response
@@ -276,6 +278,45 @@ export async function processFile(request: ProcessFileRequest): Promise<ApiRespo
     return {
       code: 500,
       message: error instanceof Error ? error.message : "未知错误",
+      data: undefined as unknown as void,
+      timestamp: Date.now(),
+    }
+  }
+}
+
+export async function importFileByUrl(request: ImportFileByUrlRequest): Promise<ApiResponse<FileDetail>> {
+  try {
+    const response = await httpClient.post<ApiResponse<FileDetail>>(
+      API_ENDPOINTS.RAG_IMPORT_FILE_BY_URL,
+      request,
+      { timeout: 2 * 60 * 1000 }
+    )
+
+    return response
+  } catch (error) {
+    return {
+      code: 500,
+      message: error instanceof Error ? error.message : "未知错误",
+      data: null as unknown as FileDetail,
+      timestamp: Date.now(),
+    }
+  }
+}
+
+export async function reprocessFile(request: ProcessFileRequest): Promise<ApiResponse<void>> {
+  try {
+
+    const response = await httpClient.post<ApiResponse<void>>(
+      "/rag/datasets/files/reprocess",
+      request
+    )
+
+    return response
+  } catch (error) {
+
+    return {
+      code: 500,
+      message: error instanceof Error ? error.message : "éˆî†ç…¡é–¿æ¬’î‡¤",
       data: undefined as unknown as void,
       timestamp: Date.now(),
     }
@@ -426,6 +467,11 @@ export const processFileWithToast = withToast(processFile, {
   errorTitle: "启动文件预处理失败"
 })
 
+export const reprocessFileWithToast = withToast(reprocessFile, {
+  successTitle: "é‡è¯•å¤„ç†å·²å¯åŠ¨",
+  errorTitle: "é‡è¯•å¤„ç†å¤±è´¥"
+})
+
 export const getFileProgressWithToast = withToast(getFileProgress, {
   showSuccessToast: false,
   errorTitle: "获取文件处理进度失败"
@@ -433,6 +479,7 @@ export const getFileProgressWithToast = withToast(getFileProgress, {
 
 export const getDatasetFilesProgressWithToast = withToast(getDatasetFilesProgress, {
   showSuccessToast: false,
+  showErrorToast: false,
   errorTitle: "获取数据集文件处理进度失败"
 })
 

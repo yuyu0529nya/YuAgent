@@ -412,4 +412,20 @@ public class ContainerDomainService {
             return runningContainers;
         }
     }
+    /** 鏍规嵁鏂版ā鏉块噸缃鍣ㄨ繍琛岄厤缃?*/
+    public void resetContainerRuntime(String containerId, String image, Integer internalPort, ContainerStatus status,
+            String errorMessage) {
+        ContainerEntity container = containerRepository.selectById(containerId);
+        if (container == null) {
+            throw new BusinessException("瀹瑰櫒涓嶅瓨鍦?");
+        }
+
+        container.setImage(image);
+        container.setInternalPort(internalPort);
+        container.setStatus(status);
+        container.setDockerContainerId(null);
+        container.setIpAddress(null);
+        container.setErrorMessage(errorMessage);
+        containerRepository.updateById(container);
+    }
 }

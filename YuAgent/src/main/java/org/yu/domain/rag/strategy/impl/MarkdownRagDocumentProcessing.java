@@ -6,13 +6,16 @@ import org.dromara.x.file.storage.core.FileStorageService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
 import org.yu.domain.rag.message.RagDocMessage;
 import org.yu.domain.rag.model.DocumentUnitEntity;
 import org.yu.domain.rag.model.FileDetailEntity;
 import org.yu.domain.rag.model.ProcessedSegment;
+import org.yu.domain.rag.model.enums.SegmentType;
 import org.yu.domain.rag.repository.DocumentUnitRepository;
 import org.yu.domain.rag.repository.FileDetailRepository;
 import org.yu.domain.rag.strategy.context.ProcessingContext;
+import org.yu.infrastructure.rag.processor.DocumentUnitMetadataSupport;
 import org.yu.infrastructure.rag.processor.StructuralMarkdownProcessor;
 import org.yu.infrastructure.rag.processor.DocumentVectorizationOrchestrator;
 import org.yu.infrastructure.rag.service.UserModelConfigResolver;
@@ -188,6 +191,12 @@ public class MarkdownRagDocumentProcessing extends AbstractDocumentProcessingStr
                 documentUnitEntity.setIsOcr(false);
                 log.warn("段落 {} 为空", pageIndex + 1);
             }
+
+            String titlePath = DocumentUnitMetadataSupport.inferTitlePath(content);
+            ProcessedSegment persistedSegment = new ProcessedSegment(content,
+                    StringUtils.hasText(titlePath) ? SegmentType.SECTION : SegmentType.TEXT, null);
+            persistedSegment.setOrder(pageIndex);
+            DocumentUnitMetadataSupport.apply(documentUnitEntity, persistedSegment, pageIndex);
 
             // 保存到数据库
             documentUnitRepository.checkInsert(documentUnitEntity);

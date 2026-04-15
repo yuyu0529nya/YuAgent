@@ -98,12 +98,13 @@ public class ContainerTemplate {
     /** 获取默认的MCP网关容器模板 */
     public static ContainerTemplate getDefaultMcpGatewayTemplate() {
         ContainerTemplate template = new ContainerTemplate();
-        template.setImage("ghcr.io/lucky-aeon/mcp-gateway:latest");
+        template.setImage("yuagent-mcp-gateway:latest");
         template.setInternalPort(8080);
         template.setCpuLimit(1.0);
         template.setMemoryLimit(512);
         template.setVolumeMountPath("/app/data");
-        template.setNetworkMode("bridge");
+        template.setNetworkMode(System.getenv().getOrDefault("YUAGENT_CONTAINER_DEFAULT_MCP_NETWORK",
+                "yuagent_yuagent-network"));
         template.setRestartPolicy("unless-stopped");
         return template;
     }

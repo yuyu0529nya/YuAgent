@@ -43,8 +43,8 @@ public class DocumentUnitDomainService {
             wrapper.like(DocumentUnitEntity::getContent, keyword);
         }
 
-        // 按页码排序
-        wrapper.orderByAsc(DocumentUnitEntity::getPage);
+        // 按页码和段落顺序排序
+        wrapper.orderByAsc(DocumentUnitEntity::getPage).orderByAsc(DocumentUnitEntity::getSegmentOrder);
 
         Page<DocumentUnitEntity> pageParam = new Page<>(page, pageSize);
         return documentUnitRepository.selectPage(pageParam, wrapper);

@@ -1,193 +1,290 @@
 package org.yu.domain.rag.strategy.impl;
 
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import jakarta.annotation.Resource;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-
-import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
-import com.baomidou.mybatisplus.core.toolkit.Wrappers;
-import org.dromara.streamquery.stream.core.stream.Steam;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
+import org.apache.poi.hwpf.HWPFDocument;
+import org.apache.poi.hwpf.extractor.WordExtractor;
+import org.apache.poi.xwpf.extractor.XWPFWordExtractor;
+import org.apache.poi.xwpf.usermodel.XWPFDocument;
 import org.dromara.x.file.storage.core.FileStorageService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
+import org.yu.domain.rag.constant.MetadataConstant;
 import org.yu.domain.rag.message.RagDocMessage;
 import org.yu.domain.rag.model.DocumentUnitEntity;
 import org.yu.domain.rag.model.FileDetailEntity;
+import org.yu.domain.rag.model.ProcessedSegment;
+import org.yu.domain.rag.model.enums.SegmentType;
 import org.yu.domain.rag.repository.DocumentUnitRepository;
 import org.yu.domain.rag.repository.FileDetailRepository;
-
-import dev.langchain4j.data.document.Document;
-import dev.langchain4j.data.document.DocumentParser;
-import dev.langchain4j.data.document.parser.apache.poi.ApachePoiDocumentParser;
-import dev.langchain4j.data.document.splitter.DocumentBySentenceSplitter;
-import dev.langchain4j.data.segment.TextSegment;
-import jakarta.annotation.Resource;
+import org.yu.infrastructure.rag.processor.DocumentUnitMetadataSupport;
+import org.yu.infrastructure.rag.processor.StructuredPlainTextProcessor;
+import org.yu.infrastructure.utils.JsonUtils;
 
 @Service("word")
 public class WORDDocumentProcessing extends AbstractDocumentProcessingStrategy {
 
     private static final Logger log = LoggerFactory.getLogger(WORDDocumentProcessing.class);
+    private static final String ATTR_PROCESSING_STAGE = "processingStage";
+    private static final String ATTR_PROCESSING_STAGE_DESCRIPTION = "processingStageDescription";
+    private static final String STAGE_READING = "WORD_READING";
+    private static final String STAGE_SEGMENTING = "WORD_SEGMENTING";
+    private static final String STAGE_PERSISTING = "WORD_PERSISTING";
 
     private final DocumentUnitRepository documentUnitRepository;
-
     private final FileDetailRepository fileDetailRepository;
+    private final StructuredPlainTextProcessor structuredPlainTextProcessor;
 
     @Resource
     private FileStorageService fileStorageService;
 
-    // 用于存储当前处理的文件ID，以便更新页数
-    private String currentProcessingFileId;
+    private final ThreadLocal<String> currentProcessingFileId = new ThreadLocal<>();
+    private final ThreadLocal<Map<String, Object>> currentAttrCache = ThreadLocal.withInitial(HashMap::new);
+    private final ThreadLocal<List<ProcessedSegment>> cachedSegments = new ThreadLocal<>();
 
     public WORDDocumentProcessing(DocumentUnitRepository documentUnitRepository,
-            FileDetailRepository fileDetailRepository) {
+            FileDetailRepository fileDetailRepository, StructuredPlainTextProcessor structuredPlainTextProcessor) {
         this.documentUnitRepository = documentUnitRepository;
         this.fileDetailRepository = fileDetailRepository;
+        this.structuredPlainTextProcessor = structuredPlainTextProcessor;
     }
 
-    /** 处理消息，设置当前处理的文件ID
-     * @param ragDocMessage 消息数据
-     * @param strategy 当前策略 */
     @Override
     public void handle(RagDocMessage ragDocMessage, String strategy) throws Exception {
-        // 设置当前处理的文件ID，用于更新页数
-        this.currentProcessingFileId = ragDocMessage.getFileId();
-
-        // 调用父类处理逻辑
-        super.handle(ragDocMessage, strategy);
+        currentProcessingFileId.set(ragDocMessage.getFileId());
+        currentAttrCache.remove();
+        cachedSegments.remove();
+        try {
+            super.handle(ragDocMessage, strategy);
+        } finally {
+            currentProcessingFileId.remove();
+            currentAttrCache.remove();
+            cachedSegments.remove();
+        }
     }
 
-    /** 获取文件页数
-     *
-     * @param bytes Word文档字节数组
-     * @param ragDocMessage 消息数据 */
     @Override
     public void pushPageSize(byte[] bytes, RagDocMessage ragDocMessage) {
         try {
-            DocumentParser parser = new ApachePoiDocumentParser();
-            InputStream inputStream = new ByteArrayInputStream(bytes);
-            Document document = parser.parse(inputStream);
-
-            final DocumentBySentenceSplitter documentByCharacterSplitter = new DocumentBySentenceSplitter(500, 0);
-            final List<TextSegment> split = documentByCharacterSplitter.split(document);
-
-            int segmentCount = split.size();
+            List<ProcessedSegment> segments = getOrBuildSegments(bytes);
+            int segmentCount = segments.size();
             ragDocMessage.setPageSize(segmentCount);
-            log.info("Word document split into {} segments", segmentCount);
 
-            // 更新数据库中的总页数
-            if (currentProcessingFileId != null) {
+            String fileId = getCurrentProcessingFileId();
+            if (fileId != null) {
                 LambdaUpdateWrapper<FileDetailEntity> wrapper = Wrappers.<FileDetailEntity>lambdaUpdate()
-                        .eq(FileDetailEntity::getId, currentProcessingFileId)
+                        .eq(FileDetailEntity::getId, fileId)
                         .set(FileDetailEntity::getFilePageSize, segmentCount);
                 fileDetailRepository.update(wrapper);
-
-                log.info("Updated total pages for Word file {}: {} segments", currentProcessingFileId, segmentCount);
             }
-
-            inputStream.close();
+            log.info("Word document chunked into {} structured segment(s)", segmentCount);
         } catch (Exception e) {
-            log.error("Failed to calculate page size for Word document", e);
+            log.error("Failed to calculate Word segment count", e);
             ragDocMessage.setPageSize(0);
         }
     }
 
-    /** 获取文件数据
-     *
-     * @param ragDocSyncOcrMessage 消息数据
-     * @param strategy 当前策略
-     * @return Word文档字节数组 */
     @Override
     public byte[] getFileData(RagDocMessage ragDocSyncOcrMessage, String strategy) {
-        // 从数据库中获取文件详情
         FileDetailEntity fileDetailEntity = fileDetailRepository.selectById(ragDocSyncOcrMessage.getFileId());
         if (fileDetailEntity == null) {
             log.error("File not found: {}", ragDocSyncOcrMessage.getFileId());
             return new byte[0];
         }
-
-        log.info("Preparing to download Word document: {}", fileDetailEntity.getFilename());
         return fileStorageService.download(fileDetailEntity.getUrl()).bytes();
     }
 
-    /** 处理Word文件 - 提取文本内容
-     *
-     * @param fileBytes Word文档字节数组
-     * @param totalPages 总页数
-     * @return 按页索引分组的内容Map */
     @Override
     public Map<Integer, String> processFile(byte[] fileBytes, int totalPages) {
-        log.info(
-                "Current file type is non-PDF, text is extracted directly ——————> Does not contain page numbers; the concept of page numbers serves as an index.");
-
-        DocumentParser parser = new ApachePoiDocumentParser();
-        // 使用ByteArrayInputStream将字节数组转换为输入流
-        InputStream inputStream = new ByteArrayInputStream(fileBytes);
-
-        Document document;
-
-        final HashMap<Integer, String> ocrData = new HashMap<>();
-
-        try {
-            document = parser.parse(inputStream);
-
-            final DocumentBySentenceSplitter documentByCharacterSplitter = new DocumentBySentenceSplitter(500, 0);
-            final List<TextSegment> split = documentByCharacterSplitter.split(document);
-
-            Steam.of(split).forEachIdx((textSegment, index) -> {
-                final String text = textSegment.text();
-
-                ocrData.put(index, text);
-
-            });
-
-            return ocrData;
-
-        } catch (Exception e) {
-            log.error("Failed to process document", e);
-        } finally {
-            try {
-                inputStream.close();
-            } catch (IOException e) {
-                log.error("Failed to close the input stream", e);
-            }
+        log.info("Using structure-aware chunking for Word document ingestion");
+        List<ProcessedSegment> segments = getOrBuildSegments(fileBytes);
+        Map<Integer, String> segmentsByIndex = new LinkedHashMap<>();
+        for (int i = 0; i < segments.size(); i++) {
+            segmentsByIndex.put(i, segments.get(i).getContent());
         }
-
-        return ocrData;
+        return segmentsByIndex;
     }
 
-    /** 保存数据
-     *
-     * @param ragDocSyncOcrMessage 消息数据
-     * @param ocrData 按页索引分组的内容Map */
     @Override
-    public void insertData(RagDocMessage ragDocSyncOcrMessage, Map<Integer, String> ocrData) throws Exception {
-        log.info("开始保存文档内容，共拆分{}段", ocrData.size());
+    public void insertData(RagDocMessage ragDocSyncOcrMessage, Map<Integer, String> ocrData) {
+        updateProcessingStage(STAGE_PERSISTING, "Word 解析完成，正在写入分段结果");
+        List<ProcessedSegment> segments = cachedSegments.get();
+        log.info("Persisting {} Word segment(s)", ocrData.size());
 
-        // 遍历每一页，将内容保存到数据库
         for (int pageIndex = 0; pageIndex < ocrData.size(); pageIndex++) {
-            String content = ocrData.getOrDefault(pageIndex, null);
+            String content = ocrData.get(pageIndex);
 
-            DocumentUnitEntity documentUnitEntity = new DocumentUnitEntity();
-            documentUnitEntity.setContent(content);
-            documentUnitEntity.setPage(pageIndex);
-            documentUnitEntity.setFileId(ragDocSyncOcrMessage.getFileId());
-            documentUnitEntity.setIsVector(false);
-            documentUnitEntity.setIsOcr(true);
+            DocumentUnitEntity entity = new DocumentUnitEntity();
+            entity.setContent(content);
+            entity.setPage(pageIndex);
+            entity.setFileId(ragDocSyncOcrMessage.getFileId());
+            entity.setIsVector(false);
+            entity.setIsOcr(StringUtils.hasText(content));
 
-            if (content == null) {
-                documentUnitEntity.setIsOcr(false);
-                log.warn("第{}页内容为空", pageIndex + 1);
+            ProcessedSegment segment = pageIndex < (segments != null ? segments.size() : 0)
+                    ? ensurePersistedSegment(segments.get(pageIndex), content, pageIndex)
+                    : buildPersistedSegment(content, pageIndex);
+            DocumentUnitMetadataSupport.apply(entity, segment, pageIndex);
+
+            documentUnitRepository.checkInsert(entity);
+        }
+    }
+
+    private List<ProcessedSegment> getOrBuildSegments(byte[] fileBytes) {
+        List<ProcessedSegment> existing = cachedSegments.get();
+        if (existing != null) {
+            return existing;
+        }
+        updateProcessingStage(STAGE_READING, "正在读取 Word 文档内容");
+        String text = extractText(fileBytes, resolveCurrentFileExtension());
+        updateProcessingStage(STAGE_SEGMENTING, "Word 文档读取完成，正在结构化切块");
+        List<ProcessedSegment> segments = structuredPlainTextProcessor.process(text);
+        cachedSegments.set(segments);
+        return segments;
+    }
+
+    private String extractText(byte[] fileBytes, String fileExtension) {
+        String normalizedExtension = fileExtension != null ? fileExtension.trim().toLowerCase() : "";
+        try {
+            if ("doc".equals(normalizedExtension)) {
+                return extractDocText(new ByteArrayInputStream(fileBytes));
             }
+            return extractDocxText(new ByteArrayInputStream(fileBytes));
+        } catch (IOException e) {
+            throw new IllegalStateException("Failed to read Word document", e);
+        }
+    }
 
-            // 保存或更新数据
-            documentUnitRepository.checkInsert(documentUnitEntity);
-            log.debug("保存第{}页内容完成", pageIndex + 1);
+    private String extractDocxText(InputStream inputStream) throws IOException {
+        byte[] bytes = inputStream.readAllBytes();
+        String fastText = extractDocxTextFromXml(bytes);
+        if (StringUtils.hasText(fastText)) {
+            return fastText;
+        }
+        try (ByteArrayInputStream poiInput = new ByteArrayInputStream(bytes);
+                XWPFDocument document = new XWPFDocument(poiInput);
+                XWPFWordExtractor extractor = new XWPFWordExtractor(document)) {
+            return extractor.getText();
+        }
+    }
+
+    private String extractDocxTextFromXml(byte[] fileBytes) throws IOException {
+        try (ZipInputStream zipInputStream = new ZipInputStream(new ByteArrayInputStream(fileBytes),
+                StandardCharsets.UTF_8)) {
+            ZipEntry entry;
+            while ((entry = zipInputStream.getNextEntry()) != null) {
+                if (!"word/document.xml".equals(entry.getName())) {
+                    continue;
+                }
+                String xml = new String(zipInputStream.readAllBytes(), StandardCharsets.UTF_8);
+                String normalized = xml.replaceAll("</w:p>", "\n")
+                        .replaceAll("<w:tab[^>]*/>", "\t")
+                        .replaceAll("<w:br[^>]*/>", "\n")
+                        .replaceAll("</w:tr>", "\n");
+                String text = normalized.replaceAll("<[^>]+>", " ")
+                        .replace("&lt;", "<")
+                        .replace("&gt;", ">")
+                        .replace("&amp;", "&")
+                        .replace("&quot;", "\"")
+                        .replace("&apos;", "'");
+                return text.replaceAll("[\\t\\x0B\\f\\r ]+", " ")
+                        .replaceAll("\\n{3,}", "\n\n")
+                        .trim();
+            }
+        }
+        return null;
+    }
+
+    private String extractDocText(InputStream inputStream) throws IOException {
+        try (HWPFDocument document = new HWPFDocument(inputStream);
+                WordExtractor extractor = new WordExtractor(document)) {
+            return extractor.getText();
+        }
+    }
+
+    private String resolveCurrentFileExtension() {
+        String fileId = getCurrentProcessingFileId();
+        if (!StringUtils.hasText(fileId)) {
+            return "docx";
+        }
+        FileDetailEntity fileDetailEntity = fileDetailRepository.selectById(fileId);
+        if (fileDetailEntity == null || !StringUtils.hasText(fileDetailEntity.getExt())) {
+            return "docx";
+        }
+        return fileDetailEntity.getExt();
+    }
+
+    private ProcessedSegment buildPersistedSegment(String content, int order) {
+        String titlePath = DocumentUnitMetadataSupport.inferTitlePath(content);
+        SegmentType type = StringUtils.hasText(titlePath) ? SegmentType.SECTION : SegmentType.TEXT;
+        ProcessedSegment segment = new ProcessedSegment(content, type, null);
+        segment.setOrder(order);
+        segment.addMetadata(MetadataConstant.SEGMENT_ORDER, order);
+        if (StringUtils.hasText(titlePath)) {
+            segment.addMetadata(MetadataConstant.TITLE_PATH, titlePath);
+        }
+        return segment;
+    }
+
+    private ProcessedSegment ensurePersistedSegment(ProcessedSegment original, String fallbackContent, int order) {
+        if (original == null) {
+            return buildPersistedSegment(fallbackContent, order);
+        }
+        if (!StringUtils.hasText(original.getContent()) && StringUtils.hasText(fallbackContent)) {
+            original.setContent(fallbackContent);
+        }
+        if (original.getOrder() < 0) {
+            original.setOrder(order);
+        }
+        original.addMetadata(MetadataConstant.SEGMENT_ORDER, order);
+        if (original.getType() == null) {
+            original.setType(SegmentType.TEXT);
+        }
+        return original;
+    }
+
+    private void updateProcessingStage(String stage, String description) {
+        String fileId = getCurrentProcessingFileId();
+        if (!StringUtils.hasText(fileId)) {
+            return;
         }
 
-        log.info("Word文档内容保存完成");
+        try {
+            Map<String, Object> attrMap = currentAttrCache.get();
+            if (attrMap.isEmpty()) {
+                FileDetailEntity fileDetailEntity = fileDetailRepository.selectById(fileId);
+                Map<String, Object> persistedAttrMap =
+                        JsonUtils.parseMap(fileDetailEntity != null ? fileDetailEntity.getAttr() : null);
+                if (persistedAttrMap != null) {
+                    attrMap.putAll(persistedAttrMap);
+                }
+            }
+            attrMap.put(ATTR_PROCESSING_STAGE, stage);
+            attrMap.put(ATTR_PROCESSING_STAGE_DESCRIPTION, description);
+
+            LambdaUpdateWrapper<FileDetailEntity> wrapper = Wrappers.<FileDetailEntity>lambdaUpdate()
+                    .eq(FileDetailEntity::getId, fileId)
+                    .set(FileDetailEntity::getAttr, JsonUtils.toJsonString(attrMap));
+            fileDetailRepository.update(wrapper);
+        } catch (Exception e) {
+            log.warn("Failed to update processing stage for Word file {}: {}", fileId, e.getMessage());
+        }
+    }
+
+    private String getCurrentProcessingFileId() {
+        return currentProcessingFileId.get();
     }
 }

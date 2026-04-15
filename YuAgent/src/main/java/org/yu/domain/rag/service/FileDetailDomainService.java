@@ -5,11 +5,15 @@ import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.util.Map;
 import org.apache.commons.lang3.StringUtils;
 import org.dromara.x.file.storage.core.FileInfo;
 import org.dromara.x.file.storage.core.FileStorageService;
+import org.dromara.x.file.storage.core.upload.UploadPretreatment;
 import org.springframework.stereotype.Service;
 import org.yu.domain.rag.constant.FileProcessingEventEnum;
 import org.yu.domain.rag.constant.FileProcessingStatusEnum;
@@ -79,6 +83,71 @@ public class FileDetailDomainService {
         // 保存文件记录
         // fileDetailRepository.insert(fileDetailEntity);
         return fileDetailEntity;
+    }
+
+    public FileDetailEntity uploadRemoteFileToDataset(FileDetailEntity fileDetailEntity, byte[] bytes, String filename,
+            String contentType) {
+        if (bytes == null || bytes.length == 0) {
+            throw new BusinessException("涓婁紶鏂囦欢涓嶈兘涓虹┖");
+        }
+
+        if (StringUtils.isBlank(fileDetailEntity.getDataSetId())) {
+            throw new BusinessException("鏁版嵁闆咺D涓嶈兘涓虹┖");
+        }
+
+        final FileInfo upload;
+        Path tempFile = null;
+        try {
+            tempFile = createRemoteImportTempFile(filename, bytes);
+            UploadPretreatment pretreatment = fileStorageService.of(tempFile.toFile(), filename, contentType,
+                    (long) bytes.length);
+            upload = pretreatment
+                    .setMetadata(Map.of("dataset", fileDetailEntity.getDataSetId(), "userid", fileDetailEntity.getUserId()))
+                    .upload();
+        } catch (IOException e) {
+            throw new BusinessException("杩滅▼鏂囦欢涓存椂淇濆瓨澶辫触: " + e.getMessage(), e);
+        } finally {
+            deleteQuietly(tempFile);
+        }
+
+        fileDetailEntity.setId(upload.getId());
+        fileDetailEntity.setUrl(upload.getUrl());
+        fileDetailEntity.setSize(upload.getSize());
+        fileDetailEntity.setFilename(upload.getFilename());
+        fileDetailEntity.setOriginalFilename(upload.getOriginalFilename());
+        fileDetailEntity.setPath(upload.getPath());
+        fileDetailEntity.setExt(upload.getExt());
+        fileDetailEntity.setContentType(upload.getContentType());
+        fileDetailEntity.setPlatform(upload.getPlatform());
+        fileDetailEntity.setFilePageSize(0);
+        fileDetailEntity.setCurrentOcrPageNumber(0);
+        fileDetailEntity.setCurrentEmbeddingPageNumber(0);
+        fileDetailEntity.setOcrProcessProgress(0.0);
+        fileDetailEntity.setEmbeddingProcessProgress(0.0);
+        fileDetailEntity.setProcessingStatus(FileProcessingStatusEnum.UPLOADED.getCode());
+
+        stateMachineService.processFileState(fileDetailEntity);
+        return fileDetailEntity;
+    }
+
+    private Path createRemoteImportTempFile(String filename, byte[] bytes) throws IOException {
+        String ext = StringUtils.isNotBlank(filename) && filename.contains(".")
+                ? filename.substring(filename.lastIndexOf('.'))
+                : ".bin";
+        Path tempFile = Files.createTempFile("yuagent-remote-import-", ext);
+        Files.write(tempFile, bytes);
+        return tempFile;
+    }
+
+    private void deleteQuietly(Path tempFile) {
+        if (tempFile == null) {
+            return;
+        }
+        try {
+            Files.deleteIfExists(tempFile);
+        } catch (IOException ignored) {
+            // Best-effort temp file cleanup.
+        }
     }
 
     /** 根据ID获取文件详情
@@ -185,6 +254,14 @@ public class FileDetailDomainService {
         return fileDetailRepository.selectList(wrapper);
     }
 
+    public List<FileDetailEntity> listFilesByIds(List<String> fileIds) {
+        if (fileIds == null || fileIds.isEmpty()) {
+            return List.of();
+        }
+        return fileDetailRepository.selectList(Wrappers.<FileDetailEntity>lambdaQuery()
+                .in(FileDetailEntity::getId, fileIds));
+    }
+
     /** 统计数据集下的文件数量
      * @param datasetId 数据集ID
      * @param userId 用户ID
@@ -208,7 +285,8 @@ public class FileDetailDomainService {
     public List<FileDetailEntity> listStaleUploadedFiles(int olderThanSeconds, int limit) {
         LocalDateTime threshold = LocalDateTime.now().minusSeconds(Math.max(olderThanSeconds, 0));
         LambdaQueryWrapper<FileDetailEntity> wrapper = Wrappers.<FileDetailEntity>lambdaQuery()
-                .eq(FileDetailEntity::getProcessingStatus, FileProcessingStatusEnum.UPLOADED.getCode())
+                .in(FileDetailEntity::getProcessingStatus, FileProcessingStatusEnum.UPLOADED.getCode(),
+                        FileProcessingStatusEnum.OCR_PROCESSING.getCode())
                 .le(FileDetailEntity::getUpdatedAt, threshold)
                 .orderByAsc(FileDetailEntity::getCreatedAt);
 

@@ -172,9 +172,21 @@ public class RagBuiltInToolProvider extends AbstractBuiltInToolProvider {
 
             // 添加来源信息（如果有文件ID）
             if (StringUtils.hasText(doc.getFileId())) {
-                result.append("来源：文件ID ").append(doc.getFileId());
-                if (doc.getPage() != null) {
-                    result.append("，第 ").append(doc.getPage()).append(" 页");
+                result.append("来源：");
+                if (StringUtils.hasText(doc.getFileName())) {
+                    result.append(doc.getFileName());
+                } else {
+                    result.append("文件ID ").append(doc.getFileId());
+                }
+                Integer page = doc.getSourcePage() != null ? doc.getSourcePage() : doc.getPage();
+                if (page != null) {
+                    result.append("，第 ").append(page).append(" 页");
+                }
+                if (StringUtils.hasText(doc.getTitlePath())) {
+                    result.append("，章节 ").append(doc.getTitlePath());
+                }
+                if (doc.getSimilarityScore() != null) {
+                    result.append("，相关度 ").append(String.format("%.3f", doc.getSimilarityScore()));
                 }
                 result.append("\n");
             }

@@ -106,7 +106,7 @@ public class DocumentVectorizationOrchestrator {
                     splitter.getSplitStatistics(translatedContent, vectorTexts));
 
             // 第3步：为每个分割片段创建DocumentUnitEntity并触发向量化
-            createVectorSegments(unit, vectorTexts, context);
+            createVectorSegments(unit, vectorTexts, titleContext, context);
 
         } catch (Exception e) {
             log.error("Error processing document unit {}: {}", unitId, e.getMessage(), e);
@@ -115,7 +115,7 @@ public class DocumentVectorizationOrchestrator {
     }
 
     /** 为分割片段触发向量化处理 - 保持原文不变 */
-    private void createVectorSegments(DocumentUnitEntity originalUnit, List<String> vectorTexts,
+    private void createVectorSegments(DocumentUnitEntity originalUnit, List<String> vectorTexts, String titleContext,
             ProcessingContext context) {
         String originalUnitId = originalUnit.getId();
 
@@ -124,7 +124,7 @@ public class DocumentVectorizationOrchestrator {
         // 🎯 核心原则：原文永不修改，翻译后内容通过消息传递
         for (int i = 0; i < vectorTexts.size(); i++) {
             String vectorText = vectorTexts.get(i);
-            triggerVectorization(originalUnit, vectorText, i, context);
+            triggerVectorization(originalUnit, vectorText, i, titleContext, context);
         }
 
         // 仅更新向量化状态，不修改原文内容
@@ -146,6 +146,7 @@ public class DocumentVectorizationOrchestrator {
 
     /** 触发向量化处理 - 传递翻译后内容 */
     private void triggerVectorization(DocumentUnitEntity originalUnit, String vectorText, int segmentIndex,
+            String titleContext,
             ProcessingContext context) {
         try {
             // 获取文件详情来构建完整的向量化消息
@@ -167,6 +168,11 @@ public class DocumentVectorizationOrchestrator {
 
             // 🎯 核心：传递翻译后的内容而不是原文
             storageMessage.setContent(vectorText);
+            storageMessage.setTitlePath(titleContext);
+            storageMessage.setSegmentType(originalUnit.getSegmentType());
+            storageMessage.setSegmentOrder(originalUnit.getSegmentOrder());
+            storageMessage.setSourcePage(
+                    originalUnit.getSourcePage() != null ? originalUnit.getSourcePage() : originalUnit.getPage());
 
             storageMessage.setVector(false); // 待向量化
             storageMessage.setUserId(context.getUserId());
@@ -201,6 +207,10 @@ public class DocumentVectorizationOrchestrator {
      * 
      * 从原文中提取标题信息，用于在分割时保持上下文 */
     private String extractTitleContext(DocumentUnitEntity unit) {
+        if (unit.getTitlePath() != null && !unit.getTitlePath().trim().isEmpty()) {
+            return unit.getTitlePath();
+        }
+
         String content = unit.getContent();
         if (content == null || content.trim().isEmpty()) {
             return null;

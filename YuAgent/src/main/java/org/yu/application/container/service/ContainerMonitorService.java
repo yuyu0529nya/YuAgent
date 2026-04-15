@@ -107,12 +107,13 @@ public class ContainerMonitorService {
             }
 
             // 容器运行正常，检查网络连通性
-            if (container.getIpAddress() != null && container.getExternalPort() != null) {
+            Integer healthCheckPort = resolveHealthCheckPort(container);
+            if (container.getIpAddress() != null && healthCheckPort != null) {
                 boolean networkOk = dockerService.isContainerNetworkAccessible(container.getIpAddress(),
-                        container.getExternalPort());
+                        healthCheckPort);
                 if (!networkOk) {
                     logger.warn("容器网络连通性异常但Docker运行正常: containerId={}, ip={}:{}", container.getId(),
-                            container.getIpAddress(), container.getExternalPort());
+                            container.getIpAddress(), healthCheckPort);
                 }
             }
 
@@ -178,12 +179,13 @@ public class ContainerMonitorService {
             }
 
             // 容器运行正常，检查网络连通性
-            if (container.getIpAddress() != null && container.getExternalPort() != null) {
+            Integer healthCheckPort = resolveHealthCheckPort(container);
+            if (container.getIpAddress() != null && healthCheckPort != null) {
                 boolean networkOk = dockerService.isContainerNetworkAccessible(container.getIpAddress(),
-                        container.getExternalPort());
+                        healthCheckPort);
                 if (!networkOk) {
                     logger.warn("容器网络连通性异常但Docker运行正常: containerId={}, ip={}:{}", container.getId(),
-                            container.getIpAddress(), container.getExternalPort());
+                            container.getIpAddress(), healthCheckPort);
                 }
             }
 
@@ -210,5 +212,20 @@ public class ContainerMonitorService {
             default :
                 return ContainerStatus.ERROR;
         }
+    }
+
+    private Integer resolveHealthCheckPort(ContainerEntity container) {
+        if (container == null || container.getIpAddress() == null) {
+            return null;
+        }
+        if (isLocalAddress(container.getIpAddress())) {
+            return container.getExternalPort();
+        }
+        return container.getInternalPort();
+    }
+
+    private boolean isLocalAddress(String ipAddress) {
+        return "localhost".equalsIgnoreCase(ipAddress) || "host.docker.internal".equalsIgnoreCase(ipAddress)
+                || "127.0.0.1".equals(ipAddress) || "::1".equals(ipAddress) || "0:0:0:0:0:0:0:1".equals(ipAddress);
     }
 }

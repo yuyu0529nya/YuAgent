@@ -4,6 +4,7 @@ import java.io.Serial;
 import java.io.Serializable;
 import java.util.Objects;
 
+import org.dromara.x.file.storage.core.file.FileWrapper;
 import org.springframework.web.multipart.MultipartFile;
 import org.yu.domain.rag.constant.FileProcessingStatusEnum;
 import org.yu.infrastructure.entity.BaseEntity;
@@ -130,12 +131,23 @@ public class FileDetailEntity extends BaseEntity implements Serializable {
     @TableField(exist = false)
     private MultipartFile multipartFile;
 
+    @TableField(exist = false)
+    private FileWrapper fileWrapper;
+
     public MultipartFile getMultipartFile() {
         return multipartFile;
     }
 
     public void setMultipartFile(MultipartFile multipartFile) {
         this.multipartFile = multipartFile;
+    }
+
+    public FileWrapper getFileWrapper() {
+        return fileWrapper;
+    }
+
+    public void setFileWrapper(FileWrapper fileWrapper) {
+        this.fileWrapper = fileWrapper;
     }
 
     public String getId() {

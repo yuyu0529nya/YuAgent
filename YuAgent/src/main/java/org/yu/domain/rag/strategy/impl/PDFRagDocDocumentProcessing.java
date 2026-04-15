@@ -1,7 +1,19 @@
 package org.yu.domain.rag.strategy.impl;
 
+import static org.yu.domain.rag.strategy.context.RAGSystemPrompt.OCR_PROMPT;
+
+import cn.hutool.core.codec.Base64;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import dev.langchain4j.data.message.ImageContent;
+import dev.langchain4j.data.message.TextContent;
+import dev.langchain4j.data.message.UserMessage;
+import dev.langchain4j.model.chat.ChatModel;
+import dev.langchain4j.model.chat.response.ChatResponse;
+import jakarta.annotation.Resource;
 import java.io.IOException;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
@@ -9,194 +21,264 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-
-import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
-import com.baomidou.mybatisplus.core.toolkit.Wrappers;
-import dev.langchain4j.model.chat.ChatModel;
+import org.apache.pdfbox.Loader;
+import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.text.PDFTextStripper;
 import org.dromara.x.file.storage.core.FileStorageService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
 import org.yu.domain.rag.message.RagDocMessage;
 import org.yu.domain.rag.model.DocumentUnitEntity;
 import org.yu.domain.rag.model.FileDetailEntity;
+import org.yu.domain.rag.model.ProcessedSegment;
+import org.yu.domain.rag.model.enums.SegmentType;
 import org.yu.domain.rag.repository.DocumentUnitRepository;
 import org.yu.domain.rag.repository.FileDetailRepository;
-import org.yu.domain.rag.strategy.context.RAGSystemPrompt;
 import org.yu.infrastructure.exception.BusinessException;
 import org.yu.infrastructure.llm.LLMProviderService;
 import org.yu.infrastructure.llm.config.ProviderConfig;
 import org.yu.infrastructure.llm.protocol.enums.ProviderProtocol;
 import org.yu.infrastructure.rag.detector.TikaFileTypeDetector;
+import org.yu.infrastructure.rag.processor.DocumentUnitMetadataSupport;
+import org.yu.infrastructure.rag.processor.StructuredPlainTextProcessor;
 import org.yu.infrastructure.rag.utils.PdfToBase64Converter;
-
-import cn.hutool.core.codec.Base64;
-import dev.langchain4j.data.message.ImageContent;
-import dev.langchain4j.data.message.TextContent;
-import dev.langchain4j.data.message.UserMessage;
-import dev.langchain4j.model.chat.response.ChatResponse;
-import jakarta.annotation.Resource;
-
-import static org.yu.domain.rag.strategy.context.RAGSystemPrompt.OCR_PROMPT;
+import org.yu.infrastructure.utils.JsonUtils;
 
 @Service("pdf")
 public class PDFRagDocDocumentProcessing extends AbstractDocumentProcessingStrategy {
 
     private static final Logger log = LoggerFactory.getLogger(PDFRagDocDocumentProcessing.class);
     private static final long OCR_PAGE_TIMEOUT_SECONDS = 90;
+    private static final int MIN_TEXT_LENGTH_FOR_NATIVE_PDF = 12;
+    private static final String ATTR_PROCESSING_STAGE = "processingStage";
+    private static final String ATTR_PROCESSING_STAGE_DESCRIPTION = "processingStageDescription";
+    private static final String STAGE_NATIVE_EXTRACTING = "PDF_NATIVE_EXTRACTING";
+    private static final String STAGE_OCR_FALLBACK = "PDF_OCR_FALLBACK";
+    private static final String STAGE_SEGMENTING = "PDF_SEGMENTING";
+
+    private static final Pattern[] PATTERNS = {Pattern.compile("\\\\\\("), Pattern.compile("\\\\\\)"),
+            Pattern.compile("\n{3,}"), Pattern.compile("([^\n])\n([^\n])"), Pattern.compile("\\$\\s+"),
+            Pattern.compile("\\s+\\$"), Pattern.compile("\\$\\$")};
 
     private final DocumentUnitRepository documentUnitRepository;
-
     private final FileDetailRepository fileDetailRepository;
+    private final StructuredPlainTextProcessor structuredPlainTextProcessor;
 
     @Resource
     private FileStorageService fileStorageService;
 
-    // 用于存储当前处理的文件ID，以便更新进度
-    private String currentProcessingFileId;
+    @Value("${rag.pdf.ocr-render-dpi:132}")
+    private float ocrRenderDpi;
+
+    @Value("${rag.pdf.ocr-render-dpi-large:120}")
+    private float ocrRenderDpiLarge;
+
+    private final ThreadLocal<String> currentProcessingFileId = new ThreadLocal<>();
+    private final ThreadLocal<Map<String, Object>> currentAttrCache = ThreadLocal.withInitial(HashMap::new);
 
     public PDFRagDocDocumentProcessing(DocumentUnitRepository documentUnitRepository,
-            FileDetailRepository fileDetailRepository) {
+            FileDetailRepository fileDetailRepository, StructuredPlainTextProcessor structuredPlainTextProcessor) {
         this.documentUnitRepository = documentUnitRepository;
         this.fileDetailRepository = fileDetailRepository;
+        this.structuredPlainTextProcessor = structuredPlainTextProcessor;
     }
 
-    /** 处理消息，增加进度更新功能
-     * @param ragDocMessage 消息数据
-     * @param strategy 当前策略 */
     @Override
     public void handle(RagDocMessage ragDocMessage, String strategy) throws Exception {
-        // 设置当前处理的文件ID，用于进度更新
-        this.currentProcessingFileId = ragDocMessage.getFileId();
-
-        // 调用父类处理逻辑
-        super.handle(ragDocMessage, strategy);
+        currentProcessingFileId.set(ragDocMessage.getFileId());
+        currentAttrCache.remove();
+        try {
+            super.handle(ragDocMessage, strategy);
+        } finally {
+            currentProcessingFileId.remove();
+            currentAttrCache.remove();
+        }
     }
 
-    /** 获取文件页数 */
     @Override
     public void pushPageSize(byte[] bytes, RagDocMessage ragDocSyncOcrMessage) {
-
         try {
-            final int pdfPageCount = PdfToBase64Converter.getPdfPageCount(bytes);
+            int pdfPageCount = PdfToBase64Converter.getPdfPageCount(bytes);
             ragDocSyncOcrMessage.setPageSize(pdfPageCount);
 
-            // 更新数据库中的总页数
-            if (currentProcessingFileId != null) {
+            String fileId = getCurrentProcessingFileId();
+            if (fileId != null) {
                 LambdaUpdateWrapper<FileDetailEntity> wrapper = Wrappers.<FileDetailEntity>lambdaUpdate()
-                        .eq(FileDetailEntity::getId, currentProcessingFileId)
+                        .eq(FileDetailEntity::getId, fileId)
                         .set(FileDetailEntity::getFilePageSize, pdfPageCount);
                 fileDetailRepository.update(wrapper);
-
-                log.info("更新文件{}的总页数: {}页", currentProcessingFileId, pdfPageCount);
+                log.info("Updated total page count for file {}: {}", fileId, pdfPageCount);
             }
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
-
     }
 
-    /** 获取文件
-     *
-     * @param ragDocSyncOcrMessage 消息数据
-     * @param strategy 当前策略 */
     @Override
     public byte[] getFileData(RagDocMessage ragDocSyncOcrMessage, String strategy) {
-
-        final FileDetailEntity fileDetailEntity = fileDetailRepository.selectById(ragDocSyncOcrMessage.getFileId());
-
+        FileDetailEntity fileDetailEntity = fileDetailRepository.selectById(ragDocSyncOcrMessage.getFileId());
         return fileStorageService.download(fileDetailEntity.getUrl()).bytes();
     }
 
-    /** 处理PDF文件 - 按页处理逻辑 */
     @Override
     public Map<Integer, String> processFile(byte[] fileBytes, int totalPages) {
         return processFile(fileBytes, totalPages, null);
     }
 
-    /** 处理PDF文件 - 按页处理逻辑（带消息参数） */
     @Override
     public Map<Integer, String> processFile(byte[] fileBytes, int totalPages, RagDocMessage ragDocSyncOcrMessage) {
-
-        final HashMap<Integer, String> ocrData = new HashMap<>();
-        final ChatModel ocrModel = createOcrModelFromMessage(ragDocSyncOcrMessage);
+        Map<Integer, String> pageContent = new HashMap<>();
+        Map<Integer, String> nativeTextPages = extractTextByPage(fileBytes, totalPages);
+        ChatModel ocrModel = null;
         int successPages = 0;
-        for (int pageIndex = 0; pageIndex < totalPages; pageIndex++) {
-            try {
-                // 单独处理每一页以减少内存使用
-                log.info("Starting OCR page {}/{} for file {}", pageIndex + 1, totalPages, currentProcessingFileId);
-                String base64 = PdfToBase64Converter.processPdfPageToBase64(fileBytes, pageIndex, "jpg");
+        int nativePageCount = 0;
+        float renderDpi = resolveRenderDpi(fileBytes, totalPages);
 
-                final UserMessage userMessage = UserMessage.userMessage(
-                        ImageContent.from(base64, TikaFileTypeDetector.detectFileType(Base64.decode(base64))),
-                        TextContent.from(OCR_PROMPT));
+        updateProcessingStage(STAGE_NATIVE_EXTRACTING, "优先提取 PDF 原生文本中");
 
-                /** 创建OCR处理的模型配置 - 从消息中获取用户配置的OCR模型 */
-                ChatModel pageOcrModel = ocrModel;
+        try (PdfToBase64Converter.PdfPageImageSession pageImageSession = PdfToBase64Converter.openSession(fileBytes)) {
+            for (int pageIndex = 0; pageIndex < totalPages; pageIndex++) {
+                try {
+                    String nativeText = nativeTextPages.get(pageIndex);
+                    if (hasUsableNativeText(nativeText)) {
+                        pageContent.put(pageIndex, nativeText.trim());
+                        nativePageCount++;
+                        successPages++;
+                        updateProcessProgress(pageIndex + 1, totalPages);
+                        continue;
+                    }
 
-                final ChatResponse chat = executeOcrWithTimeout(pageOcrModel, userMessage);
+                    if (ocrModel == null) {
+                        updateProcessingStage(STAGE_OCR_FALLBACK, "原生文本不足，正在按页 OCR 补全");
+                        ocrModel = createOcrModelFromMessage(ragDocSyncOcrMessage);
+                    }
 
-                ocrData.put(pageIndex, processText(chat.aiMessage().text()));
-                successPages++;
+                    String base64 = pageImageSession.renderPageToBase64(pageIndex, "jpg", renderDpi);
+                    UserMessage userMessage = UserMessage.userMessage(
+                            ImageContent.from(base64, TikaFileTypeDetector.detectFileType(Base64.decode(base64))),
+                            TextContent.from(OCR_PROMPT));
 
-                // 实时更新处理进度
-                updateProcessProgress(pageIndex + 1, totalPages);
-
-                log.info("处理第{}/{}页，当前内存使用: {} MB", (pageIndex + 1), totalPages,
-                        (Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory()) / (1024 * 1024));
-
-
-                log.info("第{}页处理完成", (pageIndex + 1));
-            } catch (TimeoutException e) {
-                log.error("OCR timed out for file {} page {}/{} after {}s", currentProcessingFileId, pageIndex + 1,
-                        totalPages, OCR_PAGE_TIMEOUT_SECONDS);
-            } catch (Exception e) {
-                log.error("处理PDF第{}页时出错: {}", (pageIndex + 1), e.getMessage());
-                // 继续处理下一页，不中断整个流程
+                    ChatResponse chat = executeOcrWithTimeout(ocrModel, userMessage);
+                    String ocrText = processText(chat.aiMessage().text());
+                    if (StringUtils.hasText(ocrText)) {
+                        pageContent.put(pageIndex, ocrText);
+                        successPages++;
+                    }
+                    updateProcessProgress(pageIndex + 1, totalPages);
+                } catch (TimeoutException e) {
+                    log.error("OCR timed out for file {} page {}/{} after {}s", getCurrentProcessingFileId(),
+                            pageIndex + 1, totalPages, OCR_PAGE_TIMEOUT_SECONDS);
+                } catch (Exception e) {
+                    log.error("Failed to process PDF page {}/{} for file {}: {}", pageIndex + 1, totalPages,
+                            getCurrentProcessingFileId(), e.getMessage(), e);
+                }
             }
+        } catch (IOException e) {
+            throw new BusinessException("Failed to open PDF for OCR rendering: " + e.getMessage(), e);
         }
 
         if (successPages == 0) {
-            throw new BusinessException("PDF OCR failed for all pages");
+            throw new BusinessException("PDF processing failed for all pages");
         }
 
-        return ocrData;
-
+        log.info("PDF processing completed for file {}. Native text pages: {}, OCR pages: {}",
+                getCurrentProcessingFileId(), nativePageCount, successPages - nativePageCount);
+        return pageContent;
     }
 
-    /** 保存数据
-     *
-     * @param ragDocSyncOcrMessage 消息数据
-     * @param ocrData ocr数据 */
     @Override
     public void insertData(RagDocMessage ragDocSyncOcrMessage, Map<Integer, String> ocrData) {
-
+        updateProcessingStage(STAGE_SEGMENTING, "文本提取完成，正在整理分段");
         for (int pageIndex = 0; pageIndex < ragDocSyncOcrMessage.getPageSize(); pageIndex++) {
-
             String content = ocrData.getOrDefault(pageIndex, null);
-
-            final DocumentUnitEntity documentUnitDO = new DocumentUnitEntity();
-
-            documentUnitDO.setContent(content);
-            documentUnitDO.setPage(pageIndex);
-            documentUnitDO.setFileId(ragDocSyncOcrMessage.getFileId());
-            documentUnitDO.setIsVector(false);
-            documentUnitDO.setIsOcr(true);
-
-            if (content == null) {
-                documentUnitDO.setIsOcr(false);
+            List<ProcessedSegment> segments = splitPageContent(content);
+            if (segments.isEmpty()) {
+                DocumentUnitEntity emptyUnit = new DocumentUnitEntity();
+                emptyUnit.setContent(content);
+                emptyUnit.setPage(pageIndex);
+                emptyUnit.setFileId(ragDocSyncOcrMessage.getFileId());
+                emptyUnit.setSourcePage(pageIndex);
+                emptyUnit.setSegmentOrder(pageIndex);
+                emptyUnit.setSegmentType(SegmentType.TEXT.getValue());
+                emptyUnit.setIsVector(false);
+                emptyUnit.setIsOcr(false);
+                documentUnitRepository.checkInsert(emptyUnit);
+                continue;
             }
 
-            documentUnitRepository.checkInsert(documentUnitDO);
+            for (int segmentIndex = 0; segmentIndex < segments.size(); segmentIndex++) {
+                ProcessedSegment segment = segments.get(segmentIndex);
+                if (segment.getOrder() == 0 && segmentIndex > 0) {
+                    segment.setOrder(segmentIndex);
+                }
 
+                DocumentUnitEntity documentUnit = new DocumentUnitEntity();
+                documentUnit.setContent(segment.getContent());
+                documentUnit.setPage(pageIndex);
+                documentUnit.setFileId(ragDocSyncOcrMessage.getFileId());
+                documentUnit.setIsVector(false);
+                documentUnit.setIsOcr(true);
+                DocumentUnitMetadataSupport.apply(documentUnit, ensurePersistedSegment(segment, pageIndex), pageIndex);
+                documentUnitRepository.checkInsert(documentUnit);
+            }
         }
     }
 
-    private static final Pattern[] PATTERNS = {Pattern.compile("\\\\（"), Pattern.compile("\\\\）"),
-            Pattern.compile("\n{3,}"), Pattern.compile("([^\n])\n([^\n])"), Pattern.compile("\\$\\s+"),
-            Pattern.compile("\\s+\\$"), Pattern.compile("\\$\\$")};
+    private Map<Integer, String> extractTextByPage(byte[] fileBytes, int totalPages) {
+        Map<Integer, String> textByPage = new HashMap<>();
+        try (PDDocument document = Loader.loadPDF(fileBytes)) {
+            PDFTextStripper stripper = new PDFTextStripper();
+            for (int pageIndex = 0; pageIndex < totalPages; pageIndex++) {
+                stripper.setStartPage(pageIndex + 1);
+                stripper.setEndPage(pageIndex + 1);
+                String extracted = processText(stripper.getText(document));
+                if (StringUtils.hasText(extracted)) {
+                    textByPage.put(pageIndex, extracted);
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Native PDF text extraction failed for file {}: {}", getCurrentProcessingFileId(), e.getMessage());
+        }
+        return textByPage;
+    }
+
+    private List<ProcessedSegment> splitPageContent(String content) {
+        if (!StringUtils.hasText(content)) {
+            return List.of();
+        }
+        return structuredPlainTextProcessor.process(content);
+    }
+
+    private ProcessedSegment ensurePersistedSegment(ProcessedSegment segment, int order) {
+        if (segment == null) {
+            ProcessedSegment fallback = new ProcessedSegment(null, SegmentType.TEXT, null);
+            fallback.setOrder(order);
+            return fallback;
+        }
+        if (!StringUtils.hasText(segment.getContent())) {
+            segment.setOrder(order);
+            return segment;
+        }
+        if (segment.getOrder() < 0) {
+            segment.setOrder(order);
+        }
+        if (!StringUtils.hasText(DocumentUnitMetadataSupport.inferTitlePath(segment.getContent()))
+                && !StringUtils.hasText(segment.getMetadata() != null
+                        ? String.valueOf(segment.getMetadata().get("TITLE_PATH"))
+                        : null)
+                && segment.getType() == null) {
+            segment.setType(SegmentType.TEXT);
+        }
+        return segment;
+    }
 
     public String processText(String input) {
+        if (input == null) {
+            return null;
+        }
         String result = input;
         result = PATTERNS[0].matcher(result).replaceAll(Matcher.quoteReplacement("\\("));
         result = PATTERNS[1].matcher(result).replaceAll(Matcher.quoteReplacement("\\)"));
@@ -208,41 +290,55 @@ public class PDFRagDocDocumentProcessing extends AbstractDocumentProcessingStrat
         return result.trim();
     }
 
-    /** 更新处理进度
-     * @param currentPage 当前页数
-     * @param totalPages 总页数 */
     private void updateProcessProgress(int currentPage, int totalPages) {
-        if (currentProcessingFileId == null) {
+        String fileId = getCurrentProcessingFileId();
+        if (fileId == null) {
             return;
         }
 
         try {
             double progress = (double) currentPage / totalPages * 100.0;
-
-            // 使用新的OCR专用进度字段
             LambdaUpdateWrapper<FileDetailEntity> wrapper = Wrappers.<FileDetailEntity>lambdaUpdate()
-                    .eq(FileDetailEntity::getId, currentProcessingFileId)
+                    .eq(FileDetailEntity::getId, fileId)
                     .set(FileDetailEntity::getCurrentOcrPageNumber, currentPage)
                     .set(FileDetailEntity::getOcrProcessProgress, progress);
-
             fileDetailRepository.update(wrapper);
-
-            log.debug("更新文件{}OCR进度: {}/{}页 ({}%)", currentProcessingFileId, currentPage, totalPages,
-                    String.format("%.1f", progress));
         } catch (Exception e) {
-            log.warn("更新文件{}OCR进度失败: {}", currentProcessingFileId, e.getMessage());
+            log.warn("Failed to update OCR progress for file {}: {}", fileId, e.getMessage());
         }
     }
 
-    /** 从消息中创建OCR模型
-     * 
-     * @param ragDocSyncOcrMessage OCR消息
-     * @return ChatModel实例
-     * @throws RuntimeException 如果没有配置OCR模型或创建失败 */
+    private void updateProcessingStage(String stage, String description) {
+        String fileId = getCurrentProcessingFileId();
+        if (!StringUtils.hasText(fileId)) {
+            return;
+        }
+
+        try {
+            Map<String, Object> attrMap = currentAttrCache.get();
+            if (attrMap.isEmpty()) {
+                FileDetailEntity fileDetailEntity = fileDetailRepository.selectById(fileId);
+                Map<String, Object> persistedAttrMap =
+                        JsonUtils.parseMap(fileDetailEntity != null ? fileDetailEntity.getAttr() : null);
+                if (persistedAttrMap != null) {
+                    attrMap.putAll(persistedAttrMap);
+                }
+            }
+            attrMap.put(ATTR_PROCESSING_STAGE, stage);
+            attrMap.put(ATTR_PROCESSING_STAGE_DESCRIPTION, description);
+
+            LambdaUpdateWrapper<FileDetailEntity> wrapper = Wrappers.<FileDetailEntity>lambdaUpdate()
+                    .eq(FileDetailEntity::getId, fileId)
+                    .set(FileDetailEntity::getAttr, JsonUtils.toJsonString(attrMap));
+            fileDetailRepository.update(wrapper);
+        } catch (Exception e) {
+            log.warn("Failed to update processing stage for file {}: {}", fileId, e.getMessage());
+        }
+    }
+
     private ChatModel createOcrModelFromMessage(RagDocMessage ragDocSyncOcrMessage) {
-        // 检查消息和模型配置是否存在
         if (ragDocSyncOcrMessage == null || ragDocSyncOcrMessage.getOcrModelConfig() == null) {
-            String errorMsg = String.format("用户 %s 未配置OCR模型，无法进行文档OCR处理",
+            String errorMsg = String.format("User %s is missing OCR model config",
                     ragDocSyncOcrMessage != null ? ragDocSyncOcrMessage.getUserId() : "unknown");
             log.error(errorMsg);
             throw new BusinessException(errorMsg);
@@ -250,20 +346,14 @@ public class PDFRagDocDocumentProcessing extends AbstractDocumentProcessingStrat
 
         try {
             var modelConfig = ragDocSyncOcrMessage.getOcrModelConfig();
-
             ProviderConfig ocrProviderConfig = new ProviderConfig(modelConfig.getApiKey(), modelConfig.getBaseUrl(),
                     modelConfig.getModelEndpoint(), ProviderProtocol.OPENAI);
-
-            ChatModel ocrModel = LLMProviderService.getStrand(ProviderProtocol.OPENAI, ocrProviderConfig);
-
-            log.info("成功为用户{}创建OCR模型: {}", ragDocSyncOcrMessage.getUserId(), modelConfig.getModelEndpoint());
-            return ocrModel;
-
+            return LLMProviderService.getStrand(ProviderProtocol.OPENAI, ocrProviderConfig);
         } catch (RuntimeException e) {
-            // 重新抛出已知的业务异常
             throw e;
         } catch (Exception e) {
-            String errorMsg = String.format("用户 %s 创建OCR模型失败: %s", ragDocSyncOcrMessage.getUserId(), e.getMessage());
+            String errorMsg = String.format("Failed to create OCR model for user %s: %s",
+                    ragDocSyncOcrMessage.getUserId(), e.getMessage());
             log.error(errorMsg, e);
             throw new BusinessException(errorMsg, e);
         }
@@ -283,5 +373,29 @@ public class PDFRagDocDocumentProcessing extends AbstractDocumentProcessingStrat
             }
             throw e;
         }
+    }
+
+    private boolean hasUsableNativeText(String nativeText) {
+        if (!StringUtils.hasText(nativeText)) {
+            return false;
+        }
+        String normalized = nativeText.trim();
+        if (normalized.length() >= MIN_TEXT_LENGTH_FOR_NATIVE_PDF) {
+            return true;
+        }
+        long visibleCharCount = normalized.chars().filter(ch -> !Character.isWhitespace(ch)).count();
+        return visibleCharCount >= MIN_TEXT_LENGTH_FOR_NATIVE_PDF;
+    }
+
+    private float resolveRenderDpi(byte[] fileBytes, int totalPages) {
+        long fileSize = fileBytes != null ? fileBytes.length : 0;
+        if (fileSize > 3L * 1024 * 1024 || totalPages > 25) {
+            return ocrRenderDpiLarge;
+        }
+        return ocrRenderDpi;
+    }
+
+    private String getCurrentProcessingFileId() {
+        return currentProcessingFileId.get();
     }
 }

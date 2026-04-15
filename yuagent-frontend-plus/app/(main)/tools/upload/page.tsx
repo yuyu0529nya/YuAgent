@@ -365,23 +365,23 @@ export default function UploadToolPage() {
                     
                     <Separator />
                     
-                    <h2 className="text-xl font-semibold">GitHub仓库</h2>
+                    <h2 className="text-xl font-semibold">来源地址</h2>
                     <FormField
                       control={form.control}
                       name="uploadUrl"
                       render={({ field }) => (
                         <FormItem>
                           <FormLabel>
-                            GitHub仓库URL <span className="text-red-500">*</span>
+                            工具来源 URL <span className="text-red-500">*</span>
                           </FormLabel>
                           <FormControl>
                             <Input 
-                              placeholder="https://github.com/username/repo" 
+                              placeholder="GitHub 仓库、MCP 服务文档页或托管服务地址" 
                               {...field} 
                             />
                           </FormControl>
                           <FormDescription>
-                            您的GitHub仓库需要包含工具定义文件
+                            GitHub 仓库会自动做仓库校验；阿里云百炼等托管 MCP 服务可填写服务地址或说明页地址
                           </FormDescription>
                           <FormMessage />
                         </FormItem>

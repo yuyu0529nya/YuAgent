@@ -1,31 +1,27 @@
 package org.yu.domain.rag.strategy.impl;
 
-import java.io.ByteArrayInputStream;
-import java.io.IOException;
-import java.io.InputStream;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
-import org.dromara.streamquery.stream.core.stream.Steam;
+import jakarta.annotation.Resource;
+import java.nio.charset.StandardCharsets;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import org.dromara.x.file.storage.core.FileStorageService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
+import org.yu.domain.rag.constant.MetadataConstant;
 import org.yu.domain.rag.message.RagDocMessage;
 import org.yu.domain.rag.model.DocumentUnitEntity;
 import org.yu.domain.rag.model.FileDetailEntity;
+import org.yu.domain.rag.model.ProcessedSegment;
+import org.yu.domain.rag.model.enums.SegmentType;
 import org.yu.domain.rag.repository.DocumentUnitRepository;
 import org.yu.domain.rag.repository.FileDetailRepository;
-
-import dev.langchain4j.data.document.Document;
-import dev.langchain4j.data.document.DocumentParser;
-import dev.langchain4j.data.document.parser.TextDocumentParser;
-import dev.langchain4j.data.document.splitter.DocumentBySentenceSplitter;
-import dev.langchain4j.data.segment.TextSegment;
-import jakarta.annotation.Resource;
+import org.yu.infrastructure.rag.processor.DocumentUnitMetadataSupport;
+import org.yu.infrastructure.rag.processor.StructuredPlainTextProcessor;
 
 @Service("txt")
 public class TXTRagDocDocumentProcessing extends AbstractDocumentProcessingStrategy {
@@ -33,161 +29,101 @@ public class TXTRagDocDocumentProcessing extends AbstractDocumentProcessingStrat
     private static final Logger log = LoggerFactory.getLogger(TXTRagDocDocumentProcessing.class);
 
     private final DocumentUnitRepository documentUnitRepository;
-
     private final FileDetailRepository fileDetailRepository;
+    private final StructuredPlainTextProcessor structuredPlainTextProcessor;
 
     @Resource
     private FileStorageService fileStorageService;
 
-    // 用于存储当前处理的文件ID，以便更新页数
     private String currentProcessingFileId;
 
     public TXTRagDocDocumentProcessing(DocumentUnitRepository documentUnitRepository,
-            FileDetailRepository fileDetailRepository) {
+            FileDetailRepository fileDetailRepository, StructuredPlainTextProcessor structuredPlainTextProcessor) {
         this.documentUnitRepository = documentUnitRepository;
         this.fileDetailRepository = fileDetailRepository;
+        this.structuredPlainTextProcessor = structuredPlainTextProcessor;
     }
 
-    /** 处理消息，设置当前处理的文件ID
-     * @param ragDocMessage 消息数据
-     * @param strategy 当前策略 */
     @Override
     public void handle(RagDocMessage ragDocMessage, String strategy) throws Exception {
-        // 设置当前处理的文件ID，用于更新页数
         this.currentProcessingFileId = ragDocMessage.getFileId();
-
-        // 调用父类处理逻辑
         super.handle(ragDocMessage, strategy);
     }
 
-    /** 获取文件页数
-     *
-     * @param bytes
-     * @param ragDocSyncOcrMessage */
     @Override
     public void pushPageSize(byte[] bytes, RagDocMessage ragDocSyncOcrMessage) {
         try {
-            DocumentParser parser = new TextDocumentParser();
-            InputStream inputStream = new ByteArrayInputStream(bytes);
-            Document document = parser.parse(inputStream);
-
-            final DocumentBySentenceSplitter documentByCharacterSplitter = new DocumentBySentenceSplitter(500, 0);
-            final List<TextSegment> split = documentByCharacterSplitter.split(document);
-
-            int segmentCount = split.size();
+            int segmentCount = buildSegments(bytes).size();
             ragDocSyncOcrMessage.setPageSize(segmentCount);
-            log.info("TXT文档分割为{}个段落", segmentCount);
-
-            // 更新数据库中的总页数
             if (currentProcessingFileId != null) {
                 LambdaUpdateWrapper<FileDetailEntity> wrapper = Wrappers.<FileDetailEntity>lambdaUpdate()
                         .eq(FileDetailEntity::getId, currentProcessingFileId)
                         .set(FileDetailEntity::getFilePageSize, segmentCount);
                 fileDetailRepository.update(wrapper);
-
-                log.info("更新TXT文件{}的总页数: {}个段落", currentProcessingFileId, segmentCount);
             }
-
-            inputStream.close();
+            log.info("TXT document chunked into {} structured segment(s)", segmentCount);
         } catch (Exception e) {
-            log.error("计算TXT文档页数失败", e);
+            log.error("Failed to calculate TXT segment count", e);
             ragDocSyncOcrMessage.setPageSize(0);
         }
     }
 
-    /** 获取文件
-     *
-     * @param ragDocSyncOcrMessage 消息数据
-     * @param strategy 当前策略 */
     @Override
     public byte[] getFileData(RagDocMessage ragDocSyncOcrMessage, String strategy) {
-        // 从数据库中获取文件详情
         FileDetailEntity fileDetailEntity = fileDetailRepository.selectById(ragDocSyncOcrMessage.getFileId());
         if (fileDetailEntity == null) {
-            log.error("文件不存在: {}", ragDocSyncOcrMessage.getFileId());
+            log.error("File not found: {}", ragDocSyncOcrMessage.getFileId());
             return new byte[0];
         }
-
-        // 转换为FileInfo并下载文件
-        log.info("准备下载TXT文档: {}", fileDetailEntity.getFilename());
         return fileStorageService.download(fileDetailEntity.getUrl()).bytes();
     }
 
-    /** ocr数据
-     *
-     * @param fileBytes
-     * @param totalPages */
     @Override
     public Map<Integer, String> processFile(byte[] fileBytes, int totalPages) {
-        log.info("当前类型为非PDF文件，直接提取文本 ——————> 不包含页码，页码概念为索引");
-
-        DocumentParser parser = new TextDocumentParser();
-        // 使用ByteArrayInputStream将字节数组转换为输入流
-        InputStream inputStream = new ByteArrayInputStream(fileBytes);
-
-        Document document;
-
-        final HashMap<Integer, String> ocrData = new HashMap<>();
-
-        try {
-            document = parser.parse(inputStream);
-
-            final DocumentBySentenceSplitter documentByCharacterSplitter = new DocumentBySentenceSplitter(500, 0);
-            final List<TextSegment> split = documentByCharacterSplitter.split(document);
-
-            Steam.of(split).forEachIdx((textSegment, index) -> {
-                final String text = textSegment.text();
-
-                ocrData.put(index, text);
-
-            });
-
-            return ocrData;
-
-        } catch (Exception e) {
-            log.error("处理文档失败", e);
-        } finally {
-            try {
-                inputStream.close();
-            } catch (IOException e) {
-                log.error("关闭输入流失败", e);
-            }
+        log.info("Using structure-aware chunking for TXT document ingestion");
+        Map<Integer, String> segmentsByIndex = new LinkedHashMap<>();
+        List<ProcessedSegment> segments = buildSegments(fileBytes);
+        for (int i = 0; i < segments.size(); i++) {
+            segmentsByIndex.put(i, segments.get(i).getContent());
         }
-
-        return null;
+        return segmentsByIndex;
     }
 
-    /** 保存数据
-     *
-     * @param ragDocSyncOcrMessage
-     * @param ocrData */
     @Override
-    public void insertData(RagDocMessage ragDocSyncOcrMessage, Map<Integer, String> ocrData) throws Exception {
+    public void insertData(RagDocMessage ragDocSyncOcrMessage, Map<Integer, String> ocrData) {
+        log.info("Persisting {} TXT segment(s)", ocrData.size());
 
-        log.info("开始保存文档内容，总共分割为{}个段落。", ocrData.size());
-
-        // 遍历每一页，将内容保存到数据库
         for (int pageIndex = 0; pageIndex < ocrData.size(); pageIndex++) {
-            String content = ocrData.getOrDefault(pageIndex, null);
+            String content = ocrData.get(pageIndex);
 
-            DocumentUnitEntity documentUnitEntity = new DocumentUnitEntity();
-            documentUnitEntity.setContent(content);
-            documentUnitEntity.setPage(pageIndex);
-            documentUnitEntity.setFileId(ragDocSyncOcrMessage.getFileId());
-            documentUnitEntity.setIsVector(false);
-            documentUnitEntity.setIsOcr(true);
+            DocumentUnitEntity entity = new DocumentUnitEntity();
+            entity.setContent(content);
+            entity.setPage(pageIndex);
+            entity.setFileId(ragDocSyncOcrMessage.getFileId());
+            entity.setIsVector(false);
+            entity.setIsOcr(StringUtils.hasText(content));
 
-            if (content == null) {
-                documentUnitEntity.setIsOcr(false);
-                log.warn("第{}页为空", pageIndex + 1);
-            }
+            ProcessedSegment segment = buildPersistedSegment(content, pageIndex);
+            DocumentUnitMetadataSupport.apply(entity, segment, pageIndex);
 
-            // 保存或更新数据
-            documentUnitRepository.checkInsert(documentUnitEntity);
-            log.debug("保存第{}页内容完成。", pageIndex + 1);
+            documentUnitRepository.checkInsert(entity);
         }
+    }
 
-        log.info("TXT文档内容保存成功");
+    private List<ProcessedSegment> buildSegments(byte[] fileBytes) {
+        String text = new String(fileBytes, StandardCharsets.UTF_8);
+        return structuredPlainTextProcessor.process(text);
+    }
 
+    private ProcessedSegment buildPersistedSegment(String content, int order) {
+        String titlePath = DocumentUnitMetadataSupport.inferTitlePath(content);
+        SegmentType type = StringUtils.hasText(titlePath) ? SegmentType.SECTION : SegmentType.TEXT;
+        ProcessedSegment segment = new ProcessedSegment(content, type, null);
+        segment.setOrder(order);
+        segment.addMetadata(MetadataConstant.SEGMENT_ORDER, order);
+        if (StringUtils.hasText(titlePath)) {
+            segment.addMetadata(MetadataConstant.TITLE_PATH, titlePath);
+        }
+        return segment;
     }
 }

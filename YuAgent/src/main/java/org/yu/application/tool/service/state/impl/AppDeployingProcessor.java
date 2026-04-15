@@ -1,5 +1,7 @@
 package org.yu.application.tool.service.state.impl;
 
+import java.util.Map;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.yu.application.container.service.ReviewContainerService;
@@ -10,11 +12,6 @@ import org.yu.infrastructure.exception.BusinessException;
 import org.yu.infrastructure.mcp_gateway.MCPGatewayService;
 import org.yu.infrastructure.utils.JsonUtils;
 
-import java.util.Map;
-
-/** 应用层工具部署处理器
- * 
- * 职责： 1. 调用MCPGatewayService进行工具部署 2. 处理部署结果 3. 转换到下一状态（获取工具列表） */
 public class AppDeployingProcessor implements AppToolStateProcessor {
 
     private static final Logger logger = LoggerFactory.getLogger(AppDeployingProcessor.class);
@@ -22,9 +19,6 @@ public class AppDeployingProcessor implements AppToolStateProcessor {
     private final MCPGatewayService mcpGatewayService;
     private final ReviewContainerService reviewContainerService;
 
-    /** 构造函数，注入MCPGatewayService
-     * 
-     * @param mcpGatewayService MCP网关服务 */
     public AppDeployingProcessor(MCPGatewayService mcpGatewayService, ReviewContainerService reviewContainerService) {
         this.mcpGatewayService = mcpGatewayService;
         this.reviewContainerService = reviewContainerService;
@@ -37,33 +31,30 @@ public class AppDeployingProcessor implements AppToolStateProcessor {
 
     @Override
     public void process(ToolEntity tool) {
-        logger.info("工具ID: {} 进入DEPLOYING状态，开始部署。", tool.getId());
+        logger.info("Tool {} entered DEPLOYING state", tool.getId());
 
         try {
-            // 获取安装命令
             Map<String, Object> installCommand = tool.getInstallCommand();
             if (installCommand == null || installCommand.isEmpty()) {
-                throw new BusinessException("工具ID: " + tool.getId() + " 安装命令为空，无法部署。");
+                throw new BusinessException("工具安装命令为空，无法部署");
             }
 
             String installCommandJson = JsonUtils.toJsonString(installCommand);
-
             ReviewContainerService.ReviewContainerConnection reviewConnection = reviewContainerService
                     .getReviewContainerConnection();
             boolean deploySuccess = mcpGatewayService.deployTool(installCommandJson, reviewConnection.getIpAddress(),
                     reviewConnection.getPort());
 
-            if (deploySuccess) {
-                logger.info("工具部署成功，工具ID: {}", tool.getId());
-            } else {
-                logger.error("工具部署失败 (API返回非成功状态)，工具ID: {}", tool.getId());
-                throw new BusinessException("MCP Gateway部署返回非成功状态。");
+            if (!deploySuccess) {
+                throw new BusinessException("MCP Gateway 部署返回非成功状态");
             }
+
+            logger.info("Tool {} deployed successfully", tool.getId());
         } catch (BusinessException e) {
-            logger.error("部署工具 {} (ID: {}) 失败: {}", tool.getName(), tool.getId(), e.getMessage(), e);
-            throw e; // 重新抛出BusinessException
+            logger.error("Deploy tool {} failed: {}", tool.getId(), e.getMessage(), e);
+            throw e;
         } catch (Exception e) {
-            logger.error("部署工具 {} (ID: {}) 过程中发生意外错误: {}", tool.getName(), tool.getId(), e.getMessage(), e);
+            logger.error("Unexpected error while deploying tool {}", tool.getId(), e);
             throw new BusinessException("部署工具过程中发生意外错误: " + e.getMessage(), e);
         }
     }

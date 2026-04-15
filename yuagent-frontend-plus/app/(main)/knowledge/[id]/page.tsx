@@ -62,11 +62,13 @@ import { Textarea } from "@/components/ui/textarea"
 import { toast } from "@/hooks/use-toast"
 
 import {
-  getDatasetDetailWithToast,
-  getDatasetFilesWithToast,
-  uploadFileWithToast,
+  getDatasetDetail,
+  getDatasetFiles,
+  uploadFile,
+  importFileByUrl,
   deleteFileWithToast,
   processFileWithToast,
+  reprocessFileWithToast,
   getDatasetFilesProgressWithToast,
   ragSearchWithToast,
 } from "@/lib/rag-dataset-service"
@@ -83,6 +85,16 @@ import { getFileStatusConfig as getFileStatusInfo } from "@/lib/file-status-util
 import { RagChatDialog } from "@/components/knowledge/RagChatDialog"
 import { DocumentUnitsDialog } from "@/components/knowledge/DocumentUnitsDialog"
 
+const KNOWLEDGE_UPLOAD_MAX_SIZE = 100 * 1024 * 1024
+const PROGRESS_SYNC_INTERVAL = 2000
+const UPLOAD_FORCE_SYNC_DURATION = 60000
+const FILE_LIST_SYNC_INTERVAL = 6000
+
+function getFileFingerprint(file: Pick<FileDetail, "id" | "originalFilename" | "filename" | "size">) {
+  const name = file.originalFilename || file.filename || file.id
+  return `${name}::${file.size}`
+}
+
 export default function DatasetDetailPage() {
   const params = useParams()
   const router = useRouter()
@@ -90,11 +102,15 @@ export default function DatasetDetailPage() {
 
   const [dataset, setDataset] = useState<RagDataset | null>(null)
   const [files, setFiles] = useState<FileDetail[]>([])
+  const [pendingFiles, setPendingFiles] = useState<FileDetail[]>([])
+  const [optimisticFiles, setOptimisticFiles] = useState<FileDetail[]>([])
   const [loading, setLoading] = useState(true)
   const [filesLoading, setFilesLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState("")
   const [debouncedQuery, setDebouncedQuery] = useState("")
+  const [remoteFileUrl, setRemoteFileUrl] = useState("")
+  const [remoteFileName, setRemoteFileName] = useState("")
   const [fileToDelete, setFileToDelete] = useState<FileDetail | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
   const [isUploading, setIsUploading] = useState(false)
@@ -105,6 +121,9 @@ export default function DatasetDetailPage() {
   const filesProgressRef = useRef<FileProcessProgressDTO[]>([])
   const isProcessingRef = useRef<{ [fileId: string]: boolean }>({})
   const completedFileIdsRef = useRef<Set<string>>(new Set())
+  const forceSyncUntilRef = useRef<number>(0)
+  const pollInFlightRef = useRef(false)
+  const lastFileListSyncAtRef = useRef(0)
   
   // 鏂板鐘舵€侊細RAG鎼滅储
   const [searchDocuments, setSearchDocuments] = useState<DocumentUnitDTO[]>([])
@@ -126,6 +145,11 @@ export default function DatasetDetailPage() {
     current: 1,
     pages: 0
   })
+
+  const displayedFiles = [...pendingFiles, ...optimisticFiles, ...files].filter(
+    (file, index, list) => list.findIndex(item => getFileFingerprint(item) === getFileFingerprint(file)) === index
+  )
+  const displayedFileCount = (dataset?.fileCount || 0) + pendingFiles.length + optimisticFiles.length
 
   // 闃叉姈澶勭悊鎼滅储鏌ヨ
   useEffect(() => {
@@ -164,18 +188,31 @@ export default function DatasetDetailPage() {
     if (!datasetId) return
 
     const interval = setInterval(() => {
-      // 鍙湁褰撴湁鏂囦欢姝ｅ湪澶勭悊鏃舵墠鍒锋柊杩涘害
-      const hasProcessingFiles = filesProgressRef.current.some(p => 
-        p.processProgress !== undefined && p.processProgress < 100
-      )
-      
-      if (hasProcessingFiles || Object.keys(isProcessingRef.current).some(key => isProcessingRef.current[key])) {
-        loadFilesProgress()
+      if (pollInFlightRef.current) {
+        return
       }
-    }, 3000) // 缂╃煭涓?绉掑埛鏂颁竴娆?
+      const hasProcessingFiles = filesProgressRef.current.some(isProgressStillActive)
+      const shouldForceSync = Date.now() < forceSyncUntilRef.current
+      const hasManualProcessing = Object.keys(isProcessingRef.current).some(key => isProcessingRef.current[key])
+
+      if (hasProcessingFiles || hasManualProcessing || shouldForceSync || isUploading) {
+        pollInFlightRef.current = true
+        const now = Date.now()
+        const shouldSyncFileList = now - lastFileListSyncAtRef.current >= FILE_LIST_SYNC_INTERVAL
+        Promise.all([
+          loadFilesProgress(),
+          shouldSyncFileList ? loadFiles(pageData.current, debouncedQuery, true) : Promise.resolve(),
+        ]).finally(() => {
+          if (shouldSyncFileList) {
+            lastFileListSyncAtRef.current = now
+          }
+          pollInFlightRef.current = false
+        })
+      }
+    }, PROGRESS_SYNC_INTERVAL)
 
     return () => clearInterval(interval)
-  }, [datasetId])
+  }, [datasetId, pageData.current, debouncedQuery, isUploading])
 
   // 鐩戞帶杩涘害鍙樺寲锛屾櫤鑳藉埛鏂版枃浠跺垪琛?
   useEffect(() => {
@@ -200,7 +237,7 @@ export default function DatasetDetailPage() {
       setLoading(true)
       setError(null)
 
-      const response = await getDatasetDetailWithToast(datasetId)
+      const response = await getDatasetDetail(datasetId)
 
       if (response.code === 200) {
         setDataset(response.data)
@@ -216,24 +253,31 @@ export default function DatasetDetailPage() {
   }
 
   // 鍔犺浇鏂囦欢鍒楄〃
-  const loadFiles = async (page: number = 1, keyword?: string) => {
+  const loadFiles = async (page: number = 1, keyword?: string, silent: boolean = false) => {
     try {
-      setFilesLoading(true)
+      if (!silent) {
+        setFilesLoading(true)
+      }
 
-      const response = await getDatasetFilesWithToast(datasetId, {
+      const response = await getDatasetFiles(datasetId, {
         page,
         pageSize: 15,
         keyword: keyword?.trim() || undefined
       })
 
       if (response.code === 200) {
+        const serverFingerprints = new Set((response.data.records || []).map(file => getFileFingerprint(file)))
         setPageData(response.data)
         setFiles(response.data.records || [])
+        setPendingFiles(prev => prev.filter(file => !serverFingerprints.has(getFileFingerprint(file))))
+        setOptimisticFiles(prev => prev.filter(file => !serverFingerprints.has(getFileFingerprint(file))))
       }
     } catch (error) {
  
     } finally {
-      setFilesLoading(false)
+      if (!silent) {
+        setFilesLoading(false)
+      }
     }
   }
 
@@ -243,20 +287,53 @@ export default function DatasetDetailPage() {
     if (!selectedFiles || selectedFiles.length === 0) return
 
     try {
+      const filesToUpload = Array.from(selectedFiles)
+      const oversizedFile = filesToUpload.find(file => file.size > KNOWLEDGE_UPLOAD_MAX_SIZE)
+      if (oversizedFile) {
+        toast({
+          title: "文件过大",
+          description: `${oversizedFile.name} 超过 ${(KNOWLEDGE_UPLOAD_MAX_SIZE / 1024 / 1024).toFixed(0)}MB 上传上限`,
+          variant: "destructive",
+        })
+        return
+      }
+
       setIsUploading(true)
 
       let hasSuccess = false
-      for (const file of Array.from(selectedFiles)) {
-        const response = await uploadFileWithToast(datasetId, file)
+      for (const file of filesToUpload) {
+        const pendingFile = createPendingFile(file)
+        insertPendingFile(pendingFile)
+
+        const response = await uploadFile(datasetId, file)
         if (response.code === 200) {
           hasSuccess = true
+          if (response.data) {
+            resolvePendingFile(pendingFile.id, response.data)
+          }
+          toast({
+            title: "上传成功",
+            description: `${file.name} 已开始处理`,
+          })
+        } else {
+          if (shouldKeepPendingFile(response.message)) {
+            keepPendingFileAlive(pendingFile.id)
+          } else {
+            removePendingFile(pendingFile.id)
+          }
+          toast({
+            title: "上传失败",
+            description: normalizeUploadError(response.message, file.name),
+            variant: "destructive",
+          })
         }
       }
 
       if (hasSuccess) {
+        forceSyncUntilRef.current = Date.now() + UPLOAD_FORCE_SYNC_DURATION
+        lastFileListSyncAtRef.current = 0
         await Promise.all([
-          loadFiles(pageData.current, debouncedQuery),
-          loadDatasetDetail(),
+          loadFiles(pageData.current, debouncedQuery, true),
           loadFilesProgress(),
         ])
       }
@@ -278,6 +355,9 @@ export default function DatasetDetailPage() {
       const response = await deleteFileWithToast(datasetId, fileToDelete.id)
 
       if (response.code === 200) {
+        setPendingFiles(prev => prev.filter(item => item.id !== fileToDelete.id))
+        setOptimisticFiles(prev => prev.filter(item => item.id !== fileToDelete.id))
+        setFiles(prev => prev.filter(item => item.id !== fileToDelete.id))
         // 閲嶆柊鍔犺浇鏂囦欢鍒楄〃鍜屾暟鎹泦淇℃伅
         loadFiles(pageData.current, debouncedQuery)
         loadDatasetDetail()
@@ -378,13 +458,11 @@ export default function DatasetDetailPage() {
     try {
       const response = await getDatasetFilesProgressWithToast(datasetId)
       if (response.code === 200) {
-        // 閬垮厤涓嶅繀瑕佺殑鐘舵€佹洿鏂?
         const newProgress = response.data
         const hasChanged = JSON.stringify(newProgress) !== JSON.stringify(filesProgressRef.current)
         
         if (hasChanged) {
           setFilesProgress(newProgress)
- 
         }
       }
     } catch (error) {
@@ -424,8 +502,230 @@ export default function DatasetDetailPage() {
   // 杩欎簺鍑芥暟宸茬粡琚柊鐨勭粺涓€鐘舵€侀€昏緫鏇夸唬锛屼笉鍐嶉渶瑕?
 
   // 鑾峰彇鏂囦欢澶勭悊杩涘害淇℃伅
+  const handleRetryFile = async (fileId: string, processType: ProcessType) => {
+    try {
+      setIsProcessing(prev => ({ ...prev, [fileId]: true }))
+
+      const response = await reprocessFileWithToast({
+        fileId,
+        datasetId,
+        processType
+      })
+
+      if (response.code === 200) {
+        forceSyncUntilRef.current = Date.now() + UPLOAD_FORCE_SYNC_DURATION
+        lastFileListSyncAtRef.current = 0
+        await Promise.all([
+          loadFilesProgress(),
+          loadFiles(pageData.current, debouncedQuery, true),
+        ])
+      }
+    } catch (error) {
+ 
+    } finally {
+      setIsProcessing(prev => ({ ...prev, [fileId]: false }))
+    }
+  }
+
+  const handleImportByUrl = async () => {
+    const trimmedUrl = remoteFileUrl.trim()
+    if (!trimmedUrl) {
+      toast({
+        title: "请输入文件链接",
+        variant: "destructive",
+      })
+      return
+    }
+
+    try {
+      setIsUploading(true)
+
+      const pendingName = remoteFileName.trim() || inferRemoteFilename(trimmedUrl)
+      const pendingFile = createVirtualPendingFile(pendingName)
+      insertPendingFile(pendingFile)
+
+      const response = await importFileByUrl({
+        datasetId,
+        url: trimmedUrl,
+        filename: remoteFileName.trim() || undefined,
+      })
+
+      if (response.code === 200 && response.data) {
+        resolvePendingFile(pendingFile.id, response.data)
+        setRemoteFileUrl("")
+        setRemoteFileName("")
+        forceSyncUntilRef.current = Date.now() + UPLOAD_FORCE_SYNC_DURATION
+        lastFileListSyncAtRef.current = 0
+        await Promise.all([
+          loadFiles(pageData.current, debouncedQuery, true),
+          loadFilesProgress(),
+        ])
+        toast({
+          title: "导入成功",
+          description: `${response.data.originalFilename} 已开始处理`,
+        })
+        return
+      }
+
+      if (shouldKeepPendingFile(response.message)) {
+        keepPendingFileAlive(pendingFile.id)
+      } else {
+        removePendingFile(pendingFile.id)
+      }
+      toast({
+        title: "导入失败",
+        description: normalizeUploadError(response.message, pendingName),
+        variant: "destructive",
+      })
+    } catch (error) {
+      toast({
+        title: "导入失败",
+        description: error instanceof Error ? error.message : "导入失败，请稍后重试",
+        variant: "destructive",
+      })
+    } finally {
+      setIsUploading(false)
+    }
+  }
+
   const getFileProgressInfo = (fileId: string) => {
     return filesProgress.find(progress => progress.fileId === fileId)
+  }
+
+  const isProgressStillActive = (progress: FileProcessProgressDTO) => {
+    if (!progress.processingStatusEnum) {
+      return true
+    }
+
+    if (
+      progress.processingStatusEnum === "COMPLETED" ||
+      progress.processingStatusEnum === "EMBEDDING_FAILED" ||
+      progress.processingStatusEnum === "OCR_FAILED"
+    ) {
+      return false
+    }
+
+    if (progress.processProgress === undefined) {
+      return true
+    }
+
+    return progress.processProgress < 100
+  }
+
+  const normalizeUploadError = (message?: string, filename?: string) => {
+    if (!message) {
+      return filename ? `${filename} 上传失败，请重试` : "上传失败，请重试"
+    }
+
+    const lower = message.toLowerCase()
+    if (lower.includes("aborted") || lower.includes("aborterror")) {
+      return filename
+        ? `${filename} 上传请求超时，请稍后重试`
+        : "上传请求超时，请稍后重试"
+    }
+
+    if (lower.includes("timeout")) {
+      return filename
+        ? `${filename} 上传超时，请稍后重试`
+        : "上传超时，请稍后重试"
+    }
+
+    return message
+  }
+
+  const shouldKeepPendingFile = (message?: string) => {
+    if (!message) {
+      return false
+    }
+
+    const lower = message.toLowerCase()
+    return lower.includes("aborted") || lower.includes("aborterror") || lower.includes("timeout")
+  }
+
+  const createPendingFile = (file: File): FileDetail => {
+    const now = new Date().toISOString()
+    const ext = file.name.includes(".") ? file.name.split(".").pop() || "" : ""
+
+    return {
+      id: `pending-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      url: "",
+      size: file.size,
+      filename: file.name,
+      originalFilename: file.name,
+      ext,
+      contentType: file.type || "application/octet-stream",
+      dataSetId: datasetId,
+      filePageSize: 0,
+      isInitialize: 0,
+      isEmbedding: 0,
+      userId: dataset?.userId || "",
+      createdAt: now,
+      updatedAt: now,
+    }
+  }
+
+  const createVirtualPendingFile = (filename: string): FileDetail => {
+    const now = new Date().toISOString()
+    const ext = filename.includes(".") ? filename.split(".").pop() || "" : ""
+
+    return {
+      id: `pending-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      url: "",
+      size: 0,
+      filename,
+      originalFilename: filename,
+      ext,
+      contentType: "application/octet-stream",
+      dataSetId: datasetId,
+      filePageSize: 0,
+      isInitialize: 0,
+      isEmbedding: 0,
+      userId: dataset?.userId || "",
+      createdAt: now,
+      updatedAt: now,
+    }
+  }
+
+  const inferRemoteFilename = (url: string) => {
+    try {
+      const pathname = new URL(url).pathname
+      const rawName = pathname.split("/").filter(Boolean).pop()
+      if (!rawName) {
+        return "remote-import"
+      }
+      return decodeURIComponent(rawName)
+    } catch {
+      return "remote-import"
+    }
+  }
+
+  const insertPendingFile = (file: FileDetail) => {
+    setPendingFiles(prev => {
+      if (prev.some(item => item.id === file.id)) {
+        return prev
+      }
+      return [file, ...prev]
+    })
+  }
+
+  const resolvePendingFile = (pendingId: string, file: FileDetail) => {
+    setPendingFiles(prev => prev.filter(item => item.id !== pendingId))
+    setOptimisticFiles(prev => {
+      if (prev.some(item => getFileFingerprint(item) === getFileFingerprint(file))) {
+        return prev
+      }
+      return [file, ...prev]
+    })
+  }
+
+  const keepPendingFileAlive = (fileId: string) => {
+    setPendingFiles(prev =>
+      prev.map(item => (item.id === fileId ? { ...item, updatedAt: new Date().toISOString() } : item))
+    )
+  }
+
+  const removePendingFile = (fileId: string) => {
+    setPendingFiles(prev => prev.filter(item => item.id !== fileId))
   }
 
   // 鑾峰彇鐘舵€佸浘鏍?
@@ -584,7 +884,7 @@ export default function DatasetDetailPage() {
               
               <div>
                 <label className="text-sm font-medium text-muted-foreground">文件数量</label>
-                <p className="text-sm">{dataset.fileCount} 个文件</p>
+                <p className="text-sm">{displayedFileCount} 个文件</p>
               </div>
               
               <div>
@@ -685,8 +985,35 @@ export default function DatasetDetailPage() {
                   accept=".pdf,.doc,.docx,.txt,.md,.html,.json,.csv,.xlsx,.xls"
                 />
                 <p className="text-xs text-muted-foreground mt-2">
-                  支持 PDF、Word、文本等格式
+                  支持 PDF、Word、文本等格式，单文件最高 100MB
                 </p>
+                <div className="mt-3 space-y-2">
+                  <Input
+                    type="url"
+                    placeholder="粘贴网络文件链接，例如 https://example.com/demo.pdf"
+                    value={remoteFileUrl}
+                    onChange={(e) => setRemoteFileUrl(e.target.value)}
+                    disabled={isUploading}
+                  />
+                  <Input
+                    placeholder="可选：自定义文件名"
+                    value={remoteFileName}
+                    onChange={(e) => setRemoteFileName(e.target.value)}
+                    disabled={isUploading}
+                  />
+                  <Button
+                    variant="secondary"
+                    className="w-full"
+                    disabled={isUploading || !remoteFileUrl.trim()}
+                    onClick={handleImportByUrl}
+                  >
+                    <Upload className="mr-2 h-4 w-4" />
+                    {isUploading ? "导入中..." : "网络导入"}
+                  </Button>
+                  <p className="text-xs text-muted-foreground">
+                    导入后的文件会继续走同一套 OCR、切块和向量化链路
+                  </p>
+                </div>
               </div>
             </CardContent>
           </Card>
@@ -738,7 +1065,7 @@ export default function DatasetDetailPage() {
                     </div>
                   ))}
                 </div>
-              ) : files.length === 0 ? (
+              ) : displayedFiles.length === 0 ? (
                 <div className="text-center py-8">
                   <File className="h-12 w-12 mx-auto text-gray-400 mb-4" />
                   <h3 className="text-lg font-medium mb-2">
@@ -763,10 +1090,12 @@ export default function DatasetDetailPage() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {files.map((file) => {
+                      {displayedFiles.map((file) => {
                         const fileStatusDisplay = getFileStatusDisplay(file)
                         const progressInfo = getFileProgressInfo(file.id)
                         const processing = isProcessing[file.id]
+                        const canRetryOcr = progressInfo?.processingStatusEnum === "OCR_FAILED"
+                        const canRetryEmbedding = progressInfo?.processingStatusEnum === "EMBEDDING_FAILED"
                         
                         return (
                           <TableRow key={file.id}>
@@ -823,7 +1152,7 @@ export default function DatasetDetailPage() {
                             <TableCell>
                               <div className="flex items-center gap-1">
                                 
-                                {(fileStatusDisplay.status.text === "处理完成" || fileStatusDisplay.status.text === "OCR处理完成") && (
+                                {(fileStatusDisplay.status.text === "处理完成" || fileStatusDisplay.status.text === "解析完成") && (
                                   <Button
                                     variant="ghost"
                                     size="icon"
@@ -834,10 +1163,32 @@ export default function DatasetDetailPage() {
                                     <FileText className="h-4 w-4" />
                                   </Button>
                                 )}
+                                {(canRetryOcr || canRetryEmbedding) && (
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-8 w-8"
+                                    disabled={processing}
+                                    onClick={() =>
+                                      handleRetryFile(
+                                        file.id,
+                                        canRetryOcr ? ProcessType.INITIALIZE : ProcessType.EMBEDDING
+                                      )
+                                    }
+                                    title={canRetryOcr ? "重试OCR处理" : "重试向量化处理"}
+                                  >
+                                    {processing ? (
+                                      <Loader2 className="h-4 w-4 animate-spin" />
+                                    ) : (
+                                      <RefreshCw className="h-4 w-4" />
+                                    )}
+                                  </Button>
+                                )}
                                 <Button
                                   variant="ghost"
                                   size="icon"
                                   className="h-8 w-8"
+                                  disabled={!file.url}
                                   onClick={() => window.open(file.url, '_blank')}
                                   title="下载文件"
                                 >
@@ -939,7 +1290,7 @@ export default function DatasetDetailPage() {
                     <div className="flex items-start justify-between mb-2">
                       <div className="flex items-center gap-2">
                         <Badge variant="outline" className="text-xs">
-                          第 {doc.page} 页
+                          第 {doc.sourcePage ?? doc.page} 页
                         </Badge>
                         <Badge variant={doc.isVector ? "default" : "secondary"} className="text-xs">
                           {doc.isVector ? "已向量化" : "未向量化"}
@@ -949,10 +1300,26 @@ export default function DatasetDetailPage() {
                             OCR处理
                           </Badge>
                         )}
+                        {doc.segmentType && (
+                          <Badge variant="outline" className="text-xs uppercase">
+                            {doc.segmentType}
+                          </Badge>
+                        )}
                       </div>
-                      <span className="text-xs text-muted-foreground">
-                        #{index + 1}
-                      </span>
+                      <div className="text-right text-xs text-muted-foreground">
+                        <div>#{index + 1}</div>
+                        {typeof doc.similarityScore === "number" && (
+                          <div>相关度 {doc.similarityScore.toFixed(3)}</div>
+                        )}
+                      </div>
+                    </div>
+                    <div className="mb-2 space-y-1">
+                      {doc.fileName && (
+                        <div className="text-sm font-medium">{doc.fileName}</div>
+                      )}
+                      {doc.titlePath && (
+                        <div className="text-xs text-muted-foreground">{doc.titlePath}</div>
+                      )}
                     </div>
                     <div className="text-sm leading-relaxed">
                       {doc.content.length > 500 

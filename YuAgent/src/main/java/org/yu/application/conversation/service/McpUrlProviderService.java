@@ -3,18 +3,24 @@ package org.yu.application.conversation.service;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
-import org.yu.application.container.service.ContainerAppService;
 import org.yu.application.container.dto.ContainerDTO;
+import org.yu.application.container.service.ContainerAppService;
 import org.yu.domain.container.constant.ContainerStatus;
-import org.yu.domain.tool.service.ToolDomainService;
 import org.yu.domain.tool.model.ToolEntity;
-import org.yu.infrastructure.mcp_gateway.MCPGatewayService;
+import org.yu.domain.tool.service.ToolDomainService;
 import org.yu.infrastructure.exception.BusinessException;
+import org.yu.infrastructure.mcp_gateway.HostedMcpInstallCommandHelper;
+import org.yu.infrastructure.mcp_gateway.MCPGatewayService;
 import org.yu.infrastructure.utils.JsonUtils;
 
+import java.io.IOException;
+import java.net.InetSocketAddress;
+import java.net.Socket;
 import java.util.Map;
 
-/** MCP URL提供服务 负责协调容器管理和URL构建 */
+/**
+ * Coordinates MCP runtime access for both user-installed tools and global tools.
+ */
 @Service
 public class McpUrlProviderService {
 
@@ -31,201 +37,243 @@ public class McpUrlProviderService {
         this.toolDomainService = toolDomainService;
     }
 
-    /** 智能获取SSE URL：自动判断工具类型并选择连接策略
-     * 
-     * @param mcpServerName 工具服务名称
-     * @param userId 用户ID（可选，用户工具必需）
-     * @return 对应的SSE连接URL */
     public String getSSEUrl(String mcpServerName, String userId) {
-        // 1. 自动判断工具类型
+        ToolEntity tool = resolveToolForUsage(mcpServerName, userId);
+        if (isHostedTool(tool)) {
+            return buildHostedToolSSEUrl(tool);
+        }
         boolean isGlobalTool = isGlobalTool(mcpServerName, userId);
-
         if (isGlobalTool) {
-            // 全局工具：使用审核容器
             return buildReviewContainerSSEUrl(mcpServerName);
         }
-
-        // 用户工具：需要用户容器
         return buildUserContainerSSEUrl(mcpServerName, userId);
     }
 
-    /** 获取MCP工具的SSE URL（包含容器自动创建和启动）
-     * 
-     * @param mcpServerName 工具服务名称
-     * @param userId 用户ID
-     * @return SSE连接URL */
     public String getMcpToolUrl(String mcpServerName, String userId) {
         try {
             return getSSEUrl(mcpServerName, userId);
         } catch (Exception e) {
-            logger.error("获取MCP工具URL失败: userId={}, tool={}", userId, mcpServerName, e);
-            throw new BusinessException("无法连接工具：" + mcpServerName + " - " + e.getMessage());
+            logger.error("Failed to resolve MCP tool URL: userId={}, tool={}", userId, mcpServerName, e);
+            throw new BusinessException("无法连接工具: " + mcpServerName + " - " + e.getMessage());
         }
     }
 
-    /** 判断是否为全局工具 */
     private boolean isGlobalTool(String mcpServerName, String userId) {
         try {
-            ToolEntity tool = toolDomainService.getToolByServerNameForUsage(mcpServerName, userId);
+            ToolEntity tool = resolveToolForUsage(mcpServerName, userId);
             return tool != null && tool.isGlobal();
         } catch (Exception e) {
-            logger.warn("无法判断工具类型，默认为用户工具: {}", mcpServerName, e);
-            return false; // 默认为用户工具，需要用户容器
+            logger.warn("Unable to determine tool scope, defaulting to user container mode: {}", mcpServerName, e);
+            return false;
         }
     }
 
-    /** 构建用户容器工具SSE URL */
+    private ToolEntity resolveToolForUsage(String mcpServerName, String userId) {
+        return toolDomainService.getToolByServerNameForUsage(mcpServerName, userId);
+    }
+
+    private boolean isHostedTool(ToolEntity tool) {
+        return tool != null && tool.getInstallCommand() != null
+                && HostedMcpInstallCommandHelper.isHostedConfig(tool.getInstallCommand());
+    }
+
+    private String buildHostedToolSSEUrl(ToolEntity tool) {
+        try {
+            HostedMcpInstallCommandHelper.NormalizedInstallCommand normalizedInstallCommand = HostedMcpInstallCommandHelper
+                    .normalizeInstallCommand(tool.getInstallCommand(), tool.getMcpServerName(), tool.getName());
+            String installCommandJson = convertInstallCommand(normalizedInstallCommand.installCommand());
+
+            logger.info("Preparing hosted MCP connection via shared gateway: tool={}, server={}", tool.getId(),
+                    normalizedInstallCommand.serverName());
+            boolean deploySuccess = mcpGatewayService.deployTool(installCommandJson);
+            if (!deploySuccess) {
+                throw new BusinessException("托管MCP共享网关部署失败");
+            }
+
+            String sseUrl = mcpGatewayService.buildGlobalSSEUrl(normalizedInstallCommand.serverName());
+            logger.info("Hosted MCP connection ready via shared gateway: tool={}, url={}", tool.getId(),
+                    maskSensitiveInfo(sseUrl));
+            return sseUrl;
+        } catch (Exception e) {
+            logger.error("Failed to build hosted MCP URL: tool={}", tool != null ? tool.getId() : null, e);
+            throw new BusinessException("无法连接托管MCP工具: " + e.getMessage(), e);
+        }
+    }
+
     private String buildUserContainerSSEUrl(String mcpServerName, String userId) {
         try {
-            logger.info("准备用户容器工具连接: userId={}, tool={}", userId, mcpServerName);
+            logger.info("Preparing user container MCP connection: userId={}, tool={}", userId, mcpServerName);
 
-            // 1. 确保用户容器就绪（自动创建和启动）
             ContainerDTO containerInfo = ensureUserContainerReady(userId);
-
-            // 2. 构建容器SSE URL
-            String sseUrl = mcpGatewayService.buildUserContainerUrl(mcpServerName, containerInfo.getIpAddress(),
-                    containerInfo.getExternalPort());
-
-            // 3. 部署工具
+            waitForContainerEndpoint(containerInfo, mcpServerName, userId);
             deployTool(containerInfo, mcpServerName, userId);
 
-            logger.info("用户容器工具连接就绪: userId={}, url={}", userId, maskSensitiveInfo(sseUrl));
+            String sseUrl = mcpGatewayService.buildUserContainerUrl(mcpServerName, containerInfo.getIpAddress(),
+                    resolveContainerAccessPort(containerInfo));
+            logger.info("User container MCP connection ready: userId={}, url={}", userId, maskSensitiveInfo(sseUrl));
             return sseUrl;
-
         } catch (Exception e) {
-            logger.error("构建用户容器SSE URL失败: userId={}, tool={}", userId, mcpServerName, e);
-            throw new BusinessException("无法连接用户工具：" + e.getMessage());
+            logger.error("Failed to build user container MCP URL: userId={}, tool={}", userId, mcpServerName, e);
+            throw new BusinessException("无法连接用户工具: " + e.getMessage(), e);
         }
     }
 
-    /** 构建审核容器工具SSE URL */
     private String buildReviewContainerSSEUrl(String mcpServerName) {
         try {
-            logger.info("准备审核容器工具连接: tool={}", mcpServerName);
-
-            // 1. 确保审核容器就绪（自动创建和启动）
+            logger.info("Preparing review container MCP connection: tool={}", mcpServerName);
             ContainerDTO containerInfo = ensureReviewContainerReady();
-
-            // 2. 构建容器SSE URL
             String sseUrl = mcpGatewayService.buildUserContainerUrl(mcpServerName, containerInfo.getIpAddress(),
-                    containerInfo.getExternalPort());
-
-            logger.info("审核容器工具连接就绪: tool={}, url={}", mcpServerName, maskSensitiveInfo(sseUrl));
+                    resolveContainerAccessPort(containerInfo));
+            logger.info("Review container MCP connection ready: tool={}, url={}", mcpServerName,
+                    maskSensitiveInfo(sseUrl));
             return sseUrl;
-
         } catch (Exception e) {
-            logger.error("构建审核容器SSE URL失败: tool={}", mcpServerName, e);
-            throw new BusinessException("无法连接全局工具：" + e.getMessage());
+            logger.error("Failed to build review container MCP URL: tool={}", mcpServerName, e);
+            throw new BusinessException("无法连接全局工具: " + e.getMessage(), e);
         }
     }
 
-    /** 确保用户容器就绪（自动创建和启动） */
     private ContainerDTO ensureUserContainerReady(String userId) {
         try {
-            // ContainerAppService.getUserContainer() 已经包含自动创建和启动逻辑
             ContainerDTO userContainer = containerAppService.getUserContainer(userId);
-
-            // 最终验证容器状态
             if (!isContainerHealthy(userContainer)) {
                 throw new BusinessException("用户容器准备失败，状态异常: " + userContainer.getStatus());
             }
-
             return userContainer;
         } catch (Exception e) {
-            logger.error("准备用户容器失败: userId={}", userId, e);
-            throw new BusinessException("用户容器准备失败: " + e.getMessage());
+            logger.error("Failed to prepare user container: userId={}", userId, e);
+            throw new BusinessException("用户容器准备失败: " + e.getMessage(), e);
         }
     }
 
-    /** 检查容器是否健康（使用统一的健康检查机制） 注意：此方法基于DTO进行基础检查，详细的Docker状态检查由ContainerAppService负责 */
     private boolean isContainerHealthy(ContainerDTO container) {
         if (container == null) {
             return false;
         }
 
-        // 检查容器状态是否为运行中
         boolean isRunning = ContainerStatus.RUNNING.equals(container.getStatus());
-
-        // 检查必要的网络信息是否存在
-        boolean hasNetworkInfo = container.getIpAddress() != null && container.getExternalPort() != null;
-
-        // 检查Docker容器ID是否存在（基础验证）
+        boolean hasNetworkInfo = container.getIpAddress() != null && resolveContainerAccessPort(container) != null;
         boolean hasDockerContainerId = container.getDockerContainerId() != null;
-
         boolean basicHealthy = isRunning && hasNetworkInfo && hasDockerContainerId;
 
         if (!basicHealthy) {
-            logger.warn("容器基础健康检查失败: containerId={}, running={}, networkInfo={}, dockerId={}", container.getId(),
-                    isRunning, hasNetworkInfo, hasDockerContainerId);
+            logger.warn("Container health check failed: containerId={}, running={}, networkInfo={}, dockerId={}",
+                    container.getId(), isRunning, hasNetworkInfo, hasDockerContainerId);
         }
-
         return basicHealthy;
     }
 
-    /** 部署工具到用户容器 */
+    private void waitForContainerEndpoint(ContainerDTO container, String toolName, String userId) {
+        Integer accessPort = resolveContainerAccessPort(container);
+        if (container == null || container.getIpAddress() == null || accessPort == null) {
+            throw new BusinessException("MCP容器缺少网络信息，无法连接工具: " + toolName);
+        }
+
+        final int maxAttempts = 10;
+        final long sleepMillis = 1000L;
+        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+            if (isSocketReady(container.getIpAddress(), accessPort, 1500)) {
+                if (attempt > 1) {
+                    logger.info("Container endpoint became ready after {} attempt(s): userId={}, tool={}, target={}:{}",
+                            attempt, userId, toolName, container.getIpAddress(), accessPort);
+                }
+                return;
+            }
+
+            if (attempt < maxAttempts) {
+                logger.warn("Container endpoint not ready yet, retrying: userId={}, tool={}, attempt={}/{}, target={}:{}",
+                        userId, toolName, attempt, maxAttempts, container.getIpAddress(), accessPort);
+                try {
+                    Thread.sleep(sleepMillis);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new BusinessException("等待MCP容器就绪被中断: " + e.getMessage(), e);
+                }
+            }
+        }
+
+        throw new BusinessException(
+                "MCP用户容器未就绪，无法连接工具: " + toolName + " (" + container.getIpAddress() + ":" + accessPort + ")");
+    }
+
+    private boolean isSocketReady(String host, Integer port, int timeoutMillis) {
+        try (Socket socket = new Socket()) {
+            socket.connect(new InetSocketAddress(host, port), timeoutMillis);
+            return true;
+        } catch (IOException e) {
+            return false;
+        }
+    }
+
     private void deployTool(ContainerDTO container, String toolName, String userId) {
         try {
             ToolEntity tool = toolDomainService.getToolByServerNameForUsage(toolName, userId);
             if (tool == null) {
-                logger.warn("无法找到工具定义: {}", toolName);
-                return;
+                throw new BusinessException("无法找到工具定义: " + toolName);
             }
 
+            HostedMcpInstallCommandHelper.NormalizedInstallCommand normalizedInstallCommand = HostedMcpInstallCommandHelper
+                    .normalizeInstallCommand(tool.getInstallCommand(), tool.getMcpServerName(), tool.getName());
+            tool.setInstallCommand(normalizedInstallCommand.installCommand());
+
             String installCommandJson = convertInstallCommand(tool.getInstallCommand());
-            mcpGatewayService.deployTool(installCommandJson, container.getIpAddress(), container.getExternalPort());
+            boolean deploySuccess = mcpGatewayService.deployTool(installCommandJson, container.getIpAddress(),
+                    resolveContainerAccessPort(container));
+            if (!deploySuccess) {
+                throw new BusinessException("MCP 容器内部部署失败");
+            }
 
             Thread.sleep(1000L);
-            logger.debug("工具 {} 部署请求已发送到用户容器", toolName);
-
+            logger.debug("Tool {} deployed to user container", toolName);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new BusinessException("部署用户容器工具时被中断: " + e.getMessage(), e);
         } catch (Exception e) {
-            logger.warn("部署容器内工具失败: tool={}, error={}", toolName, e.getMessage());
-            // 不抛出异常，避免影响主流程
+            logger.warn("Failed to deploy tool into user container: tool={}, error={}", toolName, e.getMessage());
+            throw new BusinessException("部署用户容器工具失败: " + e.getMessage(), e);
         }
     }
 
-    /** 将工具安装命令转换为JSON字符串 */
     private String convertInstallCommand(Map<String, Object> installCommand) {
         try {
             return JsonUtils.toJsonString(installCommand);
         } catch (Exception e) {
-            throw new BusinessException("转换安装命令失败: " + e.getMessage());
+            throw new BusinessException("转换安装命令失败: " + e.getMessage(), e);
         }
     }
 
-    /** 确保审核容器就绪（自动创建和启动） */
     private ContainerDTO ensureReviewContainerReady() {
         try {
-            // ContainerAppService.getReviewContainer() 已经包含自动创建和启动逻辑
             ContainerDTO reviewContainer = containerAppService.getOrCreateReviewContainer();
-
-            // 最终验证容器状态
             if (!isContainerHealthy(reviewContainer)) {
                 throw new BusinessException("审核容器准备失败，状态异常: " + reviewContainer.getStatus());
             }
-
             return reviewContainer;
         } catch (Exception e) {
-            logger.error("准备审核容器失败", e);
-            throw new BusinessException("审核容器准备失败: " + e.getMessage());
+            logger.error("Failed to prepare review container", e);
+            throw new BusinessException("审核容器准备失败: " + e.getMessage(), e);
         }
     }
 
-    /** 部署全局工具到审核容器 */
-    private void deployGlobalTool(ContainerDTO container, String toolName) {
-        try {
-            // 对于全局工具，暂时跳过部署步骤，因为全局工具应该已经在审核容器中预安装
-            logger.debug("全局工具 {} 连接到审核容器，跳过部署步骤（应已预安装）", toolName);
-
-        } catch (Exception e) {
-            logger.warn("处理审核容器内全局工具时出错: tool={}, error={}", toolName, e.getMessage());
-            // 不抛出异常，避免影响主流程
-        }
-    }
-
-    /** 屏蔽敏感信息 */
     private String maskSensitiveInfo(String url) {
-        if (url == null)
+        if (url == null) {
             return null;
+        }
         return url.replaceAll("api_key=[^&]*", "api_key=***");
+    }
+
+    private Integer resolveContainerAccessPort(ContainerDTO container) {
+        if (container == null || container.getIpAddress() == null) {
+            return null;
+        }
+        if (isLocalAddress(container.getIpAddress())) {
+            return container.getExternalPort();
+        }
+        return container.getInternalPort();
+    }
+
+    private boolean isLocalAddress(String ipAddress) {
+        return "localhost".equalsIgnoreCase(ipAddress) || "host.docker.internal".equalsIgnoreCase(ipAddress)
+                || "127.0.0.1".equals(ipAddress) || "::1".equals(ipAddress) || "0:0:0:0:0:0:0:1".equals(ipAddress);
     }
 }

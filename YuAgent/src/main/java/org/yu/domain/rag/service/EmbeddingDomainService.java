@@ -129,6 +129,10 @@ public class EmbeddingDomainService implements MetadataConstant {
         unitMessage.setFileId(batchMessage.getFileId());
         unitMessage.setPage(batchUnit.getPage());
         unitMessage.setContent(batchUnit.getContent());
+        unitMessage.setTitlePath(batchUnit.getTitlePath());
+        unitMessage.setSegmentType(batchUnit.getSegmentType());
+        unitMessage.setSegmentOrder(batchUnit.getSegmentOrder());
+        unitMessage.setSourcePage(batchUnit.getSourcePage());
         unitMessage.setVector(batchMessage.getVector());
         unitMessage.setFileName(batchMessage.getFileName());
         unitMessage.setDatasetId(batchMessage.getDatasetId());
@@ -172,6 +176,21 @@ public class EmbeddingDomainService implements MetadataConstant {
         metadata.put(FILE_NAME, message.getFileName());
         metadata.put(DOCUMENT_ID, extractOriginalDocId(message.getId()));
         metadata.put(DATA_SET_ID, message.getDatasetId());
+        if (message.getPage() != null) {
+            metadata.put(PAGE_NUMBER, message.getPage());
+        }
+        if (StringUtils.hasText(message.getTitlePath())) {
+            metadata.put(TITLE_PATH, message.getTitlePath());
+        }
+        if (StringUtils.hasText(message.getSegmentType())) {
+            metadata.put(SEGMENT_TYPE, message.getSegmentType());
+        }
+        if (message.getSegmentOrder() != null) {
+            metadata.put(SEGMENT_ORDER, message.getSegmentOrder());
+        }
+        if (message.getSourcePage() != null) {
+            metadata.put(SOURCE_PAGE, message.getSourcePage());
+        }
         return metadata;
     }
 

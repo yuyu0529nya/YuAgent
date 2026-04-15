@@ -75,7 +75,7 @@ public class ToolAppService {
         ToolOperationResult result = toolDomainService.createTool(toolEntity);
 
         // 检查是否需要状态转换
-        if (result.needStateTransition()) {
+        if (result.needStateTransition() || result.getTool().getStatus() == ToolStatus.MANUAL_REVIEW) {
             toolStateStateMachine.submitToolForProcessing(result.getTool());
         }
 
@@ -101,7 +101,7 @@ public class ToolAppService {
         ToolOperationResult result = toolDomainService.updateTool(toolEntity);
 
         // 检查是否需要状态转换
-        if (result.needStateTransition()) {
+        if (result.needStateTransition() || result.getTool().getStatus() == ToolStatus.MANUAL_REVIEW) {
             toolStateStateMachine.submitToolForProcessing(result.getTool());
         }
 

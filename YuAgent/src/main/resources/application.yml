@@ -17,10 +17,15 @@ server:
     connection-timeout: 2000000 # 连接超时毫秒
     max-connections: 10000 # 最大连接数
     accept-count: 100 # 等待队列长度
+    max-swallow-size: ${SERVER_TOMCAT_MAX_SWALLOW_SIZE:100MB}
 
 spring:
   application:
     name: YuAgent
+  servlet:
+    multipart:
+      max-file-size: ${MULTIPART_MAX_FILE_SIZE:100MB}
+      max-request-size: ${MULTIPART_MAX_REQUEST_SIZE:100MB}
   rabbitmq:
     host: ${RABBITMQ_HOST:localhost}
     port: ${RABBITMQ_PORT:5672}
@@ -139,6 +144,13 @@ rerank:
   timeout: ${SILICONFLOW_TIMEOUT:30000}
 
 rag:
+  remote-import:
+    max-file-size: ${RAG_REMOTE_IMPORT_MAX_FILE_SIZE:104857600}
+    connect-timeout: ${RAG_REMOTE_IMPORT_CONNECT_TIMEOUT:10s}
+    read-timeout: ${RAG_REMOTE_IMPORT_READ_TIMEOUT:2m}
+  pdf:
+    ocr-render-dpi: ${RAG_PDF_OCR_RENDER_DPI:132}
+    ocr-render-dpi-large: ${RAG_PDF_OCR_RENDER_DPI_LARGE:120}
   markdown:
     segment-split:
       enabled: ${RAG_MARKDOWN_SPLIT_ENABLED:true}
@@ -183,9 +195,15 @@ yuagent:
   container:
     docker-host: ${YUAGENT_CONTAINER_DOCKER_HOST:unix:///var/run/docker.sock}
     user-volume-base-path: ${YUAGENT_CONTAINER_USER_VOLUME_PATH:/docker/users}
-    default-mcp-gateway-image: ${YUAGENT_CONTAINER_DEFAULT_MCP_IMAGE:ghcr.io/lucky-aeon/mcp-gateway:latest}
+    default-mcp-gateway-image: ${YUAGENT_CONTAINER_DEFAULT_MCP_IMAGE:yuagent-mcp-gateway:latest}
+    default-mcp-gateway-network-mode: ${YUAGENT_CONTAINER_DEFAULT_MCP_NETWORK:yuagent_yuagent-network}
     monitor-interval: ${YUAGENT_CONTAINER_MONITOR_INTERVAL:300000}
     stats-update-interval: ${YUAGENT_CONTAINER_STATS_INTERVAL:120000}
 mcp:
   gateway:
+    base-url: ${MCP_BASE_URL:${HIGH_AVAILABILITY_GATEWAY_URL:http://api-gateway:8081}}
+    api-key: ${MCP_API_KEY:123456}
     connect-timeout: ${MCP_GATEWAY_CONNECT_TIMEOUT:60000}
+tool:
+  review:
+    auto-approve: ${TOOL_REVIEW_AUTO_APPROVE:true}

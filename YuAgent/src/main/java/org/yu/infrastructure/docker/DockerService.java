@@ -230,6 +230,9 @@ public class DockerService {
             info.setName(response.getName());
             info.setState(response.getState());
             info.setNetworkSettings(response.getNetworkSettings());
+            if (response.getHostConfig() != null) {
+                info.setNetworkMode(response.getHostConfig().getNetworkMode());
+            }
 
             return info;
         } catch (DockerException e) {
@@ -407,6 +410,7 @@ public class DockerService {
         private String name;
         private InspectContainerResponse.ContainerState state;
         private NetworkSettings networkSettings;
+        private String networkMode;
 
         public String getContainerId() {
             return containerId;
@@ -438,6 +442,14 @@ public class DockerService {
 
         public void setNetworkSettings(NetworkSettings networkSettings) {
             this.networkSettings = networkSettings;
+        }
+
+        public String getNetworkMode() {
+            return networkMode;
+        }
+
+        public void setNetworkMode(String networkMode) {
+            this.networkMode = networkMode;
         }
     }
 

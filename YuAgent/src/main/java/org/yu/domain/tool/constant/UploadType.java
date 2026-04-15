@@ -5,7 +5,7 @@ import org.yu.infrastructure.exception.BusinessException;
 /** 工具上传方式枚举 */
 public enum UploadType {
 
-    GITHUB, ZIP;
+    GITHUB, ZIP, HOSTED;
 
     public static UploadType fromCode(String code) {
         for (UploadType type : values()) {

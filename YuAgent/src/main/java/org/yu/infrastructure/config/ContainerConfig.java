@@ -20,7 +20,10 @@ public class ContainerConfig {
     private String userVolumeBasePath = "/docker/users";
 
     /** 默认MCP网关镜像 */
-    private String defaultMcpGatewayImage = "ghcr.nju.edu.cn/lucky-aeon/mcp-gateway:latest";
+    private String defaultMcpGatewayImage = "yuagent-mcp-gateway:latest";
+
+    /** 默认MCP网关容器网络 */
+    private String defaultMcpGatewayNetworkMode = "yuagent_yuagent-network";
 
     /** 容器监控间隔（毫秒） */
     private long monitorInterval = 300000; // 5分钟
@@ -50,6 +53,14 @@ public class ContainerConfig {
 
     public void setDefaultMcpGatewayImage(String defaultMcpGatewayImage) {
         this.defaultMcpGatewayImage = defaultMcpGatewayImage;
+    }
+
+    public String getDefaultMcpGatewayNetworkMode() {
+        return defaultMcpGatewayNetworkMode;
+    }
+
+    public void setDefaultMcpGatewayNetworkMode(String defaultMcpGatewayNetworkMode) {
+        this.defaultMcpGatewayNetworkMode = defaultMcpGatewayNetworkMode;
     }
 
     public long getMonitorInterval() {

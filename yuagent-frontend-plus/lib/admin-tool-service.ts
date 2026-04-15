@@ -21,7 +21,8 @@ export enum ToolType {
 // 上传类型枚举
 export enum UploadType {
   GITHUB = "GITHUB",
-  ZIP = "ZIP"
+  ZIP = "ZIP",
+  HOSTED = "HOSTED"
 }
 
 // 工具信息接口（包含用户信息）

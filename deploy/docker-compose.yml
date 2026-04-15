@@ -109,7 +109,7 @@ services:
       
       # 高可用网关配置
       HIGH_AVAILABILITY_ENABLED: ${HIGH_AVAILABILITY_ENABLED:-false}
-      HIGH_AVAILABILITY_GATEWAY_URL: ${HIGH_AVAILABILITY_GATEWAY_URL:-http://api-gateway:8081}
+      HIGH_AVAILABILITY_GATEWAY_URL: ${HIGH_AVAILABILITY_GATEWAY_URL:-http://api-gateway:8080}
       HIGH_AVAILABILITY_API_KEY: ${HIGH_AVAILABILITY_API_KEY:-default-api-key}
       
       # 支付配置
@@ -210,20 +210,23 @@ services:
 
   # API Premium Gateway 高可用网关服务
   api-gateway:
-    image: ghcr.io/lucky-aeon/api-premium-gateway:latest
+    build:
+      context: ../_tmp/mcp-gateway-src
+      dockerfile: Dockerfile
+    image: yuagent-mcp-gateway:latest
     container_name: yuagent-api-gateway
     profiles:
       - local
       - production
     ports:
-      - "8081:8081"
+      - "8081:8080"
     volumes:
       - gateway-logs:/app/logs
     networks:
       - yuagent-network
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:8081/api/health || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- 'http://localhost:8080/services?api_key=123456' >/dev/null || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3

@@ -30,6 +30,14 @@ public class RagDocSyncStorageMessage implements Serializable {
 
     private ModelConfig embeddingModelConfig;
 
+    private String titlePath;
+
+    private String segmentType;
+
+    private Integer segmentOrder;
+
+    private Integer sourcePage;
+
     /** Batch vectorization tasks aggregated for the same file. */
     private List<BatchUnit> batchUnits;
 
@@ -105,6 +113,38 @@ public class RagDocSyncStorageMessage implements Serializable {
         this.embeddingModelConfig = embeddingModelConfig;
     }
 
+    public String getTitlePath() {
+        return titlePath;
+    }
+
+    public void setTitlePath(String titlePath) {
+        this.titlePath = titlePath;
+    }
+
+    public String getSegmentType() {
+        return segmentType;
+    }
+
+    public void setSegmentType(String segmentType) {
+        this.segmentType = segmentType;
+    }
+
+    public Integer getSegmentOrder() {
+        return segmentOrder;
+    }
+
+    public void setSegmentOrder(Integer segmentOrder) {
+        this.segmentOrder = segmentOrder;
+    }
+
+    public Integer getSourcePage() {
+        return sourcePage;
+    }
+
+    public void setSourcePage(Integer sourcePage) {
+        this.sourcePage = sourcePage;
+    }
+
     public List<BatchUnit> getBatchUnits() {
         return batchUnits;
     }
@@ -128,6 +168,14 @@ public class RagDocSyncStorageMessage implements Serializable {
 
         private String content;
 
+        private String titlePath;
+
+        private String segmentType;
+
+        private Integer segmentOrder;
+
+        private Integer sourcePage;
+
         public String getId() {
             return id;
         }
@@ -150,6 +198,38 @@ public class RagDocSyncStorageMessage implements Serializable {
 
         public void setContent(String content) {
             this.content = content;
+        }
+
+        public String getTitlePath() {
+            return titlePath;
+        }
+
+        public void setTitlePath(String titlePath) {
+            this.titlePath = titlePath;
+        }
+
+        public String getSegmentType() {
+            return segmentType;
+        }
+
+        public void setSegmentType(String segmentType) {
+            this.segmentType = segmentType;
+        }
+
+        public Integer getSegmentOrder() {
+            return segmentOrder;
+        }
+
+        public void setSegmentOrder(Integer segmentOrder) {
+            this.segmentOrder = segmentOrder;
+        }
+
+        public Integer getSourcePage() {
+            return sourcePage;
+        }
+
+        public void setSourcePage(Integer sourcePage) {
+            this.sourcePage = sourcePage;
         }
     }
 }

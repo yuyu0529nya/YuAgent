@@ -1,32 +1,22 @@
 package org.yu.application.rag.dto;
 
-/** 文档单元响应DTO
- * 
- * @author shilong.zang */
+/** DTO returned for stored document chunks and retrieval results. */
 public class DocumentUnitDTO {
 
-    /** 主键 */
     private String id;
-
-    /** 文件ID */
     private String fileId;
-
-    /** 页码 */
+    private String fileName;
     private Integer page;
-
-    /** 内容 */
+    private Integer sourcePage;
+    private String titlePath;
+    private String segmentType;
+    private Integer segmentOrder;
+    private String metadataJson;
     private String content;
-
-    /** 是否OCR处理 */
     private Boolean isOcr;
-
-    /** 是否向量化 */
     private Boolean isVector;
-
-    /** 创建时间 */
+    private Double similarityScore;
     private String createdAt;
-
-    /** 更新时间 */
     private String updatedAt;
 
     public String getId() {
@@ -45,12 +35,60 @@ public class DocumentUnitDTO {
         this.fileId = fileId;
     }
 
+    public String getFileName() {
+        return fileName;
+    }
+
+    public void setFileName(String fileName) {
+        this.fileName = fileName;
+    }
+
     public Integer getPage() {
         return page;
     }
 
     public void setPage(Integer page) {
         this.page = page;
+    }
+
+    public Integer getSourcePage() {
+        return sourcePage;
+    }
+
+    public void setSourcePage(Integer sourcePage) {
+        this.sourcePage = sourcePage;
+    }
+
+    public String getTitlePath() {
+        return titlePath;
+    }
+
+    public void setTitlePath(String titlePath) {
+        this.titlePath = titlePath;
+    }
+
+    public String getSegmentType() {
+        return segmentType;
+    }
+
+    public void setSegmentType(String segmentType) {
+        this.segmentType = segmentType;
+    }
+
+    public Integer getSegmentOrder() {
+        return segmentOrder;
+    }
+
+    public void setSegmentOrder(Integer segmentOrder) {
+        this.segmentOrder = segmentOrder;
+    }
+
+    public String getMetadataJson() {
+        return metadataJson;
+    }
+
+    public void setMetadataJson(String metadataJson) {
+        this.metadataJson = metadataJson;
     }
 
     public String getContent() {
@@ -77,6 +115,14 @@ public class DocumentUnitDTO {
         this.isVector = isVector;
     }
 
+    public Double getSimilarityScore() {
+        return similarityScore;
+    }
+
+    public void setSimilarityScore(Double similarityScore) {
+        this.similarityScore = similarityScore;
+    }
+
     public String getCreatedAt() {
         return createdAt;
     }
@@ -96,6 +142,5 @@ public class DocumentUnitDTO {
     @Override
     public String toString() {
         return content;
-
     }
 }

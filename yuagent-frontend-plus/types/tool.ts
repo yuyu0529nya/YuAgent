@@ -57,11 +57,13 @@ export interface ToolItem {
   }
 }
 
-export type PluginInstallConfig = SsePluginConfig | StdioPluginConfig;
+export type PluginInstallConfig = HostedPluginConfig | StdioPluginConfig;
 
-export interface SsePluginConfig {
-  type: 'sse'
-  url: string
+export interface HostedPluginConfig {
+  type: 'sse' | 'streamableHttp'
+  url?: string
+  baseUrl?: string
+  headers?: Record<string, string>
 }
 
 export interface StdioPluginConfig {

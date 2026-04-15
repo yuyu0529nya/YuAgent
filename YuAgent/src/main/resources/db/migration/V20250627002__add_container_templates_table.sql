@@ -62,7 +62,7 @@ INSERT INTO container_templates (
     'MCP网关默认模板',
     '用于创建用户MCP网关容器的默认模板，提供工具部署和Agent对话功能',
     'mcp-gateway',
-    'ghcr.io/lucky-aeon/mcp-gateway',
+    'yuagent-mcp-gateway',
     'latest',
     8080,
     1.0,

@@ -40,13 +40,16 @@ import org.yu.domain.llm.service.LLMDomainService;
 import org.yu.domain.llm.service.HighAvailabilityDomainService;
 import org.yu.domain.user.service.UserSettingsDomainService;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.yu.infrastructure.rag.service.RemoteFileImportService;
 import org.yu.infrastructure.rag.service.UserModelConfigResolver;
 import org.springframework.util.StringUtils;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.yu.infrastructure.utils.JsonUtils;
 
 import java.util.List;
 import java.util.ArrayList;
+import java.util.HashMap;
 
 /** RAG数据集应用服务
  * @author shilong.zang
@@ -69,13 +72,14 @@ public class RagQaDatasetAppService {
     private final RagDataAccessDomainService ragDataAccessService;
 
     private final UserModelConfigResolver userModelConfigResolver;
+    private final RemoteFileImportService remoteFileImportService;
 
     public RagQaDatasetAppService(RagQaDatasetDomainService ragQaDatasetDomainService,
             FileDetailDomainService fileDetailDomainService, DocumentUnitDomainService documentUnitDomainService,
             MessagePublisher messagePublisher, EmbeddingDomainService embeddingDomainService,
             RagPublishAppService ragPublishAppService, RagVersionDomainService ragVersionDomainService,
             UserRagDomainService userRagDomainService, RagDataAccessDomainService ragDataAccessService,
-            UserModelConfigResolver userModelConfigResolver) {
+            UserModelConfigResolver userModelConfigResolver, RemoteFileImportService remoteFileImportService) {
         this.ragQaDatasetDomainService = ragQaDatasetDomainService;
         this.fileDetailDomainService = fileDetailDomainService;
         this.documentUnitDomainService = documentUnitDomainService;
@@ -86,6 +90,7 @@ public class RagQaDatasetAppService {
         this.userRagDomainService = userRagDomainService;
         this.ragDataAccessService = ragDataAccessService;
         this.userModelConfigResolver = userModelConfigResolver;
+        this.remoteFileImportService = remoteFileImportService;
     }
 
     /** 创建数据集
@@ -382,6 +387,34 @@ public class RagQaDatasetAppService {
      * @param fileId 文件ID
      * @param datasetId 数据集ID
      * @param userId 用户ID */
+    @Transactional(transactionManager = "transactionManager")
+    public FileDetailDTO importFileByUrl(ImportFileByUrlRequest request, String userId) {
+        ragQaDatasetDomainService.checkDatasetExists(request.getDatasetId(), userId);
+
+        RemoteFileImportService.DownloadedRemoteFile downloadedFile =
+                remoteFileImportService.download(request.getUrl(), request.getFilename());
+
+        FileDetailEntity entity = new FileDetailEntity();
+        entity.setDataSetId(request.getDatasetId());
+        entity.setUserId(userId);
+        entity.setAttr(buildRemoteImportAttr(downloadedFile.getSourceUrl()));
+
+        FileDetailEntity uploadedEntity = fileDetailDomainService.uploadRemoteFileToDataset(entity,
+                downloadedFile.getBytes(), downloadedFile.getFilename(), downloadedFile.getContentType());
+        scheduleAutoPreprocessingAfterCommit(uploadedEntity.getId(), request.getDatasetId(), userId);
+        return FileDetailAssembler.toDTO(uploadedEntity);
+    }
+
+    private String buildRemoteImportAttr(String sourceUrl) {
+        if (!StringUtils.hasText(sourceUrl)) {
+            return null;
+        }
+        HashMap<String, Object> attrMap = new HashMap<>();
+        attrMap.put("importSource", "remote-url");
+        attrMap.put("sourceUrl", sourceUrl);
+        return JsonUtils.toJsonString(attrMap);
+    }
+
     private void scheduleAutoPreprocessingAfterCommit(String fileId, String datasetId, String userId) {
         if (!TransactionSynchronizationManager.isActualTransactionActive()) {
             autoStartPreprocessing(fileId, datasetId, userId);
@@ -418,7 +451,10 @@ public class RagQaDatasetAppService {
             ocrMessage.setPageSize(fileEntity.getFilePageSize());
             ocrMessage.setUserId(userId);
             // 获取用户的OCR模型配置并设置到消息中
-            ocrMessage.setOcrModelConfig(userModelConfigResolver.getUserOcrModelConfig(userId));
+            String fileExt = fileDetailDomainService.getFileExtension(fileId);
+            if (requiresOcrModelConfig(fileExt)) {
+                ocrMessage.setOcrModelConfig(userModelConfigResolver.getUserOcrModelConfig(userId));
+            }
 
             MessageEnvelope<RagDocMessage> envelope = MessageEnvelope.builder(ocrMessage)
                     .addEventType(EventType.DOC_REFRESH_ORG).description("文件自动预处理任务").build();
@@ -437,6 +473,10 @@ public class RagQaDatasetAppService {
      * @param datasetId 数据集ID
      * @param fileId 文件ID
      * @param userId 用户ID */
+    private boolean requiresOcrModelConfig(String fileExt) {
+        return StringUtils.hasText(fileExt) && "PDF".equalsIgnoreCase(fileExt.trim());
+    }
+
     public void recoverStuckUploadedFile(String fileId) {
         FileDetailEntity fileEntity = fileDetailDomainService.getFileByIdWithoutUserCheck(fileId);
         autoStartPreprocessing(fileId, fileEntity.getDataSetId(), fileEntity.getUserId());
@@ -510,9 +550,10 @@ public class RagQaDatasetAppService {
             ocrMessage.setFileId(request.getFileId());
             ocrMessage.setPageSize(fileEntity.getFilePageSize());
             ocrMessage.setUserId(userId);
-            ocrMessage.setOcrModelConfig(userModelConfigResolver.getUserOcrModelConfig(userId));
-            ocrMessage.setUserId(userId);
-            ocrMessage.setOcrModelConfig(userModelConfigResolver.getUserOcrModelConfig(userId));
+            String fileExt = fileDetailDomainService.getFileExtension(request.getFileId());
+            if (requiresOcrModelConfig(fileExt)) {
+                ocrMessage.setOcrModelConfig(userModelConfigResolver.getUserOcrModelConfig(userId));
+            }
 
             MessageEnvelope<RagDocMessage> envelope = MessageEnvelope.builder(ocrMessage)
                     .addEventType(EventType.DOC_REFRESH_ORG).description("文件OCR预处理任务").build();
@@ -531,22 +572,9 @@ public class RagQaDatasetAppService {
                 throw new IllegalStateException("文件没有找到可用于向量化的语料数据");
             }
 
-            // 为每个DocumentUnit发送单独的向量化MQ消息
-            for (DocumentUnitEntity documentUnit : documentUnits) {
-                RagDocSyncStorageMessage storageMessage = new RagDocSyncStorageMessage();
-                storageMessage.setId(documentUnit.getId());
-                storageMessage.setFileId(request.getFileId());
-                storageMessage.setFileName(fileEntity.getOriginalFilename());
-                storageMessage.setPage(documentUnit.getPage());
-                storageMessage.setContent(documentUnit.getContent());
-                storageMessage.setVector(true);
-                storageMessage.setDatasetId(request.getDatasetId()); // 设置数据集ID
+            publishBatchVectorization(fileEntity, documentUnits,
+                    "manual vectorization units=" + documentUnits.size());
 
-                MessageEnvelope<RagDocSyncStorageMessage> env = MessageEnvelope.builder(storageMessage)
-                        .addEventType(EventType.DOC_SYNC_RAG).description("文件向量化处理任务 - 页面 " + documentUnit.getPage())
-                        .build();
-                messagePublisher.publish(RagDocSyncStorageEvent.route(), env);
-            }
 
         } else {
             throw new IllegalArgumentException("不支持的处理类型: " + request.getProcessType());
@@ -650,33 +678,18 @@ public class RagQaDatasetAppService {
                 documentUnitDomainService.updateDocumentUnitById(documentUnit);
             }
 
-            // 为每个DocumentUnit发送向量化MQ消息
-            for (DocumentUnitEntity documentUnit : documentUnits) {
-                RagDocSyncStorageMessage storageMessage = new RagDocSyncStorageMessage();
-                storageMessage.setId(documentUnit.getId());
-                storageMessage.setFileId(request.getFileId());
-                storageMessage.setFileName(fileEntity.getOriginalFilename());
-                storageMessage.setPage(documentUnit.getPage());
-                storageMessage.setContent(documentUnit.getContent());
-                storageMessage.setVector(true);
-                storageMessage.setDatasetId(request.getDatasetId());
-
-                MessageEnvelope<RagDocSyncStorageMessage> env = MessageEnvelope.builder(storageMessage)
-                        .addEventType(EventType.DOC_SYNC_RAG)
-                        .description("文件强制重新向量化处理任务 - 页面 " + documentUnit.getPage()).build();
-                messagePublisher.publish(RagDocSyncStorageEvent.route(), env);
-            }
+            publishBatchVectorization(fileEntity, documentUnits,
+                    "manual re-vectorization units=" + documentUnits.size());
 
         } else {
-            throw new IllegalArgumentException("不支持的处理类型: " + request.getProcessType());
+            throw new IllegalArgumentException("Unsupported process type: " + request.getProcessType());
         }
     }
 
-    /** 清理文件的已有语料和向量数据
-     * @param fileId 文件ID */
+    /** Clean up persisted document units and vector data for a file.
+     * @param fileId file id */
     private void cleanupExistingDocumentUnits(String fileId) {
         try {
-            // 查询该文件的所有文档单元
             List<DocumentUnitEntity> existingUnits = documentUnitDomainService.listDocumentsByFile(fileId);
 
             if (!existingUnits.isEmpty()) {
@@ -684,7 +697,6 @@ public class RagQaDatasetAppService {
 
                 final List<String> documentUnitEntities = Steam.of(existingUnits).map(DocumentUnitEntity::getId)
                         .toList();
-                // 删除所有文档单元（包括语料和向量数据）
                 documentUnitDomainService.batchDeleteDocumentUnits(documentUnitEntities);
 
                 embeddingDomainService.deleteEmbedding(Collections.singletonList(fileId));
@@ -694,7 +706,7 @@ public class RagQaDatasetAppService {
             }
         } catch (Exception e) {
             log.error("Failed to cleanup existing document units for file: {}", fileId, e);
-            throw new BusinessException("清理已有语料数据失败: " + e.getMessage());
+            throw new BusinessException("Failed to clean existing document data: " + e.getMessage());
         }
     }
 
@@ -718,6 +730,39 @@ public class RagQaDatasetAppService {
         List<FileDetailEntity> entities = fileDetailDomainService.listAllFilesByDataset(datasetId, userId);
         return FileProcessProgressAssembler.toDTOs(entities);
     }
+
+    private void publishBatchVectorization(FileDetailEntity fileEntity, List<DocumentUnitEntity> documentUnits,
+            String description) {
+        RagDocSyncStorageMessage storageMessage = new RagDocSyncStorageMessage();
+        storageMessage.setId(fileEntity.getId());
+        storageMessage.setFileId(fileEntity.getId());
+        storageMessage.setFileName(fileEntity.getOriginalFilename());
+        storageMessage.setVector(true);
+        storageMessage.setDatasetId(fileEntity.getDataSetId());
+        storageMessage.setUserId(fileEntity.getUserId());
+        storageMessage.setEmbeddingModelConfig(userModelConfigResolver.getUserEmbeddingModelConfig(fileEntity.getUserId()));
+        storageMessage.setBatchUnits(documentUnits.stream()
+                .filter(unit -> StringUtils.hasText(unit.getContent()))
+                .map(this::toBatchUnit)
+                .toList());
+
+        MessageEnvelope<RagDocSyncStorageMessage> env = MessageEnvelope.builder(storageMessage)
+                .addEventType(EventType.DOC_SYNC_RAG).description(description).build();
+        messagePublisher.publish(RagDocSyncStorageEvent.route(), env);
+    }
+
+    private RagDocSyncStorageMessage.BatchUnit toBatchUnit(DocumentUnitEntity documentUnit) {
+        RagDocSyncStorageMessage.BatchUnit batchUnit = new RagDocSyncStorageMessage.BatchUnit();
+        batchUnit.setId(documentUnit.getId());
+        batchUnit.setPage(documentUnit.getPage());
+        batchUnit.setContent(documentUnit.getContent());
+        batchUnit.setTitlePath(documentUnit.getTitlePath());
+        batchUnit.setSegmentType(documentUnit.getSegmentType());
+        batchUnit.setSegmentOrder(documentUnit.getSegmentOrder());
+        batchUnit.setSourcePage(documentUnit.getSourcePage());
+        return batchUnit;
+    }
+
     private List<DocumentUnitEntity> findVectorizableDocumentUnits(String fileId, boolean includeVectorizedUnits) {
         List<DocumentUnitEntity> documentUnits = documentUnitDomainService
                 .listDocumentsByFileAndStatus(fileId, true, includeVectorizedUnits ? null : false);
@@ -734,3 +779,4 @@ public class RagQaDatasetAppService {
                 .toList();
     }
 }
+

@@ -130,4 +130,41 @@ public class PdfToBase64Converter {
         byte[] imageBytes = baos.toByteArray();
         return Base64.getEncoder().encodeToString(imageBytes);
     }
+
+    public static PdfPageImageSession openSession(byte[] pdfData) throws IOException {
+        return new PdfPageImageSession(pdfData);
+    }
+
+    public static final class PdfPageImageSession implements AutoCloseable {
+
+        private final PDDocument document;
+        private final PDFRenderer renderer;
+
+        private PdfPageImageSession(byte[] pdfData) throws IOException {
+            this.document = Loader.loadPDF(pdfData);
+            this.renderer = new PDFRenderer(document);
+        }
+
+        public int getPageCount() {
+            return document.getNumberOfPages();
+        }
+
+        public String renderPageToBase64(int pageIndex, String imageFormat, float dpi) throws IOException {
+            if (pageIndex >= document.getNumberOfPages() || pageIndex < 0) {
+                throw new IllegalArgumentException("椤电爜瓒呭嚭鑼冨洿: " + pageIndex);
+            }
+
+            BufferedImage image = renderer.renderImageWithDPI(pageIndex, dpi > 0 ? dpi : DEFAULT_DPI);
+            try {
+                return convertImageToBase64Compressed(image, imageFormat);
+            } finally {
+                image.flush();
+            }
+        }
+
+        @Override
+        public void close() throws IOException {
+            document.close();
+        }
+    }
 }

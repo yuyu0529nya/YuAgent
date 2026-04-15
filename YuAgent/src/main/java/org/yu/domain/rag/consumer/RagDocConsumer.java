@@ -103,6 +103,8 @@ public class RagDocConsumer {
                 throw new BusinessException("File extension not found");
             }
 
+            ensureOcrModelConfigIfRequired(docMessage, fileExt, fileEntity.getUserId());
+
             DocumentProcessingStrategy strategy = documentProcessingFactory.getDocumentStrategyHandler(fileExt.toUpperCase());
             if (strategy == null) {
                 throw new BusinessException("Unsupported file extension: " + fileExt);
@@ -244,5 +246,15 @@ public class RagDocConsumer {
         long existingUnits = documentUnitRepository.selectCount(Wrappers.lambdaQuery(DocumentUnitEntity.class)
                 .eq(DocumentUnitEntity::getFileId, fileId));
         return existingUnits == 0;
+    }
+
+    private void ensureOcrModelConfigIfRequired(RagDocMessage docMessage, String fileExt, String userId) {
+        if (!"PDF".equalsIgnoreCase(fileExt)) {
+            return;
+        }
+        if (docMessage.getOcrModelConfig() != null) {
+            return;
+        }
+        docMessage.setOcrModelConfig(userModelConfigResolver.getUserOcrModelConfig(userId));
     }
 }

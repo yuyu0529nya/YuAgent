@@ -4,26 +4,31 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.yu.application.tool.service.state.AppToolStateProcessor;
 import org.yu.domain.tool.constant.ToolStatus;
+import org.yu.domain.tool.constant.UploadType;
 import org.yu.domain.tool.model.ToolEntity;
 import org.yu.domain.tool.model.dto.GitHubRepoInfo;
 import org.yu.infrastructure.exception.BusinessException;
 import org.yu.infrastructure.github.GitHubService;
 import org.yu.infrastructure.github.GitHubUrlParser;
+import org.yu.infrastructure.mcp_gateway.HostedMcpInstallCommandHelper;
 
 import java.io.IOException;
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.util.Locale;
 
-/** 应用层GitHub URL验证处理器
- * 
- * 职责： 1. 验证上传的GitHub URL是否合法 2. 调用基础设施层GitHubService进行API验证 3. 转换到下一个状态（部署） */
+/**
+ * Validates the tool source URL before deployment.
+ *
+ * <p>GitHub repositories still go through the original GitHub API validation,
+ * while managed MCP services such as hosted SSE endpoints only need basic URL validation.</p>
+ */
 public class AppGithubUrlValidateProcessor implements AppToolStateProcessor {
 
     private static final Logger logger = LoggerFactory.getLogger(AppGithubUrlValidateProcessor.class);
 
     private final GitHubService gitHubService;
 
-    /** 构造函数，注入GitHubService
-     * 
-     * @param gitHubService GitHub服务 */
     public AppGithubUrlValidateProcessor(GitHubService gitHubService) {
         this.gitHubService = gitHubService;
     }
@@ -36,34 +41,79 @@ public class AppGithubUrlValidateProcessor implements AppToolStateProcessor {
     @Override
     public void process(ToolEntity tool) {
         String uploadUrl = tool.getUploadUrl();
-        logger.info("开始验证GitHub URL: {} (工具ID: {})", uploadUrl, tool.getId());
+        logger.info("Validating tool source URL: {} (toolId: {})", uploadUrl, tool.getId());
 
         try {
-            logger.debug("解析GitHub URL: {}", uploadUrl);
+            validateUrlFormat(uploadUrl);
+            if (!requiresGitHubValidation(tool)) {
+                logger.info("Skipping GitHub-specific validation for managed MCP source: {} (toolId: {})", uploadUrl,
+                        tool.getId());
+                return;
+            }
+
             GitHubRepoInfo repoInfo = GitHubUrlParser.parseGithubUrl(uploadUrl);
-            logger.debug("解析结果 - 仓库: {}, 引用: {}, 路径: {}", repoInfo.getFullName(), repoInfo.getRef(),
-                    repoInfo.getPathInRepo());
-
-            logger.debug("开始调用GitHub API验证");
             gitHubService.validateGitHubRepoRefAndPath(repoInfo);
-            logger.debug("GitHub API验证完成");
-
-            logger.info("GitHub URL 验证成功：{} (工具ID: {})", uploadUrl, tool.getId());
-
+            logger.info("GitHub source URL validated successfully: {} (toolId: {})", uploadUrl, tool.getId());
         } catch (IOException e) {
-            logger.error("通过 GitHubService 验证 URL 失败：{} (工具ID: {})", uploadUrl, tool.getId(), e);
-            throw new BusinessException("验证 GitHub URL 时发生 API 错误：" + e.getMessage(), e);
+            logger.error("GitHub API validation failed for tool {}: {}", tool.getId(), e.getMessage(), e);
+            throw new BusinessException("验证 GitHub 源地址时发生 API 错误: " + e.getMessage(), e);
         } catch (BusinessException e) {
-            logger.error("GitHub URL 验证失败：{} (工具ID: {}), 错误：{}", uploadUrl, tool.getId(), e.getMessage());
+            logger.error("Source URL validation failed for tool {}: {}", tool.getId(), e.getMessage());
             throw e;
         } catch (Exception e) {
-            logger.error("验证 GitHub URL 时发生意外错误：{} (工具ID: {})", uploadUrl, tool.getId(), e);
-            throw new BusinessException("验证 GitHub URL 时发生意外错误：" + e.getMessage(), e);
+            logger.error("Unexpected error while validating source URL for tool {}", tool.getId(), e);
+            throw new BusinessException("验证工具来源地址时发生意外错误: " + e.getMessage(), e);
         }
     }
 
     @Override
     public ToolStatus getNextStatus() {
         return ToolStatus.DEPLOYING;
+    }
+
+    private void validateUrlFormat(String uploadUrl) {
+        if (uploadUrl == null || uploadUrl.trim().isEmpty()) {
+            throw new BusinessException("工具来源地址不能为空。");
+        }
+
+        try {
+            URI uri = new URI(uploadUrl.trim());
+            String scheme = uri.getScheme();
+            if (scheme == null || (!"http".equalsIgnoreCase(scheme) && !"https".equalsIgnoreCase(scheme))) {
+                throw new BusinessException("工具来源地址仅支持 http 或 https。");
+            }
+            if (uri.getHost() == null || uri.getHost().isBlank()) {
+                throw new BusinessException("工具来源地址缺少有效域名。");
+            }
+        } catch (URISyntaxException e) {
+            throw new BusinessException("工具来源地址格式不合法: " + uploadUrl, e);
+        }
+    }
+
+    private boolean isGitHubUrl(String uploadUrl) {
+        try {
+            URI uri = new URI(uploadUrl.trim());
+            String host = uri.getHost();
+            return host != null && host.toLowerCase(Locale.ROOT).contains("github.com");
+        } catch (URISyntaxException e) {
+            return false;
+        }
+    }
+
+    private boolean requiresGitHubValidation(ToolEntity tool) {
+        if (tool == null) {
+            return false;
+        }
+
+        if (tool.getUploadType() != UploadType.GITHUB) {
+            return false;
+        }
+
+        String transportType = HostedMcpInstallCommandHelper.getHostedTransportType(tool.getInstallCommand());
+        if ("stdio".equalsIgnoreCase(transportType)) {
+            return false;
+        }
+
+        return isGitHubUrl(tool.getUploadUrl());
     }
 }

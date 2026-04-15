@@ -2,65 +2,36 @@ package org.yu.application.rag.dto;
 
 import org.yu.domain.rag.constant.FileProcessingStatusEnum;
 
-/** 文件处理进度响应
- * @author zang
- * @date 2025-01-10 */
+/** File processing progress response. */
 public class FileProcessProgressDTO {
 
-    /** 文件ID */
     private String fileId;
-
-    /** 文件名 */
     private String filename;
-
-    /** 统一处理状态枚举 */
     private FileProcessingStatusEnum processingStatusEnum;
-
-    /** 处理状态编码 */
     private Integer processingStatus;
-
-    /** 处理状态描述（中文） */
     private String processingStatusDescription;
-
-    /** 当前OCR处理页数 */
+    private String processingStage;
+    private String processingStageDescription;
     private Integer currentOcrPageNumber;
-
-    /** 当前向量化处理页数 */
     private Integer currentEmbeddingPageNumber;
-
-    /** 总页数 */
     private Integer filePageSize;
-
-    /** OCR处理进度百分比 */
     private Double ocrProcessProgress;
-
-    /** 向量化处理进度百分比 */
     private Double embeddingProcessProgress;
-
-    /** 状态描述 */
     private String statusDescription;
 
-    // 为了兼容旧版本，保留原有字段
-    /** 初始化状态（数字） - 已弃用，使用processingStatus */
     @Deprecated
     private Integer isInitialize;
 
-    /** 向量化状态（数字） - 已弃用，使用processingStatus */
     @Deprecated
     private Integer isEmbedding;
 
-    /** 初始化状态（中文） - 已弃用，使用processingStatusDescription */
     @Deprecated
     private String initializeStatus;
 
-    /** 向量化状态（中文） - 已弃用，使用processingStatusDescription */
     @Deprecated
     private String embeddingStatus;
 
-    /** 当前处理页数（兼容字段，指向OCR页数） */
     private Integer currentPageNumber;
-
-    /** 处理进度百分比（兼容字段，指向OCR进度） */
     private Double processProgress;
 
     public String getFileId() {
@@ -101,6 +72,22 @@ public class FileProcessProgressDTO {
 
     public void setProcessingStatusDescription(String processingStatusDescription) {
         this.processingStatusDescription = processingStatusDescription;
+    }
+
+    public String getProcessingStage() {
+        return processingStage;
+    }
+
+    public void setProcessingStage(String processingStage) {
+        this.processingStage = processingStage;
+    }
+
+    public String getProcessingStageDescription() {
+        return processingStageDescription;
+    }
+
+    public void setProcessingStageDescription(String processingStageDescription) {
+        this.processingStageDescription = processingStageDescription;
     }
 
     public Integer getCurrentOcrPageNumber() {
@@ -151,7 +138,6 @@ public class FileProcessProgressDTO {
         this.statusDescription = statusDescription;
     }
 
-    // 兼容性字段的getter和setter
     @Deprecated
     public Integer getIsInitialize() {
         return isInitialize;

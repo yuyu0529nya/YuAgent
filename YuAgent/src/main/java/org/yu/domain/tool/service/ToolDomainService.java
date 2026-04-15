@@ -9,6 +9,7 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 
 import org.springframework.stereotype.Service;
 import org.yu.domain.tool.constant.ToolStatus;
+import org.yu.domain.tool.constant.UploadType;
 import org.yu.domain.tool.model.ToolEntity;
 import org.yu.domain.tool.model.ToolOperationResult;
 import org.yu.domain.tool.model.ToolVersionEntity;
@@ -23,7 +24,10 @@ import org.yu.application.tool.dto.ToolStatisticsDTO;
 import org.yu.application.tool.assembler.ToolAssembler;
 import org.yu.interfaces.dto.tool.request.QueryToolRequest;
 import org.yu.infrastructure.exception.BusinessException;
+import org.yu.infrastructure.mcp_gateway.HostedMcpInstallCommandHelper;
 
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
@@ -56,6 +60,7 @@ public class ToolDomainService {
         // 设置初始状态
         toolEntity.setStatus(ToolStatus.WAITING_REVIEW);
 
+        normalizeToolInstallCommand(toolEntity);
         String mcpServerName = this.getMcpServerName(toolEntity);
         toolEntity.setMcpServerName(mcpServerName);
 
@@ -103,6 +108,7 @@ public class ToolDomainService {
 
         // 检查是否修改了URL或安装命令
         boolean needStateTransition = false;
+        normalizeToolInstallCommand(toolEntity);
         if ((toolEntity.getUploadUrl() != null && !toolEntity.getUploadUrl().equals(oldTool.getUploadUrl()))
                 || (toolEntity.getInstallCommand() != null
                         && !toolEntity.getInstallCommand().equals(oldTool.getInstallCommand()))) {
@@ -160,6 +166,40 @@ public class ToolDomainService {
                 .set(ToolEntity::getStatus, ToolStatus.FAILED);
         toolRepository.checkedUpdate(wrapper);
         return toolRepository.selectById(toolId);
+    }
+
+    public List<ToolEntity> listRecoverableFailedTools(int limit) {
+        LambdaQueryWrapper<ToolEntity> wrapper = Wrappers.<ToolEntity>lambdaQuery()
+                .eq(ToolEntity::getStatus, ToolStatus.FAILED)
+                .in(ToolEntity::getFailedStepStatus, ToolStatus.DEPLOYING, ToolStatus.FETCHING_TOOLS)
+                .and(q -> q.like(ToolEntity::getRejectReason, "Connection refused")
+                        .or().like(ToolEntity::getRejectReason, "localhost:")
+                        .or().like(ToolEntity::getRejectReason, "调用部署API失败")
+                        .or().like(ToolEntity::getRejectReason, "调用MCP Gateway API失败"))
+                .orderByDesc(ToolEntity::getUpdatedAt)
+                .last("LIMIT " + Math.max(limit, 1));
+        return toolRepository.selectList(wrapper);
+    }
+
+    public List<ToolEntity> listAutoApprovableManualReviewTools(int limit) {
+        LambdaQueryWrapper<ToolEntity> wrapper = Wrappers.<ToolEntity>lambdaQuery()
+                .eq(ToolEntity::getStatus, ToolStatus.MANUAL_REVIEW)
+                .orderByAsc(ToolEntity::getUpdatedAt)
+                .last("LIMIT " + Math.max(limit, 1));
+        return toolRepository.selectList(wrapper);
+    }
+
+    public ToolEntity resetFailedToolForRetry(String toolId) {
+        ToolEntity tool = getTool(toolId);
+        ToolStatus retryStatus = tool.getFailedStepStatus();
+        if (retryStatus == null) {
+            throw new BusinessException("工具缺少失败步骤状态，无法重试: " + toolId);
+        }
+
+        tool.setStatus(retryStatus);
+        tool.setRejectReason(null);
+        updateToolEntity(tool);
+        return tool;
     }
 
     /** 更新工具实体
@@ -431,5 +471,35 @@ public class ToolDomainService {
         if (userToolCount > 0) {
             throw new BusinessException("MCP服务器名称 '" + mcpServerName + "' 与已安装工具冲突，请使用其他名称");
         }
+    }
+    private void normalizeToolInstallCommand(ToolEntity tool) {
+        HostedMcpInstallCommandHelper.NormalizedInstallCommand normalizedInstallCommand = HostedMcpInstallCommandHelper
+                .normalizeInstallCommand(tool.getInstallCommand(), tool.getMcpServerName(), tool.getName());
+        tool.setInstallCommand(normalizedInstallCommand.installCommand());
+        tool.setMcpServerName(normalizedInstallCommand.serverName());
+        tool.setUploadType(determineUploadType(tool.getUploadUrl(), normalizedInstallCommand.hostedConfig(),
+                normalizedInstallCommand.transportType()));
+    }
+
+    private UploadType determineUploadType(String uploadUrl, boolean hostedConfig, String transportType) {
+        if (hostedConfig) {
+            return UploadType.HOSTED;
+        }
+        if (StringUtils.isNotBlank(transportType) && "stdio".equalsIgnoreCase(transportType.trim())) {
+            return UploadType.ZIP;
+        }
+        if (!StringUtils.isNotBlank(uploadUrl)) {
+            return UploadType.ZIP;
+        }
+        try {
+            URI uri = new URI(uploadUrl.trim());
+            String host = uri.getHost();
+            if (host != null && host.toLowerCase().contains("github.com")) {
+                return UploadType.GITHUB;
+            }
+        } catch (URISyntaxException ignored) {
+            // Ignore invalid URL and fall back to ZIP.
+        }
+        return UploadType.ZIP;
     }
 }

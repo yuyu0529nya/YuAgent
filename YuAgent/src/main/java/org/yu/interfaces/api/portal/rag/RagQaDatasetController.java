@@ -94,6 +94,13 @@ public class RagQaDatasetController {
         return Result.success(file);
     }
 
+    @PostMapping("/files/import-by-url")
+    public Result<FileDetailDTO> importFileByUrl(@RequestBody @Validated ImportFileByUrlRequest request) {
+        String userId = UserContext.getCurrentUserId();
+        FileDetailDTO file = ragQaDatasetAppService.importFileByUrl(request, userId);
+        return Result.success(file);
+    }
+
     /** 删除数据集文件
      * @param datasetId 数据集ID
      * @param fileId 文件ID

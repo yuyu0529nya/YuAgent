@@ -1,140 +1,140 @@
-import { FileProcessingStatusEnum, FileDetail, FileProcessProgressDTO } from "@/types/rag-dataset"
+import { FileDetail, FileProcessProgressDTO, FileProcessingStatusEnum } from "@/types/rag-dataset"
 
-// 文件状态显示配置
 export interface FileStatusDisplayConfig {
-  text: string;
-  variant: "default" | "secondary" | "destructive" | "outline";
-  color: string;
-  iconType: "check" | "clock" | "alert" | "loading";
+  text: string
+  variant: "default" | "secondary" | "destructive" | "outline"
+  color: string
+  iconType: "check" | "clock" | "alert" | "loading"
 }
 
-// 根据新的处理状态枚举获取状态显示配置
+const PROCESSING_STAGE_LABELS: Record<string, string> = {
+  PDF_NATIVE_EXTRACTING: "快速解析中",
+  PDF_OCR_FALLBACK: "OCR补全中",
+  PDF_SEGMENTING: "整理分段中",
+}
+
 export function getFileStatusConfig(
   file: FileDetail,
   progressInfo?: FileProcessProgressDTO
 ): {
-  status: FileStatusDisplayConfig;
-  canStartOcr: boolean;
-  canStartEmbedding: boolean;
-  progress: number;
+  status: FileStatusDisplayConfig
+  canStartOcr: boolean
+  canStartEmbedding: boolean
+  progress: number
 } {
-  // 优先使用进度信息中的状态
-  const statusEnum = progressInfo?.processingStatusEnum;
-  const statusCode = progressInfo?.processingStatus;
-  
-  let statusConfig: FileStatusDisplayConfig;
-  let canStartOcr = false;
-  let canStartEmbedding = false;
-  let progress = progressInfo?.processProgress || 0;
+  const statusEnum = progressInfo?.processingStatusEnum
+  const statusCode = progressInfo?.processingStatus
+
+  let statusConfig: FileStatusDisplayConfig
+  let canStartOcr = false
+  let canStartEmbedding = false
+  let progress = progressInfo?.processProgress || 0
 
   if (statusEnum) {
-    // 使用新的统一状态枚举
     switch (statusEnum) {
       case FileProcessingStatusEnum.UPLOADED:
         statusConfig = {
           text: "已上传",
           variant: "outline",
           color: "text-yellow-600 border-yellow-300",
-          iconType: "clock"
-        };
-        canStartOcr = true;
-        break;
+          iconType: "clock",
+        }
+        canStartOcr = true
+        break
 
       case FileProcessingStatusEnum.OCR_PROCESSING:
         statusConfig = {
-          text: "OCR处理中",
+          text: getProcessingBadgeText(progressInfo),
           variant: "outline",
           color: "text-blue-600 border-blue-300",
-          iconType: "loading"
-        };
-        progress = progressInfo?.ocrProcessProgress || 0;
-        break;
+          iconType: "loading",
+        }
+        progress = progressInfo?.ocrProcessProgress || 0
+        break
 
       case FileProcessingStatusEnum.OCR_COMPLETED:
         statusConfig = {
-          text: "OCR处理完成",
+          text: "解析完成",
           variant: "secondary",
           color: "text-green-600 bg-green-50 border-green-300",
-          iconType: "check"
-        };
-        // 只有 OCR 完成时才能开始向量化（状态码为 2）
-        canStartEmbedding = statusCode === 2;
-        break;
+          iconType: "check",
+        }
+        canStartEmbedding = statusCode === 2
+        break
 
       case FileProcessingStatusEnum.EMBEDDING_PROCESSING:
         statusConfig = {
-          text: "向量化处理中",
+          text: "向量化中",
           variant: "outline",
           color: "text-blue-600 border-blue-300",
-          iconType: "loading"
-        };
-        progress = progressInfo?.embeddingProcessProgress || 0;
-        break;
+          iconType: "loading",
+        }
+        progress = progressInfo?.embeddingProcessProgress || 0
+        break
 
       case FileProcessingStatusEnum.COMPLETED:
         statusConfig = {
           text: "处理完成",
           variant: "default",
           color: "text-green-600 bg-green-50 border-green-300",
-          iconType: "check"
-        };
-        progress = 100;
-        break;
+          iconType: "check",
+        }
+        progress = 100
+        break
 
       case FileProcessingStatusEnum.OCR_FAILED:
         statusConfig = {
-          text: "OCR处理失败",
+          text: "解析失败",
           variant: "destructive",
           color: "text-red-600 border-red-300",
-          iconType: "alert"
-        };
-        canStartOcr = true; // 失败后可以重试
-        break;
+          iconType: "alert",
+        }
+        canStartOcr = true
+        break
 
       case FileProcessingStatusEnum.EMBEDDING_FAILED:
         statusConfig = {
-          text: "向量化处理失败",
+          text: "向量化失败",
           variant: "destructive",
           color: "text-red-600 border-red-300",
-          iconType: "alert"
-        };
-        // 只有 OCR 完成时才能重试向量化
-        canStartEmbedding = statusCode === 2;
-        break;
+          iconType: "alert",
+        }
+        canStartEmbedding = statusCode === 2
+        break
 
       default:
         statusConfig = {
           text: "未知状态",
           variant: "destructive",
           color: "text-red-600",
-          iconType: "alert"
-        };
+          iconType: "alert",
+        }
+        break
     }
   } else {
-    // 兼容旧的状态字段
     if (file.isInitialize === 0) {
       statusConfig = {
         text: "待初始化",
         variant: "outline",
         color: "text-yellow-600 border-yellow-300",
-        iconType: "clock"
-      };
-      canStartOcr = true;
+        iconType: "clock",
+      }
+      canStartOcr = true
     } else if (file.isInitialize === 1) {
       statusConfig = {
         text: "已初始化",
         variant: "secondary",
         color: "text-green-600 bg-green-50 border-green-300",
-        iconType: "check"
-      };
-      canStartEmbedding = file.isEmbedding === 0;
+        iconType: "check",
+      }
+      canStartEmbedding = file.isEmbedding === 0
     } else {
       statusConfig = {
         text: "处理中",
         variant: "outline",
         color: "text-blue-600 border-blue-300",
-        iconType: "loading"
-      };
+        iconType: "loading",
+      }
     }
   }
 
@@ -142,32 +142,43 @@ export function getFileStatusConfig(
     status: statusConfig,
     canStartOcr,
     canStartEmbedding,
-    progress
-  };
+    progress,
+  }
 }
 
-// 获取状态描述文本
 export function getStatusDescription(
   statusEnum?: FileProcessingStatusEnum,
-  statusDescription?: string
+  statusDescription?: string,
+  processingStageDescription?: string
 ): string {
+  if (processingStageDescription) {
+    return processingStageDescription
+  }
+
   if (statusDescription) {
-    return statusDescription;
+    return statusDescription
   }
 
   if (!statusEnum) {
-    return "未知状态";
+    return "未知状态"
   }
 
   const statusMap = {
-    [FileProcessingStatusEnum.UPLOADED]: "已上传，待开始处理",
-    [FileProcessingStatusEnum.OCR_PROCESSING]: "OCR处理中",
-    [FileProcessingStatusEnum.OCR_COMPLETED]: "OCR处理完成，待向量化",
-    [FileProcessingStatusEnum.EMBEDDING_PROCESSING]: "向量化处理中",
+    [FileProcessingStatusEnum.UPLOADED]: "已上传，等待开始处理",
+    [FileProcessingStatusEnum.OCR_PROCESSING]: "正在解析文档内容",
+    [FileProcessingStatusEnum.OCR_COMPLETED]: "文本解析完成，等待向量化",
+    [FileProcessingStatusEnum.EMBEDDING_PROCESSING]: "正在生成向量",
     [FileProcessingStatusEnum.COMPLETED]: "全部处理完成",
-    [FileProcessingStatusEnum.OCR_FAILED]: "OCR处理失败",
-    [FileProcessingStatusEnum.EMBEDDING_FAILED]: "向量化处理失败"
-  };
+    [FileProcessingStatusEnum.OCR_FAILED]: "文本解析失败",
+    [FileProcessingStatusEnum.EMBEDDING_FAILED]: "向量化失败",
+  }
 
-  return statusMap[statusEnum] || "未知状态";
-} 
+  return statusMap[statusEnum] || "未知状态"
+}
+
+function getProcessingBadgeText(progressInfo?: FileProcessProgressDTO): string {
+  if (!progressInfo?.processingStage) {
+    return "解析中"
+  }
+  return PROCESSING_STAGE_LABELS[progressInfo.processingStage] || "解析中"
+}

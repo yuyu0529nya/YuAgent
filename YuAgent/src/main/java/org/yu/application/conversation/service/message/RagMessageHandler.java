@@ -278,14 +278,11 @@ public class RagMessageHandler extends AbstractMessageHandler {
 
         for (DocumentUnitDTO doc : documents) {
             try {
-                // 需要根据fileId查询文件名，这里先使用默认值
-                String fileName = getFileNameFromCache(doc.getFileId());
-
-                // 创建轻量级DTO，只包含前端需要的字段
+                String fileName = doc.getFileName() != null ? doc.getFileName() : getFileNameFromCache(doc.getFileId());
+                Integer page = doc.getSourcePage() != null ? doc.getSourcePage() : doc.getPage();
+                Double score = doc.getSimilarityScore() != null ? doc.getSimilarityScore() : 0.0;
                 RagRetrievalDocumentDTO lightweightDTO = new RagRetrievalDocumentDTO(doc.getFileId(), fileName,
-                        doc.getId(), // documentId
-                        0.85, // 默认相似度，实际应该从其他地方获取
-                        doc.getPage());
+                        doc.getId(), score, page);
 
                 lightweightDTOs.add(lightweightDTO);
 
@@ -293,7 +290,7 @@ public class RagMessageHandler extends AbstractMessageHandler {
                 logger.warn("转换轻量级DTO失败，文档ID: {}", doc.getId(), e);
                 // 使用默认值
                 RagRetrievalDocumentDTO lightweightDTO = new RagRetrievalDocumentDTO(doc.getFileId(), "未知文件",
-                        doc.getId(), 0.0, doc.getPage());
+                        doc.getId(), 0.0, doc.getSourcePage() != null ? doc.getSourcePage() : doc.getPage());
                 lightweightDTOs.add(lightweightDTO);
             }
         }

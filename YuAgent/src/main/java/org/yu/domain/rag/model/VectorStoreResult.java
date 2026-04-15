@@ -75,6 +75,48 @@ public class VectorStoreResult implements Serializable {
         return (String) metadata.get("FILE_NAME");
     }
 
+    public Integer getPageNumber() {
+        if (metadata == null) {
+            return null;
+        }
+        Object value = metadata.get("PAGE_NUMBER");
+        if (value instanceof Integer integer) {
+            return integer;
+        }
+        if (value instanceof Number number) {
+            return number.intValue();
+        }
+        return null;
+    }
+
+    public Integer getSourcePage() {
+        if (metadata == null) {
+            return null;
+        }
+        Object value = metadata.get("SOURCE_PAGE");
+        if (value instanceof Integer integer) {
+            return integer;
+        }
+        if (value instanceof Number number) {
+            return number.intValue();
+        }
+        return null;
+    }
+
+    public String getTitlePath() {
+        if (metadata == null) {
+            return null;
+        }
+        return (String) metadata.get("TITLE_PATH");
+    }
+
+    public String getSegmentType() {
+        if (metadata == null) {
+            return null;
+        }
+        return (String) metadata.get("SEGMENT_TYPE");
+    }
+
     public String getEmbeddingId() {
         return embeddingId;
     }
