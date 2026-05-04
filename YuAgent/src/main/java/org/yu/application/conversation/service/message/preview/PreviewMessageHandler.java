@@ -78,7 +78,7 @@ public class PreviewMessageHandler extends AbstractMessageHandler {
             transport.sendEndMessage(connection, AgentChatResponse.buildEndMessage(MessageType.TEXT));
 
             // 执行模型调用计费
-            performBillingWithErrorHandling(chatContext, chatResponse.tokenUsage().inputTokenCount(),
+            performBillingWithErrorHandling(chatContext, userEntity, chatResponse.tokenUsage().inputTokenCount(),
                     chatResponse.tokenUsage().outputTokenCount(), transport, connection);
         });
 

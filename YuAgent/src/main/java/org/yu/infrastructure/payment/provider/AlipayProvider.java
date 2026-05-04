@@ -158,7 +158,7 @@ public class AlipayProvider extends PaymentProvider {
     /** 创建二维码支付 */
     private PaymentResult createQrCodePayment(PaymentRequest request) throws Exception {
         AlipayTradePrecreateResponse response = Factory.Payment.FaceToFace()
-                .asyncNotify("https://7dc9c0c9.r8.vip.cpolar.cn/api/payments/callback/alipay")
+                .asyncNotify(request.getNotifyUrl())
                 .preCreate(request.getTitle(), request.getOrderNo(), formatAmount(request.getAmount().toString()));
 
         if (ResponseChecker.success(response)) {

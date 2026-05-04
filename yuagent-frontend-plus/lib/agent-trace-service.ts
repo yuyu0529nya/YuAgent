@@ -164,6 +164,20 @@ export async function getAgentSessionTraceStatistics(
   }
 }
 
+export async function deleteAgentTraceRecords(agentId: string): Promise<ApiResponse<null>> {
+  try {
+    const response = await httpClient.delete<ApiResponse<null>>(`/traces/agents/${agentId}`);
+    return response;
+  } catch (error) {
+    return {
+      code: 500,
+      message: error instanceof Error ? error.message : "未知错误",
+      data: null,
+      timestamp: Date.now(),
+    }
+  }
+}
+
 // 获取执行详情（复用现有接口）
 export async function getTraceDetail(traceId: string): Promise<ApiResponse<any>> {
   try {
@@ -338,6 +352,11 @@ export const getUserAgentTraceStatisticsWithToast = withToast(getUserAgentTraceS
 export const getAgentSessionTraceStatisticsWithToast = withToast(getAgentSessionTraceStatistics, {
   showSuccessToast: false,
   errorTitle: "获取会话追踪统计失败"
+})
+
+export const deleteAgentTraceRecordsWithToast = withToast(deleteAgentTraceRecords, {
+  successTitle: "删除追踪记录成功",
+  errorTitle: "删除追踪记录失败"
 })
 
 export const getTraceDetailWithToast = withToast(getTraceDetail, {

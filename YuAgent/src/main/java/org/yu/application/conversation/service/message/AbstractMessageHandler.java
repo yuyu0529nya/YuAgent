@@ -288,7 +288,7 @@ public abstract class AbstractMessageHandler {
                     true, latency, null);
 
             // 10. 执行模型调用计费
-            performBillingWithErrorHandling(chatContext, chatResponse.tokenUsage().inputTokenCount(),
+            performBillingWithErrorHandling(chatContext, userEntity, chatResponse.tokenUsage().inputTokenCount(),
                     chatResponse.tokenUsage().outputTokenCount(), transport, connection);
 
             // 11. 调用对话完成钩子
@@ -392,7 +392,7 @@ public abstract class AbstractMessageHandler {
             onModelCallCompleted(chatContext, chatResponse, modelCallInfo);
 
             // 执行模型调用计费
-            performBillingWithErrorHandling(chatContext, chatResponse.tokenUsage().inputTokenCount(),
+            performBillingWithErrorHandling(chatContext, userEntity, chatResponse.tokenUsage().inputTokenCount(),
                     chatResponse.tokenUsage().outputTokenCount(), transport, connection);
 
             // 调用对话完成钩子
@@ -658,8 +658,10 @@ public abstract class AbstractMessageHandler {
      * @param inputTokens 输入Token数量
      * @param outputTokens 输出Token数量
      * @return 计费上下文 */
-    private RuleContext createBillingContext(ChatContext chatContext, Integer inputTokens, Integer outputTokens) {
-        String requestId = generateRequestId(chatContext.getSessionId(), chatContext.getUserId());
+    private RuleContext createBillingContext(ChatContext chatContext, MessageEntity userEntity, Integer inputTokens,
+            Integer outputTokens) {
+        String requestId = generateRequestId(chatContext.getSessionId(), chatContext.getUserId(),
+                userEntity != null ? userEntity.getId() : null);
 
         return RuleContext.builder().type(BillingType.MODEL_USAGE.getCode())
                 .serviceId(chatContext.getModel().getId().toString()) // 使用模型表主键ID
@@ -674,9 +676,9 @@ public abstract class AbstractMessageHandler {
      * @param sessionId 会话ID
      * @param userId 用户ID
      * @return 请求ID */
-    private String generateRequestId(String sessionId, String userId) {
-        long timestamp = System.currentTimeMillis();
-        return String.format("billing_%s_%s_%d", sessionId, userId, timestamp);
+    protected String generateRequestId(String sessionId, String userId, String userMessageId) {
+        String stableMessageId = StringUtils.isNotBlank(userMessageId) ? userMessageId : "unknown-message";
+        return String.format("billing_%s_%s_%s", sessionId, userId, stableMessageId);
     }
 
     /** 执行计费并处理异常
@@ -686,11 +688,11 @@ public abstract class AbstractMessageHandler {
      * @param outputTokens 输出Token数
      * @param transport 消息传输
      * @param connection 连接对象 */
-    protected <T> void performBillingWithErrorHandling(ChatContext chatContext, Integer inputTokens,
-            Integer outputTokens, MessageTransport<T> transport, T connection) {
+    protected <T> void performBillingWithErrorHandling(ChatContext chatContext, MessageEntity userEntity,
+            Integer inputTokens, Integer outputTokens, MessageTransport<T> transport, T connection) {
         try {
             // 创建计费上下文
-            RuleContext billingContext = createBillingContext(chatContext, inputTokens, outputTokens);
+            RuleContext billingContext = createBillingContext(chatContext, userEntity, inputTokens, outputTokens);
 
             // 执行计费
             billingService.charge(billingContext);

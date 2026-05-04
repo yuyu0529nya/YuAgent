@@ -318,4 +318,30 @@ public class OrderDomainService {
             throw new EntityNotFoundException("订单不存在或更新失败: " + orderId);
         }
     }
+    /** 只有在订单仍为期望状态时才更新，用于支付成功链路的幂等控制。 */
+    public boolean transitionOrderStatusAndProviderInfo(String orderId, OrderStatus expectedStatus, OrderStatus newStatus,
+            String providerOrderId) {
+        if (!StringUtils.hasText(orderId)) {
+            throw new BusinessException("订单ID不能为空");
+        }
+        if (expectedStatus == null || newStatus == null) {
+            throw new BusinessException("订单状态不能为空");
+        }
+
+        OrderEntity updateEntity = new OrderEntity();
+        updateEntity.setStatus(newStatus);
+
+        if (StringUtils.hasText(providerOrderId)) {
+            updateEntity.setProviderOrderId(providerOrderId);
+        }
+
+        if (newStatus == OrderStatus.PAID) {
+            updateEntity.setPaidAt(LocalDateTime.now());
+        }
+
+        LambdaUpdateWrapper<OrderEntity> wrapper = Wrappers.<OrderEntity>lambdaUpdate().eq(OrderEntity::getId, orderId)
+                .eq(OrderEntity::getStatus, expectedStatus);
+
+        return orderRepository.update(updateEntity, wrapper) > 0;
+    }
 }

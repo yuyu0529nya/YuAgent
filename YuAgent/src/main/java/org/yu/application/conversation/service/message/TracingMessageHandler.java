@@ -67,6 +67,15 @@ public abstract class TracingMessageHandler extends AbstractMessageHandler {
     }
 
     @Override
+    public <T> T chat(ChatContext chatContext, org.yu.infrastructure.transport.MessageTransport<T> transport) {
+        try {
+            return super.chat(chatContext, transport);
+        } finally {
+            currentTraceContext.remove();
+        }
+    }
+
+    @Override
     protected void onChatStart(ChatContext chatContext) {
 
         try {
@@ -167,8 +176,6 @@ public abstract class TracingMessageHandler extends AbstractMessageHandler {
         if (traceContext != null && traceContext.isTraceEnabled()) {
             try {
                 // 记录汇总表的失败状态（现有逻辑）
-                traceCollector.recordFailure(traceContext, errorPhase, throwable);
-
                 // 记录异常详情到详细记录表（新增逻辑）
                 traceCollector.recordErrorDetail(traceContext, errorPhase, throwable);
 
@@ -271,17 +278,47 @@ public abstract class TracingMessageHandler extends AbstractMessageHandler {
 
         @Override
         public TokenStream onPartialReasoning(Consumer<String> consumer) {
-            return null;
+            Consumer<String> wrappedHandler = reasoning -> {
+                if (capturedTraceContext != null) {
+                    currentTraceContext.set(capturedTraceContext);
+                }
+                try {
+                    consumer.accept(reasoning);
+                } finally {
+                    currentTraceContext.remove();
+                }
+            };
+            return originalStream.onPartialReasoning(wrappedHandler);
         }
 
         @Override
         public TokenStream onCompleteReasoning(Consumer<String> consumer) {
-            return null;
+            Consumer<String> wrappedHandler = reasoning -> {
+                if (capturedTraceContext != null) {
+                    currentTraceContext.set(capturedTraceContext);
+                }
+                try {
+                    consumer.accept(reasoning);
+                } finally {
+                    currentTraceContext.remove();
+                }
+            };
+            return originalStream.onCompleteReasoning(wrappedHandler);
         }
 
         @Override
         public TokenStream onReasoningDetected(BiFunction<String, Object, Boolean> biFunction, String s) {
-            return null;
+            BiFunction<String, Object, Boolean> wrappedHandler = (reasoning, metadata) -> {
+                if (capturedTraceContext != null) {
+                    currentTraceContext.set(capturedTraceContext);
+                }
+                try {
+                    return biFunction.apply(reasoning, metadata);
+                } finally {
+                    currentTraceContext.remove();
+                }
+            };
+            return originalStream.onReasoningDetected(wrappedHandler, s);
         }
 
         @Override
@@ -319,7 +356,7 @@ public abstract class TracingMessageHandler extends AbstractMessageHandler {
 
         @Override
         public TokenStream ignoreErrors() {
-            return null;
+            return originalStream.ignoreErrors();
         }
 
         @Override
@@ -340,7 +377,17 @@ public abstract class TracingMessageHandler extends AbstractMessageHandler {
 
         @Override
         public TokenStream onRetrieved(Consumer<List<Content>> consumer) {
-            return null;
+            Consumer<List<Content>> wrappedHandler = contents -> {
+                if (capturedTraceContext != null) {
+                    currentTraceContext.set(capturedTraceContext);
+                }
+                try {
+                    consumer.accept(contents);
+                } finally {
+                    currentTraceContext.remove();
+                }
+            };
+            return originalStream.onRetrieved(wrappedHandler);
         }
 
         @Override

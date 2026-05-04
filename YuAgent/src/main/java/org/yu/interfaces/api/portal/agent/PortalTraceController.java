@@ -109,4 +109,15 @@ public class PortalTraceController {
                 userId);
         return Result.success(result);
     }
+
+    /** 删除指定助理的全部追踪记录
+     *
+     * @param agentId 助理ID
+     * @return 删除结果 */
+    @DeleteMapping("/agents/{agentId}")
+    public Result<Void> deleteAgentTraceRecords(@PathVariable String agentId) {
+        String userId = UserContext.getCurrentUserId();
+        traceAppService.deleteAgentTraceRecords(agentId, userId);
+        return Result.success();
+    }
 }

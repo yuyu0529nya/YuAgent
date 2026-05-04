@@ -15,6 +15,7 @@ import org.yu.infrastructure.exception.BusinessException;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.stream.Collectors;
 
 /** Agent执行链路追踪领域服务 负责处理追踪数据的核心业务逻辑 */
 @Service
@@ -450,6 +451,27 @@ public class AgentExecutionTraceDomainService {
                             totalToolCalls, totalExecutionTime, lastExecutionTime, lastExecutionSuccess);
                 }).sorted((a, b) -> b.getLastExecutionTime().compareTo(a.getLastExecutionTime()))
                 .collect(java.util.stream.Collectors.toList());
+    }
+
+    public int deleteAgentTraceRecords(String agentId, String userId) {
+        LambdaQueryWrapper<AgentExecutionSummaryEntity> wrapper = Wrappers.<AgentExecutionSummaryEntity>lambdaQuery()
+                .eq(AgentExecutionSummaryEntity::getAgentId, agentId)
+                .eq(AgentExecutionSummaryEntity::getUserId, userId);
+
+        List<AgentExecutionSummaryEntity> summaries = summaryRepository.selectList(wrapper);
+        if (summaries.isEmpty()) {
+            return 0;
+        }
+
+        List<String> sessionIds = summaries.stream().map(AgentExecutionSummaryEntity::getSessionId).distinct()
+                .collect(Collectors.toList());
+
+        if (!sessionIds.isEmpty()) {
+            detailRepository.delete(Wrappers.<AgentExecutionDetailEntity>lambdaQuery()
+                    .in(AgentExecutionDetailEntity::getSessionId, sessionIds));
+        }
+
+        return summaryRepository.delete(wrapper);
     }
 
     /** 更新汇总的Token统计 */

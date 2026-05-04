@@ -262,7 +262,7 @@ public class RagMessageHandler extends AbstractMessageHandler {
                     true, latency, null);
 
             // 执行模型调用计费
-            performBillingWithErrorHandling(ragContext, chatResponse.tokenUsage().inputTokenCount(),
+            performBillingWithErrorHandling(ragContext, userEntity, chatResponse.tokenUsage().inputTokenCount(),
                     chatResponse.tokenUsage().outputTokenCount(), transport, connection);
 
             smartRenameSession(ragContext);
