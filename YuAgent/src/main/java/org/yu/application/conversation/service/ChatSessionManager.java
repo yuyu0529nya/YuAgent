@@ -9,13 +9,13 @@ import org.yu.infrastructure.transport.SseEmitterUtils;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-/** 聊天会话管理器 负责管理正在进行的对话会话，支持会话中断功能 */
+/** Manages active chat sessions and interruption state. */
 @Component
 public class ChatSessionManager {
 
     private static final Logger logger = LoggerFactory.getLogger(ChatSessionManager.class);
 
-    /** 会话信息 */
+    /** Runtime state for one active session. */
     public static class SessionInfo {
         private final String sessionId;
         private final SseEmitter emitter;
@@ -50,96 +50,78 @@ public class ChatSessionManager {
         }
     }
 
-    // 使用sessionId作为key，存储正在进行的对话会话
     private final ConcurrentHashMap<String, SessionInfo> activeSessions = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, Long> interruptedSessions = new ConcurrentHashMap<>();
 
-    /** 注册一个新的对话会话
-     * @param sessionId 会话ID
-     * @param emitter SSE发送器 */
     public void registerSession(String sessionId, SseEmitter emitter) {
+        interruptedSessions.remove(sessionId);
+
         SessionInfo sessionInfo = new SessionInfo(sessionId, emitter);
         activeSessions.put(sessionId, sessionInfo);
-        logger.info("注册对话会话: sessionId={}", sessionId);
+        logger.info("Registered chat session: sessionId={}", sessionId);
 
-        // 设置SSE完成和超时回调，自动清理会话
         emitter.onCompletion(() -> {
             removeSession(sessionId);
-            logger.info("对话会话完成: sessionId={}", sessionId);
+            logger.info("Chat session completed: sessionId={}", sessionId);
         });
 
         emitter.onTimeout(() -> {
             removeSession(sessionId);
-            logger.warn("对话会话超时: sessionId={}", sessionId);
+            logger.warn("Chat session timed out: sessionId={}", sessionId);
         });
 
         emitter.onError((throwable) -> {
             removeSession(sessionId);
-            logger.error("对话会话错误: sessionId={}, error={}", sessionId, throwable.getMessage());
+            logger.error("Chat session error: sessionId={}, error={}", sessionId, throwable.getMessage());
         });
     }
 
-    /** 移除对话会话
-     * @param sessionId 会话ID */
     public void removeSession(String sessionId) {
         SessionInfo removed = activeSessions.remove(sessionId);
         if (removed != null) {
+            if (!removed.isInterrupted()) {
+                interruptedSessions.remove(sessionId);
+            }
             long duration = System.currentTimeMillis() - removed.getStartTime();
-            logger.info("移除对话会话: sessionId={}, 持续时间={}ms", sessionId, duration);
+            logger.info("Removed chat session: sessionId={}, duration={}ms", sessionId, duration);
         }
     }
 
-    /** 中断指定的对话会话
-     * @param sessionId 会话ID
-     * @return 是否成功中断（true表示会话存在且成功中断，false表示会话不存在） */
     public boolean interruptSession(String sessionId) {
         SessionInfo sessionInfo = activeSessions.get(sessionId);
         if (sessionInfo == null) {
-            logger.warn("尝试中断不存在的会话: sessionId={}", sessionId);
+            logger.warn("Tried to interrupt a missing session: sessionId={}", sessionId);
             return false;
         }
 
-        // 设置中断标志
         sessionInfo.setInterrupted();
-        logger.info("设置会话中断标志: sessionId={}", sessionId);
+        interruptedSessions.put(sessionId, System.currentTimeMillis());
+        logger.info("Marked chat session as interrupted: sessionId={}", sessionId);
 
-        // 先从活跃会话中移除，避免重复处理
         activeSessions.remove(sessionId);
 
         try {
             SseEmitter emitter = sessionInfo.getEmitter();
-
-            // 直接尝试发送中断消息，如果连接已关闭会自动处理
             SseEmitterUtils.safeSend(emitter,
                     SseEmitter.event().name("interrupt").data("{\"interrupted\": true, \"message\": \"对话已被中断\"}"));
-
-            // 安全完成SSE连接
             SseEmitterUtils.safeComplete(emitter);
-            logger.info("对话会话已中断: sessionId={}", sessionId);
+            logger.info("Chat session interrupted: sessionId={}", sessionId);
             return true;
-
         } catch (Exception e) {
-            logger.error("中断会话时发生错误: sessionId={}, error={}", sessionId, e.getMessage());
+            logger.error("Error while interrupting chat session: sessionId={}, error={}", sessionId, e.getMessage());
             return true;
         }
     }
 
-    /** 检查会话是否已被中断
-     * @param sessionId 会话ID
-     * @return true表示已中断，false表示未中断或会话不存在 */
     public boolean isSessionInterrupted(String sessionId) {
         SessionInfo sessionInfo = activeSessions.get(sessionId);
-        return sessionInfo != null && sessionInfo.isInterrupted();
+        return (sessionInfo != null && sessionInfo.isInterrupted()) || interruptedSessions.containsKey(sessionId);
     }
 
-    /** 获取当前活跃会话数量
-     * @return 活跃会话数量 */
     public int getActiveSessionCount() {
         return activeSessions.size();
     }
 
-    /** 检查会话是否存在
-     * @param sessionId 会话ID
-     * @return 会话是否存在 */
     public boolean hasSession(String sessionId) {
         return activeSessions.containsKey(sessionId);
     }

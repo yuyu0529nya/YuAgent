@@ -37,6 +37,7 @@ interface Message {
   type?: MessageType // 消息类型枚举
   createdAt?: string
   updatedAt?: string
+  isStreaming?: boolean
   fileUrls?: string[] // 修改：文件URL列表
 }
 
@@ -265,6 +266,27 @@ export function ChatPanel({ conversationId, isFunctionalAgent = false, agentName
   }
 
   // 处理发送消息
+  const parseSSEBlock = (block: string): { event: string; data: StreamData | null } | null => {
+    const eventMatch = block.match(/^event:\s*(.+)$/m)
+    const dataLines = block
+      .split('\n')
+      .filter(line => line.startsWith('data:'))
+      .map(line => line.slice(5).trim())
+
+    if (dataLines.length === 0) {
+      return null
+    }
+
+    try {
+      return {
+        event: eventMatch?.[1]?.trim() || 'message',
+        data: JSON.parse(dataLines.join('\n')) as StreamData
+      }
+    } catch {
+      return null
+    }
+  }
+
   const handleSendMessage = async () => {
     if (!input.trim() && uploadedFiles.length === 0) return
 
@@ -361,26 +383,20 @@ export function ChatPanel({ conversationId, isFunctionalAgent = false, agentName
         // 保留最后一个可能不完整的行
         buffer = lines.pop() || ""
         
-        for (const line of lines) {
-          if (line.startsWith("data:")) {
-            try {
-              // 提取JSON部分（去掉前缀"data:"，处理可能的重复前缀情况）
-              let jsonStr = line.substring(5);
-              // 处理可能存在的重复data:前缀
-              if (jsonStr.startsWith("data:")) {
-                jsonStr = jsonStr.substring(5);
-              }
- 
-              
-              const data = JSON.parse(jsonStr) as StreamData
- 
-              
-              // 处理消息 - 传递baseMessageId作为前缀
-              handleStreamDataMessage(data, baseMessageId);
-            } catch (e) {
- 
-            }
+        for (const block of lines) {
+          const parsed = parseSSEBlock(block)
+          if (!parsed?.data) {
+            continue
           }
+
+          if (parsed.event === 'interrupt') {
+            setIsTyping(false)
+            setIsThinking(false)
+            setCanInterrupt(false)
+            break
+          }
+
+          handleStreamDataMessage(parsed.data, baseMessageId)
         }
       }
     } catch (error) {
@@ -710,7 +726,7 @@ export function ChatPanel({ conversationId, isFunctionalAgent = false, agentName
                             <div className="p-3 rounded-lg">
                               <MessageMarkdown showCopyButton={true}
                                 content={message.content}
-                                isStreaming={message.isStreaming}
+                                isStreaming={Boolean((message as { isStreaming?: boolean }).isStreaming)}
                               />
                             </div>
                           )}

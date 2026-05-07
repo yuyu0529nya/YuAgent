@@ -60,6 +60,8 @@ import javax.annotation.Nullable;
 import java.math.BigDecimal;
 
 import java.util.*;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 
@@ -71,6 +73,7 @@ public abstract class AbstractMessageHandler {
     /** 连接超时时间（毫秒） */
     protected static final long CONNECTION_TIMEOUT = 3000000L;
     private static final int CHAT_MEMORY_MAX_MESSAGES = 40;
+    private static final int MAX_TOOL_EXECUTIONS_PER_CHAT = 8;
 
     protected final LLMServiceFactory llmServiceFactory;
     protected final MessageDomainService messageDomainService;
@@ -335,12 +338,17 @@ public abstract class AbstractMessageHandler {
         this.saveMessageAndUpdateContext(chatContext, userEntity);
 
         AtomicReference<StringBuilder> messageBuilder = new AtomicReference<>(new StringBuilder());
+        AtomicBoolean streamStopped = new AtomicBoolean(false);
+        AtomicInteger toolExecutionCount = new AtomicInteger(0);
         TokenStream tokenStream = agent.chat(chatContext.getUserMessage());
 
         // 记录调用开始时间
         long startTime = System.currentTimeMillis();
 
         tokenStream.onError(throwable -> {
+            if (shouldStopStreaming(chatContext, streamStopped)) {
+                return;
+            }
             // 直接发送错误消息，transport内部处理连接异常
             transport.sendMessage(connection,
                     AgentChatResponse.buildEndMessage(throwable.getMessage(), MessageType.TEXT));
@@ -357,6 +365,9 @@ public abstract class AbstractMessageHandler {
 
         // 部分响应处理
         tokenStream.onPartialResponse(reply -> {
+            if (shouldStopStreaming(chatContext, streamStopped)) {
+                return;
+            }
             messageBuilder.get().append(reply);
             // 删除换行后消息为空字符串
             if (messageBuilder.get().toString().trim().isEmpty()) {
@@ -369,6 +380,9 @@ public abstract class AbstractMessageHandler {
 
         // 完整响应处理
         tokenStream.onCompleteResponse(chatResponse -> {
+            if (shouldStopStreaming(chatContext, streamStopped)) {
+                return;
+            }
 
             this.setMessageTokenCount(chatContext.getMessageHistory(), userEntity, llmEntity, chatResponse);
 
@@ -408,6 +422,19 @@ public abstract class AbstractMessageHandler {
 
         // 工具执行处理
         tokenStream.onToolExecuted(toolExecution -> {
+            if (shouldStopStreaming(chatContext, streamStopped)) {
+                return;
+            }
+
+            int currentToolExecutionCount = toolExecutionCount.incrementAndGet();
+            if (currentToolExecutionCount > MAX_TOOL_EXECUTIONS_PER_CHAT) {
+                streamStopped.set(true);
+                transport.sendEndMessage(connection, AgentChatResponse.buildEndMessage(
+                        "工具调用次数过多，已自动停止本次执行，请缩小问题范围后重试。", MessageType.TEXT));
+                onChatCompleted(chatContext, false, "TOOL_EXECUTION_LIMIT_EXCEEDED");
+                return;
+            }
+
             if (!messageBuilder.get().isEmpty()) {
                 transport.sendMessage(connection, AgentChatResponse.buildEndMessage(MessageType.TEXT));
                 llmEntity.setContent(messageBuilder.get().toString());
@@ -432,6 +459,20 @@ public abstract class AbstractMessageHandler {
 
         // 启动流处理
         tokenStream.start();
+    }
+
+    private boolean shouldStopStreaming(ChatContext chatContext, AtomicBoolean streamStopped) {
+        if (streamStopped.get()) {
+            return true;
+        }
+        if (chatContext == null || StringUtils.isBlank(chatContext.getSessionId())) {
+            return false;
+        }
+        if (chatSessionManager.isSessionInterrupted(chatContext.getSessionId())) {
+            streamStopped.set(true);
+            return true;
+        }
+        return false;
     }
 
     @Nullable
