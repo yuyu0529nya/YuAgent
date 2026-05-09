@@ -1,5 +1,5 @@
-# YuAgent统一Docker Compose配置
-# 支持通过环境变量控制不同部署模式：local/production/external
+﻿# YuAgent缁熶竴Docker Compose閰嶇疆
+# 鏀寔閫氳繃鐜鍙橀噺鎺у埗涓嶅悓閮ㄧ讲妯″紡锛歭ocal/production/external
 
 name: yuagent
 
@@ -18,8 +18,8 @@ volumes:
     driver: local
 
 services:
-  # PostgreSQL数据库服务
-  # 仅在非external模式下启动
+  # PostgreSQL鏁版嵁搴撴湇鍔?
+  # 浠呭湪闈瀍xternal妯″紡涓嬪惎鍔?
   postgres:
     image: pgvector/pgvector:pg15
     container_name: yuagent-postgres
@@ -45,7 +45,7 @@ services:
       timeout: 5s
       retries: 5
 
-  # RabbitMQ消息队列服务
+  # RabbitMQ娑堟伅闃熷垪鏈嶅姟
   rabbitmq:
     image: rabbitmq:3.12-management-alpine
     container_name: yuagent-rabbitmq
@@ -66,7 +66,7 @@ services:
       timeout: 10s
       retries: 5
 
-  # YuAgent后端服务
+  # YuAgent鍚庣鏈嶅姟
   yuagent-backend:
     build:
       context: ..
@@ -74,19 +74,19 @@ services:
     container_name: yuagent-backend
     user: "0:0"
     environment:
-      # 数据库配置
+      # 鏁版嵁搴撻厤缃?
       DB_HOST: ${DB_HOST:-postgres}
       DB_PORT: ${DB_PORT:-5432}
       DB_NAME: ${DB_NAME:-yuagent}
       DB_USER: ${DB_USER:-postgres}
       DB_PASSWORD: ${DB_PASSWORD:-postgres}
       
-      # Spring配置
+      # Spring閰嶇疆
       SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-dev}
       JPA_DDL_AUTO: ${JPA_DDL_AUTO:-update}
       SHOW_SQL: ${SHOW_SQL:-true}
       
-      # 默认用户配置
+      # 榛樿鐢ㄦ埛閰嶇疆
       YUAGENT_ADMIN_EMAIL: ${YUAGENT_ADMIN_EMAIL:-admin@yuagent.ai}
       YUAGENT_ADMIN_PASSWORD: ${YUAGENT_ADMIN_PASSWORD:-admin123}
       YUAGENT_ADMIN_NICKNAME: ${YUAGENT_ADMIN_NICKNAME:-YuAgent管理员}
@@ -94,25 +94,25 @@ services:
       YUAGENT_TEST_EMAIL: ${YUAGENT_TEST_EMAIL:-test@yuagent.ai}
       YUAGENT_TEST_PASSWORD: ${YUAGENT_TEST_PASSWORD:-test123}
       
-      # 消息队列配置
+      # 娑堟伅闃熷垪閰嶇疆
       RABBITMQ_HOST: ${RABBITMQ_HOST:-rabbitmq}
       RABBITMQ_PORT: ${RABBITMQ_PORT:-5672}
       RABBITMQ_USERNAME: ${RABBITMQ_USERNAME:-guest}
       RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-guest}
       
-      # 日志配置
+      # 鏃ュ織閰嶇疆
       LOG_LEVEL_ROOT: ${LOG_LEVEL_ROOT:-info}
       LOG_LEVEL_APP: ${LOG_LEVEL_APP:-debug}
       
-      # 安全配置
+      # 瀹夊叏閰嶇疆
       JWT_SECRET: ${JWT_SECRET:-default_jwt_secret_please_change_in_production}
       
-      # 高可用网关配置
+      # 楂樺彲鐢ㄧ綉鍏抽厤缃?
       HIGH_AVAILABILITY_ENABLED: ${HIGH_AVAILABILITY_ENABLED:-false}
       HIGH_AVAILABILITY_GATEWAY_URL: ${HIGH_AVAILABILITY_GATEWAY_URL:-http://api-gateway:8080}
       HIGH_AVAILABILITY_API_KEY: ${HIGH_AVAILABILITY_API_KEY:-default-api-key}
       
-      # 支付配置
+      # 鏀粯閰嶇疆
       ALIPAY_APP_ID: ${ALIPAY_APP_ID:-your_alipay_app_id}
       ALIPAY_PRIVATE_KEY: ${ALIPAY_PRIVATE_KEY:-your_alipay_private_key}
       ALIPAY_PUBLIC_KEY: ${ALIPAY_PUBLIC_KEY:-your_alipay_public_key}
@@ -120,12 +120,12 @@ services:
       STRIPE_PUBLISHABLE_KEY: ${STRIPE_PUBLISHABLE_KEY:-your_stripe_publishable_key}
       STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-your_stripe_webhook_secret}
       
-      # GitHub集成配置
+      # GitHub闆嗘垚閰嶇疆
       GITHUB_REPO_NAME: ${GITHUB_REPO_NAME:-agent-mcp-community}
       GITHUB_USERNAME: ${GITHUB_USERNAME:-lucky-aeon}
       GITHUB_TOKEN: ${GITHUB_TOKEN:-your_github_token}
       
-      # 其他配置
+      # 鍏朵粬閰嶇疆
       FILE_STORAGE_PATH: ${FILE_STORAGE_PATH:-/app/storage}
       FILE_STORAGE_PLATFORM: ${FILE_STORAGE_PLATFORM:-amazon-s3-1}
       S3_ENABLED: ${S3_ENABLED:-true}
@@ -148,17 +148,20 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
     ports:
       - "${BACKEND_PORT:-8088}:8088"
-      - "${DEBUG_PORT:-5005}:5005"  # 调试端口（仅开发环境）
+      - "${DEBUG_PORT:-5005}:5005"  # 璋冭瘯绔彛锛堜粎寮€鍙戠幆澧冿級
+    dns:
+      - 223.5.5.5
+      - 8.8.8.8
     networks:
       - yuagent-network
     depends_on:
       postgres:
         condition: service_healthy
-        required: false  # external模式不需要postgres
+        required: false  # external妯″紡涓嶉渶瑕乸ostgres
       rabbitmq:
         condition: service_healthy
     restart: unless-stopped
-    # 开发环境暂时禁用健康检查以避免curl依赖
+    # 寮€鍙戠幆澧冩殏鏃剁鐢ㄥ仴搴锋鏌ヤ互閬垮厤curl渚濊禆
     # healthcheck:
     #   test: ["CMD-SHELL", "curl -f http://localhost:8088/api/health || exit 1"]
     #   interval: 30s
@@ -166,17 +169,17 @@ services:
     #   retries: 5
     #   start_period: 60s
 
-  # YuAgent前端服务
+  # YuAgent鍓嶇鏈嶅姟
   yuagent-frontend:
     build:
       context: ..
       dockerfile: docker/frontend/Dockerfile${DOCKERFILE_SUFFIX:-}
     container_name: yuagent-frontend
     environment:
-      # API配置
+      # API閰嶇疆
       NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8088/api}
       
-      # Next.js配置
+      # Next.js閰嶇疆
       NODE_ENV: ${NODE_ENV:-development}
       NEXT_TELEMETRY_DISABLED: 1
     ports:
@@ -193,8 +196,8 @@ services:
       retries: 3
       start_period: 30s
 
-# 开发模式配置（--profile dev）
-  # 数据库管理工具（仅开发环境）
+# 寮€鍙戞ā寮忛厤缃紙--profile dev锛?
+  # 鏁版嵁搴撶鐞嗗伐鍏凤紙浠呭紑鍙戠幆澧冿級
   adminer:
     image: adminer:4-standalone
     container_name: yuagent-adminer
@@ -208,7 +211,7 @@ services:
       - postgres
     restart: unless-stopped
 
-  # API Premium Gateway 高可用网关服务
+  # API Premium Gateway 楂樺彲鐢ㄧ綉鍏虫湇鍔?
   api-gateway:
     build:
       context: ../_tmp/mcp-gateway-src
@@ -231,3 +234,4 @@ services:
       timeout: 10s
       retries: 3
       start_period: 60s
+

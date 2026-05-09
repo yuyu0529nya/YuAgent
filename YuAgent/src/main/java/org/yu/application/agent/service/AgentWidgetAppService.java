@@ -12,6 +12,7 @@ import org.yu.domain.agent.model.AgentEntity;
 import org.yu.domain.agent.model.AgentWidgetEntity;
 import org.yu.domain.agent.repository.AgentRepository;
 import org.yu.domain.agent.service.AgentWidgetDomainService;
+import org.yu.domain.agent.service.AgentWidgetUsageDomainService;
 import org.yu.domain.llm.model.ModelEntity;
 import org.yu.domain.llm.model.ProviderEntity;
 import org.yu.domain.llm.service.LLMDomainService;
@@ -30,13 +31,16 @@ public class AgentWidgetAppService {
     private final AgentRepository agentRepository;
     private final LLMDomainService llmDomainService;
     private final AgentWidgetAssembler agentWidgetAssembler;
+    private final AgentWidgetUsageDomainService agentWidgetUsageDomainService;
 
     public AgentWidgetAppService(AgentWidgetDomainService agentWidgetDomainService, AgentRepository agentRepository,
-            LLMDomainService llmDomainService, AgentWidgetAssembler agentWidgetAssembler) {
+            LLMDomainService llmDomainService, AgentWidgetAssembler agentWidgetAssembler,
+            AgentWidgetUsageDomainService agentWidgetUsageDomainService) {
         this.agentWidgetDomainService = agentWidgetDomainService;
         this.agentRepository = agentRepository;
         this.llmDomainService = llmDomainService;
         this.agentWidgetAssembler = agentWidgetAssembler;
+        this.agentWidgetUsageDomainService = agentWidgetUsageDomainService;
     }
 
     /** 创建小组件配置
@@ -66,8 +70,10 @@ public class AgentWidgetAppService {
         ProviderEntity provider = llmDomainService.getProvider(model.getProviderId());
 
         // 6. 转换为DTO并返回
-        return agentWidgetAssembler.toDTOWithEmbedCode(savedWidget, ModelAssembler.toDTO(model),
+        AgentWidgetDTO dto = agentWidgetAssembler.toDTOWithEmbedCode(savedWidget, ModelAssembler.toDTO(model),
                 ProviderAssembler.toDTO(provider));
+        dto.setDailyCalls(0);
+        return dto;
     }
 
     /** 获取Agent的所有小组件配置
@@ -106,8 +112,10 @@ public class AgentWidgetAppService {
         }
 
         // 4. 转换为DTO列表
-        return AgentWidgetAssembler.toDTOsWithEmbedCode(widgets, models, providers,
+        List<AgentWidgetDTO> dtos = AgentWidgetAssembler.toDTOsWithEmbedCode(widgets, models, providers,
                 agentWidgetAssembler.frontendBaseUrl);
+        fillDailyCalls(dtos);
+        return dtos;
     }
 
     /** 获取用户的所有小组件配置
@@ -139,8 +147,10 @@ public class AgentWidgetAppService {
             providers.add(providerDTO);
         }
 
-        return AgentWidgetAssembler.toDTOsWithEmbedCode(widgets, models, providers,
+        List<AgentWidgetDTO> dtos = AgentWidgetAssembler.toDTOsWithEmbedCode(widgets, models, providers,
                 agentWidgetAssembler.frontendBaseUrl);
+        fillDailyCalls(dtos);
+        return dtos;
     }
 
     /** 更新小组件配置
@@ -160,8 +170,10 @@ public class AgentWidgetAppService {
         ModelEntity model = llmDomainService.getModelById(widget.getModelId());
         ProviderEntity provider = llmDomainService.getProvider(model.getProviderId());
 
-        return agentWidgetAssembler.toDTOWithEmbedCode(updatedWidget, ModelAssembler.toDTO(model),
+        AgentWidgetDTO dto = agentWidgetAssembler.toDTOWithEmbedCode(updatedWidget, ModelAssembler.toDTO(model),
                 ProviderAssembler.toDTO(provider));
+        dto.setDailyCalls(agentWidgetUsageDomainService.getTodayCallCount(updatedWidget.getId()));
+        return dto;
     }
 
     /** 切换小组件配置启用状态
@@ -175,8 +187,10 @@ public class AgentWidgetAppService {
         ModelEntity model = llmDomainService.getModelById(widget.getModelId());
         ProviderEntity provider = llmDomainService.getProvider(model.getProviderId());
 
-        return agentWidgetAssembler.toDTOWithEmbedCode(widget, ModelAssembler.toDTO(model),
+        AgentWidgetDTO dto = agentWidgetAssembler.toDTOWithEmbedCode(widget, ModelAssembler.toDTO(model),
                 ProviderAssembler.toDTO(provider));
+        dto.setDailyCalls(agentWidgetUsageDomainService.getTodayCallCount(widget.getId()));
+        return dto;
     }
 
     /** 删除小组件配置
@@ -199,8 +213,10 @@ public class AgentWidgetAppService {
         ModelEntity model = llmDomainService.getModelById(widget.getModelId());
         ProviderEntity provider = llmDomainService.getProvider(model.getProviderId());
 
-        return agentWidgetAssembler.toDTOWithEmbedCode(widget, ModelAssembler.toDTO(model),
+        AgentWidgetDTO dto = agentWidgetAssembler.toDTOWithEmbedCode(widget, ModelAssembler.toDTO(model),
                 ProviderAssembler.toDTO(provider));
+        dto.setDailyCalls(agentWidgetUsageDomainService.getTodayCallCount(widget.getId()));
+        return dto;
     }
 
     /** 根据公开ID获取小组件配置（用于公开访问）
@@ -244,7 +260,7 @@ public class AgentWidgetAppService {
         info.setDailyLimit(widget.getDailyLimit());
         info.setEnabled(widget.getEnabled());
         // TODO: 实现每日调用次数统计，目前暂时设置为0
-        info.setDailyCalls(0);
+        info.setDailyCalls(agentWidgetUsageDomainService.getTodayCallCount(widget.getId()));
 
         // Agent配置信息（用于无会话聊天）
         info.setAgentName(agent.getName());
@@ -390,5 +406,19 @@ public class AgentWidgetAppService {
         if (!agent.getUserId().equals(userId)) {
             throw new BusinessException("无权限操作此Agent");
         }
+    }
+    public Integer consumeDailyCall(String publicId) {
+        AgentWidgetEntity widget = agentWidgetDomainService.getEnabledWidgetByPublicId(publicId);
+        return agentWidgetUsageDomainService.consumeDailyCall(widget.getId(), widget.getDailyLimit());
+    }
+
+    private void fillDailyCalls(List<AgentWidgetDTO> widgets) {
+        if (widgets == null || widgets.isEmpty()) {
+            return;
+        }
+
+        java.util.Map<String, Integer> usageMap = agentWidgetUsageDomainService
+                .getTodayCallCounts(widgets.stream().map(AgentWidgetDTO::getId).toList());
+        widgets.forEach(widget -> widget.setDailyCalls(usageMap.getOrDefault(widget.getId(), 0)));
     }
 }

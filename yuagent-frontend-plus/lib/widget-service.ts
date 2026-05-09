@@ -43,12 +43,27 @@ export interface ApiResponse<T> {
 
 const API_BASE = '/agents';
 
+function normalizeWidget(widget: Widget): Widget {
+  return {
+    ...widget,
+    dailyCalls: widget?.dailyCalls ?? 0,
+  };
+}
+
+function normalizeWidgetList(widgets: Widget[] | undefined): Widget[] {
+  return (widgets || []).map(normalizeWidget);
+}
+
 /**
  * 获取Agent的所有Widget
  */
 export async function getAgentWidgets(agentId: string): Promise<ApiResponse<Widget[]>> {
   try {
-    return await httpClient.get<ApiResponse<Widget[]>>(`${API_BASE}/${agentId}/widgets`);
+    const response = await httpClient.get<ApiResponse<Widget[]>>(`${API_BASE}/${agentId}/widgets`);
+    return {
+      ...response,
+      data: normalizeWidgetList(response.data),
+    };
   } catch (error) {
     return {
       code: 500,
@@ -64,7 +79,11 @@ export async function getAgentWidgets(agentId: string): Promise<ApiResponse<Widg
  */
 export async function createWidget(agentId: string, request: CreateWidgetRequest): Promise<ApiResponse<Widget>> {
   try {
-    return await httpClient.post<ApiResponse<Widget>>(`${API_BASE}/${agentId}/widgets`, request);
+    const response = await httpClient.post<ApiResponse<Widget>>(`${API_BASE}/${agentId}/widgets`, request);
+    return {
+      ...response,
+      data: normalizeWidget(response.data),
+    };
   } catch (error) {
     return {
       code: 500,
@@ -80,7 +99,11 @@ export async function createWidget(agentId: string, request: CreateWidgetRequest
  */
 export async function getWidgetDetail(agentId: string, widgetId: string): Promise<ApiResponse<Widget>> {
   try {
-    return await httpClient.get<ApiResponse<Widget>>(`${API_BASE}/${agentId}/widgets/${widgetId}`);
+    const response = await httpClient.get<ApiResponse<Widget>>(`${API_BASE}/${agentId}/widgets/${widgetId}`);
+    return {
+      ...response,
+      data: normalizeWidget(response.data),
+    };
   } catch (error) {
     return {
       code: 500,
@@ -96,7 +119,11 @@ export async function getWidgetDetail(agentId: string, widgetId: string): Promis
  */
 export async function updateWidget(agentId: string, widgetId: string, request: UpdateWidgetRequest): Promise<ApiResponse<Widget>> {
   try {
-    return await httpClient.put<ApiResponse<Widget>>(`${API_BASE}/${agentId}/widgets/${widgetId}`, request);
+    const response = await httpClient.put<ApiResponse<Widget>>(`${API_BASE}/${agentId}/widgets/${widgetId}`, request);
+    return {
+      ...response,
+      data: normalizeWidget(response.data),
+    };
   } catch (error) {
     return {
       code: 500,
@@ -112,7 +139,11 @@ export async function updateWidget(agentId: string, widgetId: string, request: U
  */
 export async function toggleWidgetStatus(agentId: string, widgetId: string): Promise<ApiResponse<Widget>> {
   try {
-    return await httpClient.post<ApiResponse<Widget>>(`${API_BASE}/${agentId}/widgets/${widgetId}/toggle-status`);
+    const response = await httpClient.post<ApiResponse<Widget>>(`${API_BASE}/${agentId}/widgets/${widgetId}/toggle-status`);
+    return {
+      ...response,
+      data: normalizeWidget(response.data),
+    };
   } catch (error) {
     return {
       code: 500,
@@ -144,7 +175,11 @@ export async function deleteWidget(agentId: string, widgetId: string): Promise<A
  */
 export async function getUserWidgets(): Promise<ApiResponse<Widget[]>> {
   try {
-    return await httpClient.get<ApiResponse<Widget[]>>('/widgets/user');
+    const response = await httpClient.get<ApiResponse<Widget[]>>('/widgets/user');
+    return {
+      ...response,
+      data: normalizeWidgetList(response.data),
+    };
   } catch (error) {
     return {
       code: 500,

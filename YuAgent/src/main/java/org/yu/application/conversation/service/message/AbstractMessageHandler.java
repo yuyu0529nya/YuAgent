@@ -74,6 +74,19 @@ public abstract class AbstractMessageHandler {
     protected static final long CONNECTION_TIMEOUT = 3000000L;
     private static final int CHAT_MEMORY_MAX_MESSAGES = 40;
     private static final int MAX_TOOL_EXECUTIONS_PER_CHAT = 8;
+    private static final int MAX_IDENTICAL_TOOL_TIMEOUTS_PER_CHAT = 3;
+    private static final String TOOL_USAGE_GUARD_PROMPT =
+            "\n[??????]\n"
+                    + "1. ??????????????????????????????\n"
+                    + "2. ??????????????????????????????????????\n"
+                    + "3. ????????????????????????????????????????\n"
+                    + "4. ??????????????????????????/???????????????????????????????????\n"
+                    + "5. ???????????????????????????????????????????????????????????";
+    private static final List<String> TOOL_TIMEOUT_MARKERS = List.of(
+            "there was a timeout executing the tool",
+            "timeout executing the tool",
+            "sockettimeoutexception",
+            "sse channel failure");
 
     protected final LLMServiceFactory llmServiceFactory;
     protected final MessageDomainService messageDomainService;
@@ -300,7 +313,7 @@ public abstract class AbstractMessageHandler {
         } catch (Exception e) {
             // 直接发送错误消息
             AgentChatResponse errorResponse = AgentChatResponse.buildEndMessage(e.getMessage(), MessageType.TEXT);
-            transport.sendMessage(connection, errorResponse);
+            transport.sendEndMessage(connection, errorResponse);
 
             long latency = System.currentTimeMillis() - startTime;
             highAvailabilityDomainService.reportCallResult(chatContext.getInstanceId(), chatContext.getModel().getId(),
@@ -340,6 +353,8 @@ public abstract class AbstractMessageHandler {
         AtomicReference<StringBuilder> messageBuilder = new AtomicReference<>(new StringBuilder());
         AtomicBoolean streamStopped = new AtomicBoolean(false);
         AtomicInteger toolExecutionCount = new AtomicInteger(0);
+        Map<String, Integer> identicalToolExecutions = new HashMap<>();
+        Map<String, Integer> timedOutToolExecutions = new HashMap<>();
         TokenStream tokenStream = agent.chat(chatContext.getUserMessage());
 
         // 记录调用开始时间
@@ -350,7 +365,8 @@ public abstract class AbstractMessageHandler {
                 return;
             }
             // 直接发送错误消息，transport内部处理连接异常
-            transport.sendMessage(connection,
+            streamStopped.set(true);
+            transport.sendEndMessage(connection,
                     AgentChatResponse.buildEndMessage(throwable.getMessage(), MessageType.TEXT));
 
             // 上报调用失败结果
@@ -435,22 +451,29 @@ public abstract class AbstractMessageHandler {
                 return;
             }
 
+            String toolExecutionKey = buildToolExecutionKey(toolExecution);
+            boolean timedOutToolExecution = isToolExecutionTimedOut(toolExecution);
+            if (timedOutToolExecution) {
+                int timeoutCount = timedOutToolExecutions.merge(toolExecutionKey, 1, Integer::sum);
+                if (timeoutCount > MAX_IDENTICAL_TOOL_TIMEOUTS_PER_CHAT) {
+                    terminateStreamingChatWithFailure(chatContext, connection, transport, streamStopped, startTime,
+                            "工具连续超时，已终止本次对话，请稍后重试。",
+                            "TOOL_EXECUTION_TIMEOUT_RETRY_LIMIT_EXCEEDED",
+                            new BusinessException("Repeated timed out tool execution: " + toolExecutionKey),
+                            ExecutionPhase.TOOL_EXECUTION);
+                    return;
+                }
+            }
+
             if (!messageBuilder.get().isEmpty()) {
                 transport.sendMessage(connection, AgentChatResponse.buildEndMessage(MessageType.TEXT));
-                llmEntity.setContent(messageBuilder.get().toString());
-                messageDomainService.saveMessageAndUpdateContext(Collections.singletonList(llmEntity),
-                        chatContext.getContextEntity());
                 messageBuilder.set(new StringBuilder());
             }
-            String message = "执行工具：" + toolExecution.request().name();
-            MessageEntity toolMessage = createLlmMessage(chatContext);
-            toolMessage.setMessageType(MessageType.TOOL_CALL);
-            toolMessage.setContent(message);
-            messageDomainService.saveMessageAndUpdateContext(Collections.singletonList(toolMessage),
-                    chatContext.getContextEntity());
-
-            // 直接发送工具调用消息
-            transport.sendMessage(connection, AgentChatResponse.buildEndMessage(message, MessageType.TOOL_CALL));
+            int identicalExecutionCount = identicalToolExecutions.merge(toolExecutionKey, 1, Integer::sum);
+            if (identicalExecutionCount == 1) {
+                String message = "执行工具：" + toolExecution.request().name();
+                transport.sendMessage(connection, AgentChatResponse.buildEndMessage(message, MessageType.TOOL_CALL));
+            }
 
             // 调用工具调用完成钩子
             ToolCallInfo toolCallInfo = buildToolCallInfo(toolExecution);
@@ -473,6 +496,42 @@ public abstract class AbstractMessageHandler {
             return true;
         }
         return false;
+    }
+
+    private String buildToolExecutionKey(ToolExecution toolExecution) {
+        String toolName = toolExecution != null && toolExecution.request() != null ? toolExecution.request().name() : "";
+        String requestArgs =
+                toolExecution != null && toolExecution.request() != null ? toolExecution.request().arguments() : "";
+        return toolName + "::" + StringUtils.defaultString(requestArgs);
+    }
+
+    private boolean isToolExecutionTimedOut(ToolExecution toolExecution) {
+        if (toolExecution == null) {
+            return false;
+        }
+        String result = StringUtils.defaultString(toolExecution.result()).toLowerCase(Locale.ROOT);
+        if (result.isBlank()) {
+            return false;
+        }
+        for (String marker : TOOL_TIMEOUT_MARKERS) {
+            if (result.contains(marker)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private <T> void terminateStreamingChatWithFailure(ChatContext chatContext, T connection, MessageTransport<T> transport,
+            AtomicBoolean streamStopped, long startTime, String userMessage, String errorCode, Throwable throwable,
+            ExecutionPhase errorPhase) {
+        streamStopped.set(true);
+        transport.sendEndMessage(connection, AgentChatResponse.buildEndMessage(userMessage, MessageType.TEXT));
+
+        long latency = System.currentTimeMillis() - startTime;
+        highAvailabilityDomainService.reportCallResult(chatContext.getInstanceId(), chatContext.getModel().getId(),
+                false, latency, errorCode);
+        onChatError(chatContext, errorPhase, throwable);
+        onChatCompleted(chatContext, false, errorCode);
     }
 
     @Nullable
@@ -603,11 +662,16 @@ public abstract class AbstractMessageHandler {
         // 读取长期记忆，组装为要点，直接合入系统提示词尾部
         String memorySection = buildMemorySection(chatContext);
         String fullSystemPrompt = chatContext.getAgent().getSystemPrompt() + "\n" + presetToolPrompt
+                + (chatContext.getMcpServerNames() == null || chatContext.getMcpServerNames().isEmpty() ? ""
+                        : TOOL_USAGE_GUARD_PROMPT)
                 + (memorySection.isEmpty() ? "" : ("\n" + memorySection));
 
         memory.add(new SystemMessage(fullSystemPrompt));
         List<MessageEntity> messageHistory = chatContext.getMessageHistory();
         for (MessageEntity messageEntity : messageHistory) {
+            if (messageEntity == null || messageEntity.getMessageType() == MessageType.TOOL_CALL) {
+                continue;
+            }
             // 注意不要重复发送摘要消息
             if (messageEntity.isUserMessage()) {
                 List<String> fileUrls = messageEntity.getFileUrls();
@@ -826,6 +890,13 @@ public abstract class AbstractMessageHandler {
      * @param toolExecution 工具执行信息
      * @return 工具调用信息 */
     protected ToolCallInfo buildToolCallInfo(ToolExecution toolExecution) {
+        if (toolExecution != null) {
+            String responseData = toolExecution.result();
+            boolean success = !isToolExecutionTimedOut(toolExecution);
+            return ToolCallInfo.builder().toolName(toolExecution.request().name())
+                    .requestArgs(toolExecution.request().arguments()).responseData(responseData).success(success)
+                    .errorMessage(success ? null : responseData).build();
+        }
         return ToolCallInfo.builder().toolName(toolExecution.request().name())
                 .requestArgs(toolExecution.request().arguments()).responseData(toolExecution.result()).success(true) // 此时表示工具执行成功
                 .build();

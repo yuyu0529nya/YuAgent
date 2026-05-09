@@ -10,13 +10,12 @@ server:
   port: ${SERVER_PORT:8088}
   servlet:
     context-path: /api
-  # 添加Tomcat异步请求配置
   tomcat:
     threads:
-      max: 200 # 最大工作线程数
-    connection-timeout: 2000000 # 连接超时毫秒
-    max-connections: 10000 # 最大连接数
-    accept-count: 100 # 等待队列长度
+      max: 200
+    connection-timeout: 2000000
+    max-connections: 10000
+    accept-count: 100
     max-swallow-size: ${SERVER_TOMCAT_MAX_SWALLOW_SIZE:100MB}
 
 spring:
@@ -32,7 +31,7 @@ spring:
     username: ${RABBITMQ_USERNAME:guest}
     password: ${RABBITMQ_PASSWORD:guest}
     listener:
-      simple: # 添加 simple 下的并发配置
+      simple:
         concurrency: 19
         max-concurrency: 19
         prefetch: 1
@@ -54,7 +53,7 @@ spring:
     connection-timeout: 200000
     cache:
       channel:
-        size: 25 # 添加通道缓存大小
+        size: 25
   datasource:
     driver-class-name: org.postgresql.Driver
     url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:yuagent}
@@ -63,7 +62,7 @@ spring:
   jackson:
     date-format: yyyy-MM-dd HH:mm:ss
     time-zone: GMT+8
-# MyBatis-Plus配置
+
 mybatis-plus:
   mapper-locations: classpath*:/mapper/**/*.xml
   type-aliases-package: org.yu.domain
@@ -85,6 +84,7 @@ logging:
     org.yu: debug
   file:
     name: logs/yu-agent.log
+
 mail:
   smtp:
     host: ${MAIL_SMTP_HOST:smtp.qq.com}
@@ -92,8 +92,8 @@ mail:
     username: ${MAIL_SMTP_USERNAME:}
     password: ${MAIL_SMTP_PASSWORD:}
   verification:
-    template: ${MAIL_VERIFICATION_TEMPLATE:您的验证码是:%s，有效期10分钟，请勿泄露给他人。}
-    subject: ${MAIL_VERIFICATION_SUBJECT:YuAgent - 邮箱验证码}
+    template: ${MAIL_VERIFICATION_TEMPLATE:鎮ㄧ殑楠岃瘉鐮佹槸:%s锛屾湁鏁堟湡10鍒嗛挓锛岃鍕挎硠闇茬粰浠栦汉銆倉
+    subject: ${MAIL_VERIFICATION_SUBJECT:YuAgent - 閭楠岃瘉鐮亇
 
 github:
   target:
@@ -101,13 +101,12 @@ github:
     username: ${GITHUB_USERNAME:lucky-aeon}
     token: ${GITHUB_TOKEN:your_github_token}
 
-# 高可用网关配置
 high-availability:
-  enabled: ${HIGH_AVAILABILITY_ENABLED:false} # 是否启用高可用功能
-  gateway-url: ${HIGH_AVAILABILITY_GATEWAY_URL:http://localhost:8081} # 高可用网关地址
-  api-key: ${HIGH_AVAILABILITY_API_KEY:default-api-key-1234567890} # API密钥
-  connect-timeout: 30000 # 连接超时时间(毫秒)
-  read-timeout: 60000 # 读取超时时间(毫秒)
+  enabled: ${HIGH_AVAILABILITY_ENABLED:false}
+  gateway-url: ${HIGH_AVAILABILITY_GATEWAY_URL:http://localhost:8081}
+  api-key: ${HIGH_AVAILABILITY_API_KEY:default-api-key-1234567890}
+  connect-timeout: 30000
+  read-timeout: 60000
 
 embedding:
   name: OpenAI
@@ -122,7 +121,6 @@ embedding:
     drop-table-first: ${VECTOR_DB_DROP_TABLE_FIRST:false}
     create-table: ${VECTOR_DB_CREATE_TABLE:true}
 
-# Memory 向量存储配置（独立于知识库向量库）
 memory:
   embedding:
     vector-store:
@@ -165,20 +163,19 @@ rag:
     overlap-size: ${RAG_VECTOR_OVERLAP_SIZE:100}
 
 dromara:
-  x-file-storage: #文件存储配置
-    default-platform: amazon-s3-1 #默认使用的存储平台
-    thumbnail-suffix: ".min.jpg" #缩略图后缀，例如【.min.jpg】【.png】
-    #对应平台的配置写在这里，注意缩进要对齐
-    amazon-s3: # 0.0.7 及以前的版本，配置名称是：aws-s3
-      - platform: amazon-s3-1 # 存储平台标识
-        enable-storage: true # 启用存储
+  x-file-storage:
+    default-platform: ${FILE_STORAGE_PLATFORM:amazon-s3-1}
+    thumbnail-suffix: ".min.jpg"
+    amazon-s3:
+      - platform: amazon-s3-1
+        enable-storage: true
         access-key: ${S3_SECRET_ID:${OSS_ACCESS_KEY:}}
         secret-key: ${S3_SECRET_KEY:${OSS_SECRET_KEY:}}
-        region: ${S3_REGION} # 与 end-point 参数至少填一个
-        end-point: ${S3_ENDPOINT:${OSS_ENDPOINT:}} # 与 region 参数至少填一个
+        region: ${S3_REGION}
+        end-point: ${S3_ENDPOINT:${OSS_ENDPOINT:}}
         bucket-name: ${S3_BUCKET_NAME:${OSS_BUCKET:}}
-        domain: ${S3_DOMAIN:${OSS_DOMAIN:${OSS_URL_PREFIX:}}} # 访问域名，注意“/”结尾，例如：https://abc.hn-bkt.clouddn.com/
-        base-path: s3/ # 基础路径
+        domain: ${S3_DOMAIN:${OSS_DOMAIN:${OSS_URL_PREFIX:}}}
+        base-path: s3/
 
 payment:
   base-url: ${PAYMENT_BASE_URL:${NEXT_PUBLIC_API_BASE_URL:http://localhost:8088/api}}
@@ -191,7 +188,6 @@ payment:
     publishable-key: ${STRIPE_PUBLISHABLE_KEY:your_stripe_publishable_key}
     webhook-secret: ${STRIPE_WEBHOOK_SECRET:your_stripe_webhook_secret}
 
-# 容器管理配置
 yuagent:
   container:
     docker-host: ${YUAGENT_CONTAINER_DOCKER_HOST:unix:///var/run/docker.sock}
@@ -200,11 +196,13 @@ yuagent:
     default-mcp-gateway-network-mode: ${YUAGENT_CONTAINER_DEFAULT_MCP_NETWORK:yuagent_yuagent-network}
     monitor-interval: ${YUAGENT_CONTAINER_MONITOR_INTERVAL:300000}
     stats-update-interval: ${YUAGENT_CONTAINER_STATS_INTERVAL:120000}
+
 mcp:
   gateway:
     base-url: ${MCP_BASE_URL:${HIGH_AVAILABILITY_GATEWAY_URL:http://api-gateway:8081}}
     api-key: ${MCP_API_KEY:123456}
     connect-timeout: ${MCP_GATEWAY_CONNECT_TIMEOUT:60000}
+
 tool:
   review:
     auto-approve: ${TOOL_REVIEW_AUTO_APPROVE:true}

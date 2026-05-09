@@ -61,14 +61,19 @@ export function ContentDisplay({
     }
   }
 
+  const jsonTextStyle: React.CSSProperties = {
+    color: "#0f172a",
+    WebkitTextFillColor: "#0f172a",
+  }
+
   // 如果内容不长，直接显示
   if (!isLong) {
     return (
       <div className={cn("relative group", className)}>
         <pre className={cn(
-          "whitespace-pre-wrap break-all text-sm font-mono p-3 bg-muted rounded-md",
-          jsonFormat && "bg-slate-50 border"
-        )}>
+          "whitespace-pre-wrap break-all text-sm font-mono p-3 rounded-md text-foreground [&_*]:!text-inherit",
+          jsonFormat ? "bg-slate-100 border border-slate-300 text-slate-900" : "bg-muted"
+        )} style={jsonFormat ? jsonTextStyle : undefined}>
           {formattedContent}
         </pre>
         {showCopy && (
@@ -96,9 +101,9 @@ export function ContentDisplay({
         <div className="space-y-2">
           {/* 预览内容 */}
           <pre className={cn(
-            "whitespace-pre-wrap break-all text-sm font-mono p-3 bg-muted rounded-md",
-            jsonFormat && "bg-slate-50 border"
-          )}>
+            "whitespace-pre-wrap break-all text-sm font-mono p-3 rounded-md text-foreground [&_*]:!text-inherit",
+            jsonFormat ? "bg-slate-100 border border-slate-300 text-slate-900" : "bg-muted"
+          )} style={jsonFormat ? jsonTextStyle : undefined}>
             {isOpen ? formattedContent : truncatedContent}
           </pre>
           

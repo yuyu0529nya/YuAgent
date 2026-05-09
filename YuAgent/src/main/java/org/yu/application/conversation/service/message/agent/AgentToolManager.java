@@ -1,12 +1,15 @@
 package org.yu.application.conversation.service.message.agent;
 
+import dev.langchain4j.agent.tool.ToolExecutionRequest;
 import dev.langchain4j.mcp.McpToolProvider;
 import dev.langchain4j.mcp.client.DefaultMcpClient;
 import dev.langchain4j.mcp.client.McpClient;
 import dev.langchain4j.mcp.client.transport.McpTransport;
 import dev.langchain4j.mcp.client.transport.PresetParameter;
 import dev.langchain4j.mcp.client.transport.http.HttpMcpTransport;
+import dev.langchain4j.service.tool.ToolExecutor;
 import dev.langchain4j.service.tool.ToolProvider;
+import dev.langchain4j.service.tool.ToolProviderResult;
 import org.springframework.stereotype.Component;
 import org.yu.application.conversation.service.McpUrlProviderService;
 import org.yu.application.conversation.service.handler.context.ChatContext;
@@ -14,14 +17,23 @@ import org.yu.infrastructure.utils.JsonUtils;
 
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 @Component
 public class AgentToolManager {
 
     private static final Duration MCP_TOOL_TIMEOUT = Duration.ofSeconds(12);
+    private static final String REPEATED_TOOL_RESULT_HINT =
+            "\n\n[系统提示] 这个工具的相同参数结果在本轮对话中已经返回过了。请直接基于上面的结果完成回答，不要继续重复调用同一个工具。";
+    private static final int MAX_SUCCESSFUL_WEATHER_TOOL_CALLS_PER_CHAT = 2;
+    private static final String WEATHER_TOOL_LIMIT_HINT =
+            "\n\n[系统提示] 本轮对话已经获取到足够的天气数据。对于同一城市或同一趟旅行行程，不要继续按景点逐个查询天气，请直接基于已有天气结果给出完整回答。";
 
     private static final Set<String> LIGHTWEIGHT_MESSAGES = Set.of(
             "你好", "您好", "hi", "hello", "hey", "在吗", "在么", "嗨", "hello?");
@@ -71,7 +83,8 @@ public class AgentToolManager {
             mcpClients.add(mcpClient);
         }
 
-        return McpToolProvider.builder().mcpClients(mcpClients).build();
+        ToolProvider delegate = McpToolProvider.builder().mcpClients(mcpClients).build();
+        return wrapWithRepeatedCallGuard(delegate);
     }
 
     public ToolProvider createToolProvider(ChatContext chatContext) {
@@ -148,5 +161,87 @@ public class AgentToolManager {
 
     private String normalize(String message) {
         return message == null ? "" : message.trim().toLowerCase();
+    }
+
+    private ToolProvider wrapWithRepeatedCallGuard(ToolProvider delegate) {
+        Map<String, String> successfulResults = new ConcurrentHashMap<>();
+        AtomicInteger successfulWeatherToolCalls = new AtomicInteger(0);
+        AtomicReference<String> latestWeatherResult = new AtomicReference<>("");
+        return request -> {
+            ToolProviderResult result = delegate.provideTools(request);
+            if (result == null || result.tools() == null || result.tools().isEmpty()) {
+                return result;
+            }
+
+            Map<dev.langchain4j.agent.tool.ToolSpecification, ToolExecutor> guardedTools = new HashMap<>();
+            result.tools().forEach((specification, executor) ->
+                    guardedTools.put(specification, wrapToolExecutor(executor, successfulResults,
+                            successfulWeatherToolCalls, latestWeatherResult)));
+            return ToolProviderResult.builder().addAll(guardedTools).build();
+        };
+    }
+
+    private ToolExecutor wrapToolExecutor(ToolExecutor delegate, Map<String, String> successfulResults,
+            AtomicInteger successfulWeatherToolCalls, AtomicReference<String> latestWeatherResult) {
+        return (toolExecutionRequest, memoryId) -> {
+            String executionKey = buildExecutionKey(toolExecutionRequest);
+            String cachedResult = successfulResults.get(executionKey);
+            if (cachedResult != null && !cachedResult.isBlank()) {
+                return cachedResult + REPEATED_TOOL_RESULT_HINT;
+            }
+
+            boolean weatherToolRequest = isWeatherToolRequest(toolExecutionRequest);
+            if (weatherToolRequest && successfulWeatherToolCalls.get() >= MAX_SUCCESSFUL_WEATHER_TOOL_CALLS_PER_CHAT) {
+                String latestResult = latestWeatherResult.get();
+                if (latestResult != null && !latestResult.isBlank()) {
+                    return latestResult + WEATHER_TOOL_LIMIT_HINT;
+                }
+                return WEATHER_TOOL_LIMIT_HINT.trim();
+            }
+
+            String result = delegate.execute(toolExecutionRequest, memoryId);
+            if (isSuccessfulToolResult(result)) {
+                successfulResults.put(executionKey, result);
+                if (weatherToolRequest) {
+                    successfulWeatherToolCalls.incrementAndGet();
+                    latestWeatherResult.set(result);
+                }
+            }
+            return result;
+        };
+    }
+
+    private boolean isWeatherToolRequest(ToolExecutionRequest toolExecutionRequest) {
+        if (toolExecutionRequest == null) {
+            return false;
+        }
+
+        String normalizedName = normalize(toolExecutionRequest.name());
+        if (containsAny(normalizedName, WEATHER_HINTS) || normalizedName.contains("weather")) {
+            return true;
+        }
+
+        String normalizedArguments = normalize(JsonUtils.toJsonString(toolExecutionRequest.arguments()));
+        return containsAny(normalizedArguments, WEATHER_HINTS) || normalizedArguments.contains("weather");
+    }
+
+    private String buildExecutionKey(ToolExecutionRequest toolExecutionRequest) {
+        if (toolExecutionRequest == null) {
+            return "";
+        }
+        return toolExecutionRequest.name() + "::" + JsonUtils.toJsonString(toolExecutionRequest.arguments());
+    }
+
+    private boolean isSuccessfulToolResult(String result) {
+        if (result == null || result.isBlank()) {
+            return false;
+        }
+        String normalized = result.toLowerCase();
+        return !normalized.contains("timeout executing the tool")
+                && !normalized.contains("there was a timeout executing the tool")
+                && !normalized.contains("sse channel failure")
+                && !normalized.contains("sockettimeoutexception")
+                && !normalized.contains("\"error\"")
+                && !normalized.contains("exception");
     }
 }

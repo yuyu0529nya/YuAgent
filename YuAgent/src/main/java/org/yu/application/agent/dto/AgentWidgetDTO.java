@@ -40,6 +40,8 @@ public class AgentWidgetDTO {
     /** 每日调用限制（-1为无限制） */
     private Integer dailyLimit;
 
+    private Integer dailyCalls;
+
     /** 是否启用 */
     private Boolean enabled;
 
@@ -137,6 +139,14 @@ public class AgentWidgetDTO {
 
     public void setDailyLimit(Integer dailyLimit) {
         this.dailyLimit = dailyLimit;
+    }
+
+    public Integer getDailyCalls() {
+        return dailyCalls;
+    }
+
+    public void setDailyCalls(Integer dailyCalls) {
+        this.dailyCalls = dailyCalls;
     }
 
     public Boolean getEnabled() {

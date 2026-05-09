@@ -1,14 +1,22 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useEffect, useState } from "react"
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
-import { Database, FileText, Menu, Search, Settings, PenToolIcon as Tool, UploadCloud, LogOut, Wrench, Activity,Package,Tag } from "lucide-react"
-import { toast } from "@/hooks/use-toast"
+import {
+  Activity,
+  Database,
+  FileText,
+  LogOut,
+  Menu,
+  Search,
+  Settings,
+  Wrench,
+} from "lucide-react"
 
-import { cn } from "@/lib/utils"
+import { toast } from "@/hooks/use-toast"
+import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -19,7 +27,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet"
 import { YuAgentLogo } from "@/components/ui/yuagent-logo"
-import { deleteCookie } from "@/lib/utils"
+import { deleteCookie, cn } from "@/lib/utils"
 import { getUserInfoWithToast, type UserInfo } from "@/lib/user-service"
 
 const navItems = [
@@ -52,20 +60,15 @@ export function NavigationBar() {
   const [userInfo, setUserInfo] = useState<UserInfo | null>(null)
   const [loading, setLoading] = useState(true)
 
-  // 获取用户信息
   useEffect(() => {
     async function fetchUserInfo() {
       try {
         setLoading(true)
         const response = await getUserInfoWithToast()
-        
+
         if (response.code === 200) {
           setUserInfo(response.data)
-        } else {
- 
         }
-      } catch (error) {
- 
       } finally {
         setLoading(false)
       }
@@ -74,34 +77,27 @@ export function NavigationBar() {
     fetchUserInfo()
   }, [])
 
-  // Check if current path matches the menu item's href
   const isActiveRoute = (href: string) => {
     if (href === "/explore" && pathname === "/") {
-      return true // Main page also counts as explore
+      return true
     }
     return pathname === href || pathname.startsWith(`${href}/`)
   }
 
-  // 获取用户头像首字母
   const getUserAvatarFallback = () => {
     if (!userInfo?.nickname) return "U"
     return userInfo.nickname.charAt(0).toUpperCase()
   }
 
   const handleLogout = () => {
-    // 清除localStorage中的token
     localStorage.removeItem("auth_token")
-    
-    // 清除cookie中的token
     deleteCookie("token")
-    
-    // 显示退出成功提示
+
     toast({
       title: "成功",
-      description: "退出登录成功"
+      description: "退出登录成功",
     })
-    
-    // 跳转到登录页
+
     router.push("/login")
   }
 
@@ -181,14 +177,8 @@ export function NavigationBar() {
                     </AvatarFallback>
                   </Avatar>
                   <div>
-                    <div className="font-medium">
-                      {loading ? "加载中..." : (userInfo?.nickname || "未知用户")}
-                    </div>
-                    {userInfo?.email && (
-                      <div className="text-sm text-muted-foreground">
-                        {userInfo.email}
-                      </div>
-                    )}
+                    <div className="font-medium">{loading ? "加载中..." : userInfo?.nickname || "未知用户"}</div>
+                    {userInfo?.email && <div className="text-sm text-muted-foreground">{userInfo.email}</div>}
                   </div>
                 </DropdownMenuLabel>
                 <DropdownMenuSeparator />
@@ -202,18 +192,6 @@ export function NavigationBar() {
                   <Link href="/settings/general">
                     <Settings className="mr-2 h-4 w-4" />
                     通用设置
-                  </Link>
-                </DropdownMenuItem>
-                <DropdownMenuItem asChild>
-                  <Link href="/settings/billing">
-                    <Settings className="mr-2 h-4 w-4" />
-                    账户与计费
-                  </Link>
-                </DropdownMenuItem>
-                <DropdownMenuItem asChild>
-                  <Link href="/settings/pricing">
-                    <Tag className="mr-2 h-4 w-4" />
-                    价格说明
                   </Link>
                 </DropdownMenuItem>
                 <DropdownMenuItem asChild>
@@ -232,13 +210,6 @@ export function NavigationBar() {
                   <Link href="/settings/providers">
                     <Settings className="mr-2 h-4 w-4" />
                     服务提供商
-                  </Link>
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem asChild>
-                  <Link href="/settings/orders">
-                    <Package className="mr-2 h-4 w-4" />
-                    我的订单
                   </Link>
                 </DropdownMenuItem>
                 <DropdownMenuItem asChild>
