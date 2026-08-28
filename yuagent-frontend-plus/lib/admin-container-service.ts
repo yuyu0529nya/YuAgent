@@ -1,5 +1,5 @@
 import { httpClient } from './http-client';
-import { ApiResponse } from './types/api';
+import { ApiResponse } from '../types/api';
 import { withToast } from './toast-utils';
 
 export interface Container {

@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -28,7 +28,7 @@ import {
   Package,
   Tag,
   File,
-  Image,
+  Image as ImageIcon,
   Video,
   Loader2
 } from "lucide-react"
@@ -57,33 +57,43 @@ export function MarketRagDetailDialog({
   const [files, setFiles] = useState<FileDetail[]>([])
   const [filesLoading, setFilesLoading] = useState(false)
   const [activeTab, setActiveTab] = useState("info")
+  const latestLoadRequestRef = useRef(0)
 
-  // 加载文件列表
-  useEffect(() => {
-    if (ragMarket && activeTab === "files") {
-      loadFiles()
-    }
-  }, [ragMarket, activeTab])
+  const loadFiles = useCallback(async () => {
+    if (!ragMarket?.id) return
 
-  const loadFiles = async () => {
-    if (!ragMarket) return
-
+    const requestId = ++latestLoadRequestRef.current
     try {
       setFilesLoading(true)
       const response = await getMarketRagFilesWithToast(ragMarket.id)
 
-      if (response.code === 200) {
-        setFiles(response.data || [])
-      } else {
+      if (requestId !== latestLoadRequestRef.current) {
+        return
+      }
+
+      setFiles(response.code === 200 ? response.data || [] : [])
+    } catch {
+      if (requestId === latestLoadRequestRef.current) {
         setFiles([])
       }
-    } catch (error) {
- 
-      setFiles([])
     } finally {
-      setFilesLoading(false)
+      if (requestId === latestLoadRequestRef.current) {
+        setFilesLoading(false)
+      }
     }
-  }
+  }, [ragMarket?.id])
+
+  // 加载文件列表
+  useEffect(() => {
+    if (!ragMarket?.id || activeTab !== "files") {
+      return
+    }
+
+    void loadFiles()
+    return () => {
+      latestLoadRequestRef.current += 1
+    }
+  }, [activeTab, loadFiles, ragMarket?.id])
 
   // 处理安装
   const handleInstall = async () => {
@@ -116,7 +126,7 @@ export function MarketRagDetailDialog({
   // 获取文件图标
   const getFileIcon = (contentType: string, ext: string) => {
     if (contentType.startsWith('image/')) {
-      return <Image className="h-4 w-4" />
+      return <ImageIcon className="h-4 w-4" />
     } else if (contentType.startsWith('video/')) {
       return <Video className="h-4 w-4" />
     } else if (ext === 'pdf' || contentType === 'application/pdf') {

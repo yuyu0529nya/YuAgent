@@ -4,8 +4,8 @@ export function useSmartScroll() {
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const isUserScrolling = useRef(false);
   const lastScrollTop = useRef(0);
-  const scrollingTimeout = useRef<NodeJS.Timeout>();
-  const autoScrollTimeout = useRef<NodeJS.Timeout>();
+  const scrollingTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const autoScrollTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isAutoScrolling = useRef(false);
 
   // 检查是否在底部附近（阈值30px）

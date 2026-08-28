@@ -1,5 +1,5 @@
 import { Model } from '@/lib/user-settings-service';
-import { Provider } from './provider';
+import { Provider } from './api';
 
 /** Widget类型枚举 */
 export type WidgetType = 'AGENT' | 'RAG';
@@ -16,12 +16,29 @@ export interface AgentWidget {
   provider?: Provider;
   allowedDomains: string[];
   dailyLimit: number;
+  dailyCalls: number;
   enabled: boolean;
   widgetType: WidgetType;
   knowledgeBaseIds?: string[];
   widgetCode: string;
   createdAt: string;
   updatedAt: string;
+}
+
+/** Public data returned by the unauthenticated embedded-widget endpoint. */
+export interface PublicWidgetInfo {
+  publicId: string;
+  name: string;
+  description?: string;
+  dailyLimit: number;
+  dailyCalls: number;
+  enabled: boolean;
+  agentName: string;
+  agentAvatar?: string;
+  welcomeMessage?: string;
+  systemPrompt?: string;
+  toolIds?: string[];
+  knowledgeBaseIds?: string[];
 }
 
 /** 创建小组件配置请求 */

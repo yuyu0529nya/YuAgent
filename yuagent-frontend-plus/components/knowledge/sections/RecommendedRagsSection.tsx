@@ -1,6 +1,7 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import dynamic from "next/dynamic"
 import Link from "next/link"
 import { Search, RefreshCw, X, Store, TrendingUp } from "lucide-react"
 
@@ -30,8 +31,10 @@ import {
 } from "@/lib/rag-publish-service"
 import type { RagMarketDTO, PageResponse } from "@/types/rag-publish"
 import { MarketRagCard } from "../cards/MarketRagCard"
-import { InstallRagDialog } from "../dialogs/InstallRagDialog"
-import { MarketRagDetailDialog } from "../dialogs/MarketRagDetailDialog"
+
+const InstallRagDialog = dynamic(() => import("../dialogs/InstallRagDialog").then(module => module.InstallRagDialog))
+const MarketRagDetailDialog = dynamic(() => import("../dialogs/MarketRagDetailDialog")
+  .then(module => module.MarketRagDetailDialog))
 
 export function RecommendedRagsSection() {
   const [marketRags, setMarketRags] = useState<RagMarketDTO[]>([])
@@ -40,8 +43,10 @@ export function RecommendedRagsSection() {
   const [searchQuery, setSearchQuery] = useState("")
   const [debouncedQuery, setDebouncedQuery] = useState("")
   const [sortBy, setSortBy] = useState<string>("publishedAt")
+  const [showAll, setShowAll] = useState(false)
   const [ragToInstall, setRagToInstall] = useState<RagMarketDTO | null>(null)
   const [ragToViewDetails, setRagToViewDetails] = useState<RagMarketDTO | null>(null)
+  const latestMarketRagsRequestRef = useRef(0)
   
   // 分页状态
   const [pageData, setPageData] = useState<PageResponse<RagMarketDTO>>({
@@ -61,13 +66,9 @@ export function RecommendedRagsSection() {
     return () => clearTimeout(timer)
   }, [searchQuery])
 
-  // 获取市场RAG列表
-  useEffect(() => {
-    loadMarketRags(1, debouncedQuery)
-  }, [debouncedQuery, sortBy])
-
   // 加载市场RAG
-  const loadMarketRags = async (page: number = 1, keyword?: string) => {
+  const loadMarketRags = useCallback(async (page: number = 1, keyword?: string) => {
+    const requestId = ++latestMarketRagsRequestRef.current
     try {
       setLoading(true)
       setError(null)
@@ -78,39 +79,37 @@ export function RecommendedRagsSection() {
         keyword: keyword?.trim() || undefined
       })
 
+      if (requestId !== latestMarketRagsRequestRef.current) {
+        return
+      }
+
       if (response.code === 200) {
         setPageData(response.data)
         
-        // 根据排序方式处理数据
-        let sortedRags = [...response.data.records]
-        switch (sortBy) {
-          case "installCount":
-            sortedRags.sort((a, b) => b.installCount - a.installCount)
-            break
-          case "publishedAt":
-            sortedRags.sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime())
-            break
-          case "fileCount":
-            sortedRags.sort((a, b) => b.fileCount - a.fileCount)
-            break
-          case "rating":
-            sortedRags.sort((a, b) => (b.rating || 0) - (a.rating || 0))
-            break
-          default:
-            break
-        }
-        
-        setMarketRags(sortedRags)
+        setMarketRags(response.data.records || [])
       } else {
         setError(response.message)
       }
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : "未知错误"
-      setError(errorMessage)
+      if (requestId === latestMarketRagsRequestRef.current) {
+        const errorMessage = error instanceof Error ? error.message : "未知错误"
+        setError(errorMessage)
+      }
     } finally {
-      setLoading(false)
+      if (requestId === latestMarketRagsRequestRef.current) {
+        setLoading(false)
+      }
     }
-  }
+  }, [])
+
+  // 获取市场RAG列表
+  useEffect(() => {
+    setShowAll(false)
+    loadMarketRags(1, debouncedQuery)
+    return () => {
+      latestMarketRagsRequestRef.current += 1
+    }
+  }, [debouncedQuery, loadMarketRags])
 
   // 处理安装成功
   const handleInstallSuccess = () => {
@@ -130,6 +129,7 @@ export function RecommendedRagsSection() {
   // 分页处理
   const handlePageChange = (page: number) => {
     if (page < 1 || page > pageData.pages) return
+    setShowAll(false)
     loadMarketRags(page, debouncedQuery)
   }
 
@@ -180,25 +180,25 @@ export function RecommendedRagsSection() {
     setSearchQuery("")
   }
 
-  // 获取排序选项标签
-  const getSortLabel = (value: string) => {
-    switch (value) {
+  const sortedMarketRags = useMemo(() => {
+    const sortedRags = [...marketRags]
+    switch (sortBy) {
       case "publishedAt":
-        return "最新发布"
+        return sortedRags.sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime())
       case "installCount":
-        return "安装数量"
+        return sortedRags.sort((a, b) => b.installCount - a.installCount)
       case "fileCount":
-        return "文件数量"
+        return sortedRags.sort((a, b) => b.fileCount - a.fileCount)
       case "rating":
-        return "评分"
+        return sortedRags.sort((a, b) => (b.rating || 0) - (a.rating || 0))
       default:
-        return "默认排序"
+        return sortedRags
     }
-  }
+  }, [marketRags, sortBy])
 
   // 显示的数据集数量
-  const displayedRags = marketRags.slice(0, 8)
-  const hasMore = marketRags.length > 8
+  const displayedRags = showAll ? sortedMarketRags : sortedMarketRags.slice(0, 8)
+  const hasMore = !showAll && sortedMarketRags.length > 8
 
   return (
     <div className="mb-8 bg-white p-6 rounded-lg shadow-sm border border-gray-100">
@@ -315,7 +315,7 @@ export function RecommendedRagsSection() {
             重试
           </Button>
         </div>
-      ) : marketRags.length === 0 ? (
+      ) : sortedMarketRags.length === 0 ? (
         // 空状态
         <div className="text-center py-12 bg-emerald-500/12 rounded-lg border border-emerald-300/25">
           <Store className="h-12 w-12 mx-auto text-emerald-300 mb-4" />
@@ -346,9 +346,9 @@ export function RecommendedRagsSection() {
             <div className="flex justify-center mt-4">
               <Button
                 variant="outline"
-                onClick={() => loadMarketRags(1, debouncedQuery)}
+                onClick={() => setShowAll(true)}
               >
-                查看更多推荐 ({marketRags.length - 8})
+                查看更多推荐 ({sortedMarketRags.length - 8})
               </Button>
             </div>
           )}

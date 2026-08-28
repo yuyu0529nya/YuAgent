@@ -1,6 +1,6 @@
 ﻿"use client"
 
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -34,21 +34,25 @@ export function ConversationList({ workspaceId }: ConversationListProps) {
   const [isDeletingSession, setIsDeletingSession] = useState(false)
   const [searchText, setSearchText] = useState("")
   const [isCollapsed, setIsCollapsed] = useState(false)
+  const latestFetchIdRef = useRef(0)
 
-  const fetchSessions = async () => {
+  const fetchSessions = useCallback(async () => {
+    const fetchId = ++latestFetchIdRef.current
     try {
       setLoading(true)
       const response = await getAgentSessionsWithToast(workspaceId)
-      if (response.code === 200) {
+      if (response.code === 200 && fetchId === latestFetchIdRef.current) {
         setSessions(response.data)
-        if (response.data.length > 0 && !selectedConversationId) {
-          setSelectedConversationId(response.data[0].id)
+        if (response.data.length > 0) {
+          setSelectedConversationId((currentId) => currentId ?? response.data[0].id)
         }
       }
     } finally {
-      setLoading(false)
+      if (fetchId === latestFetchIdRef.current) {
+        setLoading(false)
+      }
     }
-  }
+  }, [setSelectedConversationId, workspaceId])
 
   const selectConversation = (sessionId: string) => {
     setSelectedConversationId(sessionId)
@@ -66,10 +70,10 @@ export function ConversationList({ workspaceId }: ConversationListProps) {
       const response = await deleteAgentSessionWithToast(sessionToDelete)
 
       if (response.code === 200) {
-        await fetchSessions()
         if (selectedConversationId === sessionToDelete) {
           setSelectedConversationId(null)
         }
+        await fetchSessions()
         toast({
           title: "删除成功",
           description: "会话已删除",
@@ -108,8 +112,10 @@ export function ConversationList({ workspaceId }: ConversationListProps) {
 
   useEffect(() => {
     fetchSessions()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workspaceId])
+    return () => {
+      latestFetchIdRef.current += 1
+    }
+  }, [fetchSessions])
 
   const handleQuickCreateSession = async () => {
     const response = await createAgentSessionWithToast(workspaceId)

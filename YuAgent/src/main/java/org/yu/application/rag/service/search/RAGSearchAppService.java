@@ -258,8 +258,8 @@ public class RAGSearchAppService {
             return List.of();
         }
 
-        Set<String> fileIds = entities.stream().map(DocumentUnitEntity::getFileId).filter(id -> id != null && !id.isBlank())
-                .collect(Collectors.toSet());
+        Set<String> fileIds = entities.stream().map(DocumentUnitEntity::getFileId)
+                .filter(id -> id != null && !id.isBlank()).collect(Collectors.toSet());
         Map<String, String> fileNames = fileDetailDomainService.listFilesByIds(new ArrayList<>(fileIds)).stream()
                 .collect(Collectors.toMap(FileDetailEntity::getId, FileDetailEntity::getOriginalFilename,
                         (left, right) -> left));

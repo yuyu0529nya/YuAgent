@@ -3,10 +3,9 @@ package org.yu.domain.rag.service;
 import dev.langchain4j.data.segment.TextSegment;
 import dev.langchain4j.store.embedding.EmbeddingMatch;
 import dev.langchain4j.store.embedding.EmbeddingSearchResult;
-import jakarta.annotation.Resource;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
 import org.springframework.stereotype.Service;
 import org.yu.domain.rag.dto.req.RerankRequest;
@@ -20,11 +19,14 @@ import org.yu.infrastructure.rag.config.RerankProperties;
 @Service
 public class RerankDomainService {
 
-    @Resource
-    private RerankProperties rerankProperties;
+    private final RerankProperties rerankProperties;
 
-    @Resource
-    private RerankForestApi rerankForestApi;
+    private final RerankForestApi rerankForestApi;
+
+    public RerankDomainService(RerankProperties rerankProperties, RerankForestApi rerankForestApi) {
+        this.rerankProperties = rerankProperties;
+        this.rerankForestApi = rerankForestApi;
+    }
 
     /** 重排序文档列表
      * 
@@ -38,7 +40,7 @@ public class RerankDomainService {
 
         if (query == null || query.trim().isEmpty()) {
             // 如果查询为空，返回原始顺序索引
-            return documents.stream().map(documents::indexOf).collect(Collectors.toList());
+            return originalOrder(documents.size());
         }
 
         final RerankRequest rerankRequest = new RerankRequest();
@@ -51,14 +53,38 @@ public class RerankDomainService {
             final RerankResponse rerankResponse = rerankForestApi.rerank(rerankProperties.getApiUrl(),
                     rerankProperties.getApiKey(), rerankRequest);
 
-            final List<RerankResponse.SearchResult> results = rerankResponse.getResults();
-
-            return results.stream().map(RerankResponse.SearchResult::getIndex).collect(Collectors.toList());
+            return normalizeIndices(rerankResponse.getResults(), documents.size());
 
         } catch (Exception e) {
             // 重排序失败时返回原始顺序
-            return documents.stream().map(documents::indexOf).collect(Collectors.toList());
+            return originalOrder(documents.size());
         }
+    }
+
+    private List<Integer> normalizeIndices(List<RerankResponse.SearchResult> results, int documentCount) {
+        if (results == null || results.isEmpty()) {
+            return originalOrder(documentCount);
+        }
+
+        boolean[] included = new boolean[documentCount];
+        List<Integer> indices = new ArrayList<>(documentCount);
+        for (RerankResponse.SearchResult result : results) {
+            Integer index = result == null ? null : result.getIndex();
+            if (index != null && index >= 0 && index < documentCount && !included[index]) {
+                indices.add(index);
+                included[index] = true;
+            }
+        }
+        for (int index = 0; index < documentCount; index++) {
+            if (!included[index]) {
+                indices.add(index);
+            }
+        }
+        return indices;
+    }
+
+    private List<Integer> originalOrder(int documentCount) {
+        return IntStream.range(0, documentCount).boxed().toList();
     }
 
     /** 重排序文档（已废弃）

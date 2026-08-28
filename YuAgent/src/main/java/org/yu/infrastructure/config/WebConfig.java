@@ -1,5 +1,9 @@
 package org.yu.infrastructure.config;
 
+import java.util.Arrays;
+import java.util.List;
+
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -14,13 +18,20 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 @Configuration
 public class WebConfig implements WebMvcConfigurer {
 
+    private final List<String> allowedOrigins;
+
+    public WebConfig(
+            @Value("${cors.allowed-origins:http://localhost:3000,http://127.0.0.1:3000}") String allowedOrigins) {
+        this.allowedOrigins = Arrays.stream(allowedOrigins.split(",")).map(String::trim)
+                .filter(origin -> !origin.isEmpty()).toList();
+    }
+
     /** 配置CORS过滤器 */
     @Bean
     public FilterRegistrationBean<CorsFilter> corsFilter() {
         CorsConfiguration config = new CorsConfiguration();
-        // 允许所有来源
-        config.addAllowedOriginPattern("*");
-        // 允许携带认证信息
+        // Cookie 和授权请求只能信任显式配置的前端来源，不能与通配来源一起使用。
+        config.setAllowedOrigins(allowedOrigins);
         config.setAllowCredentials(true);
         // 允许所有请求方法
         config.addAllowedMethod("*");

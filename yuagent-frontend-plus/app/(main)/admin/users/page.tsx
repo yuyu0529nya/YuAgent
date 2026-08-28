@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -30,10 +30,13 @@ export default function UsersPage() {
     current: 1,
     pages: 0
   });
+  const latestUsersRequest = useRef(0);
+  const hasInitializedSearch = useRef(false);
   const { toast } = useToast();
 
   // 加载用户数据
-  const loadUsers = async (page: number = 1, keyword?: string) => {
+  const loadUsers = useCallback(async (page: number = 1, keyword?: string) => {
+    const requestId = ++latestUsersRequest.current;
     setLoading(true);
     try {
       const response = await getUsersWithToast({
@@ -42,40 +45,47 @@ export default function UsersPage() {
         keyword: keyword?.trim() || undefined
       });
 
-      if (response.code === 200) {
+      if (response.code === 200 && requestId === latestUsersRequest.current) {
         setPageData(response.data);
         setUsers(response.data.records || []);
-      } else {
+      } else if (requestId === latestUsersRequest.current) {
         toast({
           title: "获取用户列表失败",
           description: response.message,
           variant: "destructive",
         });
       }
-    } catch (error) {
+    } catch {
+      if (requestId !== latestUsersRequest.current) return;
       toast({
         title: "获取用户列表失败",
         description: "网络错误，请稍后重试",
         variant: "destructive",
       });
     } finally {
-      setLoading(false);
+      if (requestId === latestUsersRequest.current) {
+        setLoading(false);
+      }
     }
-  };
+  }, [toast]);
 
   // 初始加载
   useEffect(() => {
-    loadUsers();
-  }, []);
+    void loadUsers();
+  }, [loadUsers]);
 
   // 搜索处理
   useEffect(() => {
+    if (!hasInitializedSearch.current) {
+      hasInitializedSearch.current = true;
+      return;
+    }
     const timeoutId = setTimeout(() => {
-      loadUsers(1, searchQuery);
+      void loadUsers(1, searchQuery);
     }, 500); // 防抖500ms
 
     return () => clearTimeout(timeoutId);
-  }, [searchQuery]);
+  }, [loadUsers, searchQuery]);
 
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleString('zh-CN');

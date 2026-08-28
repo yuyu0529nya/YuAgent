@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { CreditCard, QrCode, Smartphone, Globe, Zap } from "lucide-react";
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -32,22 +32,31 @@ export default function PaymentMethodSelector({
   const [loading, setLoading] = useState(true);
   const [selectedPlatform, setSelectedPlatform] = useState<string>("");
   const [selectedType, setSelectedType] = useState<string>("");
+  const selectionChangeRef = useRef(onSelectionChange);
+
+  selectionChangeRef.current = onSelectionChange;
   
   // 加载支付方法列表
-  const loadPaymentMethods = async () => {
+  const loadPaymentMethods = useCallback(async () => {
     setLoading(true);
     try {
       const response = await PaymentService.getAvailablePaymentMethods();
       if (response.code === 200) {
         setPaymentMethods(response.data);
         
-        // 自动选择第一个可用的支付方式
-        if (response.data.length > 0 && response.data[0].paymentTypes.length > 0) {
-          const firstPlatform = response.data[0].platformCode;
-          const firstType = response.data[0].paymentTypes[0].typeCode;
+        // 自动选择第一个真正可用的支付方式，避免接口排序变化时选中禁用渠道。
+        const firstAvailableMethod = response.data.find(
+          (method) => method.available && method.paymentTypes.length > 0
+        );
+        if (firstAvailableMethod) {
+          const firstPlatform = firstAvailableMethod.platformCode;
+          const firstType = firstAvailableMethod.paymentTypes[0].typeCode;
           setSelectedPlatform(firstPlatform);
           setSelectedType(firstType);
-          onSelectionChange?.(firstPlatform, firstType);
+          selectionChangeRef.current?.(firstPlatform, firstType);
+        } else {
+          setSelectedPlatform("");
+          setSelectedType("");
         }
       } else {
         toast({
@@ -65,7 +74,7 @@ export default function PaymentMethodSelector({
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
   
   // 获取支付类型图标
   const getPaymentTypeIcon = (typeCode: string) => {
@@ -103,7 +112,7 @@ export default function PaymentMethodSelector({
   const handleSelectionChange = (platform: string, type: string) => {
     setSelectedPlatform(platform);
     setSelectedType(type);
-    onSelectionChange?.(platform, type);
+    selectionChangeRef.current?.(platform, type);
   };
   
   // 处理确认选择
@@ -114,8 +123,8 @@ export default function PaymentMethodSelector({
   };
   
   useEffect(() => {
-    loadPaymentMethods();
-  }, []);
+    void loadPaymentMethods();
+  }, [loadPaymentMethods]);
   
   if (loading) {
     return (

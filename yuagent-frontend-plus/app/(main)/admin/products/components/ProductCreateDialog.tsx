@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -36,6 +36,7 @@ export function ProductCreateDialog({ open, onOpenChange, onSuccess }: ProductCr
   const [rules, setRules] = useState<Rule[]>([]);
   const [businessOptions, setBusinessOptions] = useState<BusinessEntity[]>([]);
   const [loadingBusinessOptions, setLoadingBusinessOptions] = useState(false);
+  const latestBusinessOptionsRequest = useRef(0);
   const [formData, setFormData] = useState<ProductFormData>({
     name: "",
     type: BillingType.MODEL_USAGE,
@@ -45,58 +46,57 @@ export function ProductCreateDialog({ open, onOpenChange, onSuccess }: ProductCr
     status: ProductStatus.ACTIVE
   });
 
-  // 加载规则列表
-  useEffect(() => {
-    if (open) {
-      loadRules();
-      loadBusinessOptions(formData.type);
-    }
-  }, [open]);
-
-  // 监听商品类型变化
-  useEffect(() => {
-    if (open) {
-      loadBusinessOptions(formData.type);
-      
-      // 如果是固定业务ID的类型，自动设置serviceId
-      const fixedServiceId = BusinessService.getFixedServiceId(formData.type);
-      if (fixedServiceId) {
-        setFormData(prev => ({ ...prev, serviceId: fixedServiceId }));
-      } else {
-        // 清空serviceId，让用户重新选择
-        setFormData(prev => ({ ...prev, serviceId: "" }));
-      }
-    }
-  }, [formData.type, open]);
-
-  const loadRules = async () => {
+  const loadRules = useCallback(async () => {
     try {
       const response = await AdminRuleService.getAllRules();
       if (response.code === 200) {
         setRules(response.data);
       }
-    } catch (error) {
- 
-    }
-  };
+    } catch {}
+  }, []);
 
-  const loadBusinessOptions = async (productType: string) => {
+  const loadBusinessOptions = useCallback(async (productType: string) => {
+    const requestId = ++latestBusinessOptionsRequest.current;
     if (!BusinessService.needsServiceIdSelector(productType)) {
       setBusinessOptions([]);
+      setLoadingBusinessOptions(false);
       return;
     }
 
     setLoadingBusinessOptions(true);
     try {
       const options = await BusinessService.getBusinessOptions(productType);
-      setBusinessOptions(options);
-    } catch (error) {
- 
-      setBusinessOptions([]);
+      if (requestId === latestBusinessOptionsRequest.current) {
+        setBusinessOptions(options);
+      }
+    } catch {
+      if (requestId === latestBusinessOptionsRequest.current) {
+        setBusinessOptions([]);
+      }
     } finally {
-      setLoadingBusinessOptions(false);
+      if (requestId === latestBusinessOptionsRequest.current) {
+        setLoadingBusinessOptions(false);
+      }
     }
-  };
+  }, []);
+
+  // 加载规则列表
+  useEffect(() => {
+    if (open) {
+      void loadRules();
+    }
+  }, [loadRules, open]);
+
+  // 监听商品类型变化
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    void loadBusinessOptions(formData.type);
+    const fixedServiceId = BusinessService.getFixedServiceId(formData.type);
+    setFormData((previous) => ({ ...previous, serviceId: fixedServiceId ?? "" }));
+  }, [formData.type, loadBusinessOptions, open]);
 
   // 重置表单
   const resetForm = () => {

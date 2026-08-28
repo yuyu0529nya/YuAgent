@@ -4,7 +4,6 @@ import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
-import org.yu.application.agent.service.AgentWorkspaceAppService;
 import org.yu.domain.agent.model.AgentWorkspaceEntity;
 import org.yu.infrastructure.repository.MyBatisPlusExtRepository;
 

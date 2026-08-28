@@ -2,10 +2,12 @@ package org.yu.infrastructure.terminal;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.core.JsonProcessingException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.*;
+import org.springframework.web.util.UriComponentsBuilder;
 
 import java.net.URI;
 
@@ -26,18 +28,16 @@ public class TerminalWebSocketHandler implements WebSocketHandler {
     public void afterConnectionEstablished(WebSocketSession session) throws Exception {
         logger.info("WebSocket连接建立: {}", session.getId());
 
+        // 握手拦截器已经验证令牌与管理员权限。
+        if (!session.getAttributes().containsKey(TerminalHandshakeInterceptor.USER_ID_ATTRIBUTE)) {
+            session.close(CloseStatus.POLICY_VIOLATION.withReason("未授权的终端连接"));
+            return;
+        }
+
         // 从URL参数中获取容器ID
         URI uri = session.getUri();
-        if (uri != null && uri.getQuery() != null) {
-            String[] params = uri.getQuery().split("&");
-            String containerId = null;
-
-            for (String param : params) {
-                if (param.startsWith("containerId=")) {
-                    containerId = param.substring("containerId=".length());
-                    break;
-                }
-            }
+        if (uri != null) {
+            String containerId = UriComponentsBuilder.fromUri(uri).build().getQueryParams().getFirst("containerId");
 
             if (containerId != null) {
                 // 创建终端会话
@@ -60,19 +60,29 @@ public class TerminalWebSocketHandler implements WebSocketHandler {
             String payload = textMessage.getPayload();
 
             try {
-                // 解析JSON消息
                 JsonNode jsonNode = objectMapper.readTree(payload);
-                String type = jsonNode.get("type").asText();
+                if (!jsonNode.isObject()) {
+                    logger.warn("忽略非对象终端消息: sessionId={}", session.getId());
+                    return;
+                }
+
+                String type = jsonNode.path("type").asText();
 
                 if ("input".equals(type)) {
-                    String input = jsonNode.get("data").asText();
+                    JsonNode inputNode = jsonNode.get("data");
+                    if (inputNode == null || !inputNode.isTextual()) {
+                        logger.warn("忽略缺少文本输入的终端消息: sessionId={}", session.getId());
+                        return;
+                    }
+                    String input = inputNode.asText();
                     webTerminalService.sendCommand(session.getId(), input);
                 } else if ("resize".equals(type)) {
-                    // 处理终端大小调整（可选实现）
-                    logger.debug("终端大小调整: {}", payload);
+                    logger.debug("终端大小调整: sessionId={}", session.getId());
+                } else {
+                    logger.warn("忽略未知终端消息类型: sessionId={}, type={}", session.getId(), type);
                 }
-            } catch (Exception e) {
-                // 如果不是JSON格式，直接作为命令发送
+            } catch (JsonProcessingException e) {
+                // 兼容早期客户端直接发送纯文本命令；结构化消息的字段错误不会落入这里。
                 webTerminalService.sendCommand(session.getId(), payload);
             }
         }

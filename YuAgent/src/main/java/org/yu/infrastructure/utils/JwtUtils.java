@@ -62,8 +62,7 @@ public class JwtUtils {
             return userId;
 
         } catch (JwtException e) {
-            logger.warn("解析Token失败: {}, Token前缀: {}", e.getMessage(),
-                    token.length() > 20 ? token.substring(0, 20) + "..." : token);
+            logger.warn("解析Token失败: {}", e.getMessage());
             return null;
         } catch (Exception e) {
             logger.error("解析Token异常: {}", e.getMessage(), e);
@@ -96,8 +95,7 @@ public class JwtUtils {
             return true;
 
         } catch (JwtException e) {
-            logger.warn("Token验证失败 - JWT异常: {}, Token前缀: {}", e.getMessage(),
-                    token.length() > 20 ? token.substring(0, 20) + "..." : token);
+            logger.warn("Token验证失败 - JWT异常: {}", e.getMessage());
             return false;
         } catch (Exception e) {
             logger.error("Token验证异常: {}", e.getMessage(), e);

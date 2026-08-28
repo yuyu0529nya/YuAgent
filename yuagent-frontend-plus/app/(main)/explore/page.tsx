@@ -1,9 +1,7 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { Bot, Search, Plus, Check } from "lucide-react"
-import { Metadata } from "next"
-import { redirect, useRouter } from "next/navigation"
 
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
@@ -16,10 +14,8 @@ import { resolveAssetUrl } from "@/lib/asset-url"
 import type { AgentVersion } from "@/types/agent"
 import { Sidebar } from "@/components/sidebar"
 import { useWorkspace } from "@/contexts/workspace-context"
-import Link from "next/link"
 
 export default function ExplorePage() {
-  const router = useRouter()
   const { refreshWorkspace } = useWorkspace()
   const [searchQuery, setSearchQuery] = useState("")
   const [debouncedQuery, setDebouncedQuery] = useState("")
@@ -39,12 +35,16 @@ export default function ExplorePage() {
   }, [searchQuery])
 
   // 获取已发布的助理列表
-  const fetchAgents = async () => {
+  const fetchAgents = useCallback(async (signal?: AbortSignal) => {
     try {
       setLoading(true)
       setError(null)
 
-      const response = await getPublishedAgents(debouncedQuery)
+      const response = await getPublishedAgents(debouncedQuery, { signal })
+
+      if (signal?.aborted) {
+        return
+      }
 
       if (response.code === 200) {
         setAgents(response.data)
@@ -57,6 +57,9 @@ export default function ExplorePage() {
         })
       }
     } catch (error) {
+      if (signal?.aborted) {
+        return
+      }
       const errorMessage = error instanceof Error ? error.message : "未知错误"
       setError(errorMessage)
       toast({
@@ -65,13 +68,18 @@ export default function ExplorePage() {
         variant: "destructive",
       })
     } finally {
-      setLoading(false)
+      if (!signal?.aborted) {
+        setLoading(false)
+      }
     }
-  }
+  }, [debouncedQuery])
 
   useEffect(() => {
-    fetchAgents()
-  }, [debouncedQuery])
+    const controller = new AbortController()
+    void fetchAgents(controller.signal)
+
+    return () => controller.abort()
+  }, [fetchAgents])
 
   // 处理添加助理到工作区
   const handleAddToWorkspace = async (agentId: string) => {
@@ -179,7 +187,7 @@ export default function ExplorePage() {
                   // 错误状态
                   <div className="text-center py-10">
                     <div className="text-red-500 mb-4">{error}</div>
-                    <Button variant="outline" onClick={() => window.location.reload()}>
+                    <Button variant="outline" onClick={() => void fetchAgents()}>
                       重试
                     </Button>
                   </div>

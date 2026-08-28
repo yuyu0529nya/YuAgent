@@ -2,6 +2,7 @@
 
 import type React from "react"
 import { useState, useEffect } from "react"
+import dynamic from "next/dynamic"
 
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
@@ -13,7 +14,6 @@ import { toast } from "@/hooks/use-toast"
 import { 
   getUserSettingsWithToast, 
   updateUserSettingsWithToast, 
-  getAllModelsWithToast,
   getChatModelsWithToast,
   getOcrModelsWithToast,
   getEmbeddingModelsWithToast,
@@ -23,7 +23,14 @@ import {
   type Model,
   type FallbackConfig 
 } from "@/lib/user-settings-service"
-import { FallbackConfigComponent } from "@/components/settings/fallback-config"
+
+const FallbackConfigComponent = dynamic(
+  () => import("@/components/settings/fallback-config").then(module => module.FallbackConfigComponent),
+  {
+    ssr: false,
+    loading: () => <Skeleton className="h-48 w-full" />,
+  },
+)
 
 export default function GeneralSettingsPage() {
   const [settings, setSettings] = useState<UserSettings>({

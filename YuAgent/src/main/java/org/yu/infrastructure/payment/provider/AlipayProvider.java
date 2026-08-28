@@ -157,15 +157,14 @@ public class AlipayProvider extends PaymentProvider {
 
     /** 创建二维码支付 */
     private PaymentResult createQrCodePayment(PaymentRequest request) throws Exception {
-        AlipayTradePrecreateResponse response = Factory.Payment.FaceToFace()
-                .asyncNotify(request.getNotifyUrl())
+        AlipayTradePrecreateResponse response = Factory.Payment.FaceToFace().asyncNotify(request.getNotifyUrl())
                 .preCreate(request.getTitle(), request.getOrderNo(), formatAmount(request.getAmount().toString()));
 
         if (ResponseChecker.success(response)) {
             PaymentResult result = PaymentResult.success();
             result.setPaymentUrl(response.qrCode); // 二维码内容字符串
             result.setProviderOrderId(request.getOrderNo());
-            logger.info("支付宝二维码支付创建成功: orderId={}, qrCode={}", request.getOrderId(), response.qrCode);
+            logger.info("支付宝二维码支付创建成功: orderId={}", request.getOrderId());
             return result;
         } else {
             logger.error("支付宝二维码支付创建失败: orderId={}", request.getOrderId());

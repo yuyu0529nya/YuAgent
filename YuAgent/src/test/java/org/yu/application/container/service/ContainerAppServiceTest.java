@@ -8,14 +8,20 @@ import org.yu.domain.container.model.ContainerEntity;
 import org.yu.domain.container.model.ContainerTemplateEntity;
 import org.yu.domain.container.service.ContainerDomainService;
 import org.yu.domain.container.service.ContainerTemplateDomainService;
+import org.yu.domain.user.model.UserEntity;
 import org.yu.domain.user.service.UserDomainService;
 import org.yu.infrastructure.docker.DockerService;
 import org.yu.infrastructure.entity.Operator;
+import org.yu.infrastructure.exception.BusinessException;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -93,7 +99,8 @@ class ContainerAppServiceTest {
         refreshedContainer.setIpAddress("localhost");
         refreshedContainer.setVolumePath("D:/yuagent/data/users/12345678abcdef");
 
-        when(containerDomainService.findUserContainer("12345678abcdef")).thenReturn(legacyContainer, refreshedContainer);
+        when(containerDomainService.findUserContainer("12345678abcdef")).thenReturn(legacyContainer,
+                refreshedContainer);
         when(containerDomainService.getContainerById("user-1")).thenReturn(refreshedContainer);
         when(templateDomainService.getMcpGatewayTemplate()).thenReturn(template(ContainerType.USER));
         when(dockerService.getContainerInfo("old-user-docker")).thenReturn(containerInfo("172.18.0.7", "bridge"));
@@ -118,7 +125,56 @@ class ContainerAppServiceTest {
                 Operator.ADMIN, "new-user-docker");
     }
 
-    private ContainerEntity container(String id, String name, String image, ContainerType type, ContainerStatus status) {
+    @Test
+    void shouldFailUserContainerCreationWhenDockerCreationFails() {
+        ContainerEntity container = container("user-1", "mcp-gateway-user-12345678", "yuagent-mcp-gateway:latest",
+                ContainerType.USER, ContainerStatus.CREATING);
+        container.setUserId("12345678abcdef");
+        container.setExternalPort(32802);
+        container.setVolumePath("/tmp/yuagent-test-user");
+
+        when(templateDomainService.getMcpGatewayTemplate()).thenReturn(template(ContainerType.USER));
+        when(containerDomainService.createUserContainer(eq("12345678abcdef"), eq("mcp-gateway-user-12345678"),
+                eq("yuagent-mcp-gateway:latest"), eq(8080), any())).thenReturn(container);
+        when(dockerService.createAndStartContainer(eq("mcp-gateway-user-12345678"), any(), eq(32802), any(),
+                eq("12345678abcdef"))).thenThrow(new RuntimeException("Docker unavailable"));
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.createUserContainer("12345678abcdef"));
+
+        assertEquals("容器创建失败: mcp-gateway-user-12345678", exception.getMessage());
+        verify(containerDomainService).markContainerError("user-1", "Docker unavailable", Operator.ADMIN);
+    }
+
+    @Test
+    void getContainersPage_shouldLoadUserNicknamesInOneBatch() {
+        ContainerEntity first = container("container-1", "first", "image", ContainerType.USER, ContainerStatus.RUNNING);
+        first.setUserId("user-1");
+        ContainerEntity second = container("container-2", "second", "image", ContainerType.USER,
+                ContainerStatus.RUNNING);
+        second.setUserId("user-2");
+        Page<ContainerEntity> containerPage = new Page<>(1, 10, 2);
+        containerPage.setRecords(List.of(first, second));
+        UserEntity firstUser = new UserEntity();
+        firstUser.setId("user-1");
+        firstUser.setNickname("Alice");
+        UserEntity secondUser = new UserEntity();
+        secondUser.setId("user-2");
+        secondUser.setNickname("Bob");
+
+        when(containerDomainService.getContainersPage(any(), eq(null), eq(null), eq(null))).thenReturn(containerPage);
+        when(userDomainService.getByIds(List.of("user-1", "user-2"))).thenReturn(List.of(firstUser, secondUser));
+
+        Page<ContainerDTO> result = service.getContainersPage(new Page<>(1, 10), null, null, null);
+
+        assertEquals("Alice", result.getRecords().get(0).getUserNickname());
+        assertEquals("Bob", result.getRecords().get(1).getUserNickname());
+        verify(userDomainService).getByIds(List.of("user-1", "user-2"));
+        verify(userDomainService, never()).getUserInfo(any());
+    }
+
+    private ContainerEntity container(String id, String name, String image, ContainerType type,
+            ContainerStatus status) {
         ContainerEntity container = new ContainerEntity();
         container.setId(id);
         container.setName(name);

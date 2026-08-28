@@ -161,7 +161,7 @@ export function InstallRagDialog({
           <div className="text-sm text-muted-foreground p-3 bg-blue-50 rounded-lg">
             <div className="font-medium mb-1">安装说明:</div>
             <ul className="list-disc list-inside space-y-1">
-              <li>安装后可以在"我安装的知识库"中查看</li>
+              <li>安装后可以在&quot;我安装的知识库&quot;中查看</li>
               <li>可以在对话中使用这个知识库</li>
               <li>随时可以卸载已安装的知识库</li>
             </ul>

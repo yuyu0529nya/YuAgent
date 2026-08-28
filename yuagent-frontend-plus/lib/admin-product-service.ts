@@ -187,23 +187,23 @@ export const AdminProductServiceWithToast = {
   },
 
   async createProduct(data: CreateProductRequest) {
-    return httpClient.post(API_ENDPOINTS.PRODUCTS, data, {}, { showToast: true });
+    return httpClient.post<ApiResponse<Product>>(API_ENDPOINTS.PRODUCTS, data, {}, { showToast: true });
   },
 
   async updateProduct(id: string, data: UpdateProductRequest) {
-    return httpClient.put(API_ENDPOINTS.PRODUCT_BY_ID(id), data, {}, { showToast: true });
+    return httpClient.put<ApiResponse<Product>>(API_ENDPOINTS.PRODUCT_BY_ID(id), data, {}, { showToast: true });
   },
 
   async deleteProduct(id: string) {
-    return httpClient.delete(API_ENDPOINTS.PRODUCT_BY_ID(id), {}, { showToast: true });
+    return httpClient.delete<ApiResponse<void>>(API_ENDPOINTS.PRODUCT_BY_ID(id), {}, { showToast: true });
   },
 
   async enableProduct(id: string) {
-    return httpClient.post(API_ENDPOINTS.PRODUCT_ENABLE(id), {}, {}, { showToast: true });
+    return httpClient.post<ApiResponse<Product>>(API_ENDPOINTS.PRODUCT_ENABLE(id), {}, {}, { showToast: true });
   },
 
   async disableProduct(id: string) {
-    return httpClient.post(API_ENDPOINTS.PRODUCT_DISABLE(id), {}, {}, { showToast: true });
+    return httpClient.post<ApiResponse<Product>>(API_ENDPOINTS.PRODUCT_DISABLE(id), {}, {}, { showToast: true });
   }
 };
 

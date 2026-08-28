@@ -28,8 +28,8 @@ public class AgentMessageHandler extends TracingMessageHandler {
             AccountDomainService accountDomainService, ChatSessionManager chatSessionManager,
             TraceCollector traceCollector, AgentToolManager agentToolManager) {
         super(llmServiceFactory, messageDomainService, highAvailabilityDomainService, sessionDomainService,
-                userSettingsDomainService, llmDomainService, builtInToolRegistry, billingService,
-                accountDomainService, chatSessionManager, traceCollector);
+                userSettingsDomainService, llmDomainService, builtInToolRegistry, billingService, accountDomainService,
+                chatSessionManager, traceCollector);
         this.agentToolManager = agentToolManager;
     }
 

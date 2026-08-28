@@ -7,6 +7,7 @@ import org.springframework.stereotype.Service;
 import org.yu.domain.scheduledtask.constant.RepeatType;
 import org.yu.domain.scheduledtask.event.ScheduledTaskExecuteEvent;
 import org.yu.domain.scheduledtask.model.ScheduledTaskEntity;
+import org.yu.infrastructure.exception.BusinessException;
 
 import java.time.LocalDateTime;
 
@@ -29,14 +30,14 @@ public class ScheduleTaskExecutor {
 
     /** 执行定时任务
      * @param task 定时任务实体 */
-    public void executeTask(ScheduledTaskEntity task) {
+    public boolean executeTask(ScheduledTaskEntity task) {
         try {
             logger.info("开始执行定时任务: taskId={}, content={}", task.getId(), task.getContent());
 
             // 检查任务状态
             if (!task.isActive()) {
                 logger.warn("任务状态不是ACTIVE，跳过执行: taskId={}, status={}", task.getId(), task.getStatus());
-                return;
+                return false;
             }
 
             // 发布任务执行事件，由Application层监听并处理实际的对话逻辑
@@ -47,21 +48,22 @@ public class ScheduleTaskExecutor {
             logger.info("定时任务执行事件已发布: taskId={}", task.getId());
 
             // 记录执行时间并处理下次执行
-            handleTaskExecution(task);
+            return handleTaskExecution(task);
 
         } catch (Exception e) {
             logger.error("定时任务执行异常: taskId={}, error={}", task.getId(), e.getMessage(), e);
+            return false;
         }
     }
 
     /** 处理任务执行后的逻辑
      * @param task 任务实体 */
-    private void handleTaskExecution(ScheduledTaskEntity task) {
+    private boolean handleTaskExecution(ScheduledTaskEntity task) {
         try {
             LocalDateTime now = LocalDateTime.now();
 
             // 记录执行时间
-            task.recordExecution();
+            task.setLastExecuteTime(now);
             scheduledTaskDomainService.recordExecution(task.getId(), now);
 
             // 计算并处理下次执行时间
@@ -84,8 +86,33 @@ public class ScheduleTaskExecutor {
                 }
             }
 
+            return true;
+
         } catch (Exception e) {
             logger.error("处理任务执行后逻辑失败: taskId={}, error={}", task.getId(), e.getMessage(), e);
+            return false;
+        }
+    }
+
+    /** 从持久化存储读取任务的最新状态，避免已暂停或删除的旧队列项被执行。
+     *
+     * @param queuedTask 队列中的任务快照
+     * @return 可执行的最新任务；不可执行时返回 {@code null} */
+    public ScheduledTaskEntity getExecutableTask(ScheduledTaskEntity queuedTask) {
+        if (queuedTask == null || queuedTask.getId() == null || queuedTask.getUserId() == null) {
+            return null;
+        }
+
+        try {
+            ScheduledTaskEntity currentTask = scheduledTaskDomainService.getTask(queuedTask.getId(),
+                    queuedTask.getUserId());
+            return canExecute(currentTask) ? currentTask : null;
+        } catch (BusinessException e) {
+            logger.info("任务已不存在，跳过过期队列项: taskId={}", queuedTask.getId());
+            return null;
+        } catch (Exception e) {
+            logger.error("读取定时任务最新状态失败: taskId={}", queuedTask.getId(), e);
+            return null;
         }
     }
 

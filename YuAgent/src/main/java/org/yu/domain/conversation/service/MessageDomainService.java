@@ -4,7 +4,6 @@ import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import org.springframework.stereotype.Service;
 import org.yu.domain.conversation.model.ContextEntity;
 import org.yu.domain.conversation.model.MessageEntity;
-import org.yu.domain.conversation.repository.ContextRepository;
 import org.yu.domain.conversation.repository.MessageRepository;
 
 import java.time.LocalDateTime;
@@ -15,11 +14,11 @@ public class MessageDomainService {
 
     private final MessageRepository messageRepository;
 
-    private final ContextRepository contextRepository;
+    private final ContextDomainService contextDomainService;
 
-    public MessageDomainService(MessageRepository messageRepository, ContextRepository contextRepository) {
+    public MessageDomainService(MessageRepository messageRepository, ContextDomainService contextDomainService) {
         this.messageRepository = messageRepository;
-        this.contextRepository = contextRepository;
+        this.contextDomainService = contextDomainService;
     }
 
     public List<MessageEntity> listByIds(List<String> ids) {
@@ -37,7 +36,7 @@ public class MessageDomainService {
         }
         messageRepository.insert(messageEntities);
         contextEntity.getActiveMessages().addAll(messageEntities.stream().map(MessageEntity::getId).toList());
-        contextRepository.insertOrUpdate(contextEntity);
+        contextDomainService.insertOrUpdate(contextEntity);
     }
 
     /** 保存消息 */

@@ -7,13 +7,13 @@ import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Key, Save, AlertCircle, Check } from 'lucide-react';
 import { toast } from 'sonner';
-import type { Tool } from '@/types/tool';
+import type { Tool, ToolItem, ToolParameter } from '@/types/tool';
 
 interface ToolParametersModalProps {
   isOpen: boolean;
   onClose: () => void;
   tool: Tool;
-  toolFunctions: any[];
+  toolFunctions: ToolItem[];
   presetParameters?: {
     [functionName: string]: {
       [paramName: string]: string
@@ -34,11 +34,8 @@ const ToolParametersModal: React.FC<ToolParametersModalProps> = ({
   const [activeTab, setActiveTab] = useState<string>("");
 
   // 判断功能是否有参数
-  const hasParameters = (func: any): boolean => {
-    return func && 
-           func.parameters && 
-           func.parameters.properties && 
-           Object.keys(func.parameters.properties).filter(key => 
+  const hasParameters = (func: ToolItem): boolean => {
+    return Object.keys(func.parameters?.properties ?? {}).filter(key => 
              !['additionalProperties', 'definitions', 'required'].includes(key)
            ).length > 0;
   };
@@ -198,9 +195,9 @@ const ToolParametersModal: React.FC<ToolParametersModalProps> = ({
                       <ScrollArea className="flex-1 px-6 py-4">
                         {hasParameters(func) ? (
                           <div className="space-y-6">
-                            {Object.entries(func.parameters.properties || {})
+                            {Object.entries(func.parameters?.properties ?? {})
                               .filter(([key]) => !['additionalProperties', 'definitions', 'required'].includes(key))
-                              .map(([paramName, paramConfig]: [string, any]) => {
+                              .map(([paramName, paramConfig]: [string, ToolParameter]) => {
                                 return (
                                   <div key={paramName} className="space-y-2 bg-gray-50 p-4 rounded-md border border-gray-100">
                                     <div className="flex items-center justify-between">
@@ -239,7 +236,7 @@ const ToolParametersModal: React.FC<ToolParametersModalProps> = ({
                               <AlertCircle className="h-10 w-10 text-muted-foreground mx-auto mb-4" />
                               <p className="text-lg font-medium text-muted-foreground mb-2">该功能没有可预设的参数</p>
                               <p className="text-sm text-muted-foreground">
-                                可以选择左侧其他功能进行参数预设，或直接点击底部"保存"按钮。
+                                可以选择左侧其他功能进行参数预设，或直接点击底部&quot;保存&quot;按钮。
                               </p>
                             </div>
                           </div>

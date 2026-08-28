@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
 import Link from "next/link"
 import Image from "next/image"
 import { useRouter } from "next/navigation"
@@ -49,12 +49,6 @@ export default function ResetPasswordPage() {
   const [countdown, setCountdown] = useState(0)
   const [sendingCode, setSendingCode] = useState(false)
   
-  // 页面加载时获取验证码
-  useEffect(() => {
-    fetchCaptcha()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-  
   // 倒计时逻辑
   useEffect(() => {
     if (countdown > 0) {
@@ -70,7 +64,7 @@ export default function ResetPasswordPage() {
   }
   
   // 获取图形验证码
-  const fetchCaptcha = async () => {
+  const fetchCaptcha = useCallback(async () => {
     setLoadingCaptcha(true)
     try {
       const res = await getCaptchaApi()
@@ -86,7 +80,12 @@ export default function ResetPasswordPage() {
     } finally {
       setLoadingCaptcha(false)
     }
-  }
+  }, [])
+
+  // 页面加载时获取验证码
+  useEffect(() => {
+    fetchCaptcha()
+  }, [fetchCaptcha])
   
   // 验证邮箱及发送验证码
   const handleVerifyEmail = async () => {

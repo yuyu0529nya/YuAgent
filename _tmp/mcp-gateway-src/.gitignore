@@ -4,8 +4,13 @@ vm
 config.json
 mcp_servers.json
 node_modules
+frontend/dist
+.pnpm-store
 yarn.lock
 .vite
 .DS_Store
 CLAUDE.md
 web/dist
+.gocache
+frontend/tsconfig.tsbuildinfo
+k8s.local/

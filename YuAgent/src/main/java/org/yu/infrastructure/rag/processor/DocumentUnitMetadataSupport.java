@@ -39,7 +39,8 @@ public final class DocumentUnitMetadataSupport {
         }
 
         entity.setTitlePath(titlePath);
-        entity.setSegmentType(segment.getType() != null ? segment.getType().getValue()
+        entity.setSegmentType(segment.getType() != null
+                ? segment.getType().getValue()
                 : readString(metadata, MetadataConstant.SEGMENT_TYPE));
         entity.setSegmentOrder(readInteger(metadata, MetadataConstant.SEGMENT_ORDER, segment.getOrder()));
 

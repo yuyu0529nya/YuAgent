@@ -5,6 +5,7 @@ import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
 import org.springframework.web.client.RestTemplate;
 import org.yu.domain.sso.model.SsoProvider;
 import org.yu.domain.sso.model.SsoUserInfo;
@@ -28,8 +29,7 @@ public class CommunitySsoService implements SsoService {
     @Override
     public String getLoginUrl(String redirectUrl) {
         SsoConfigProvider.CommunitySsoConfig config = getEffectiveConfig();
-        if (config.getBaseUrl() == null || config.getBaseUrl().isEmpty() || config.getAppKey() == null
-                || config.getAppKey().isEmpty()) {
+        if (!StringUtils.hasText(config.getBaseUrl()) || !StringUtils.hasText(config.getAppKey())) {
             throw new BusinessException("Community SSO未配置");
         }
 
@@ -40,8 +40,8 @@ public class CommunitySsoService implements SsoService {
     @Override
     public SsoUserInfo getUserInfo(String authCode) {
         SsoConfigProvider.CommunitySsoConfig config = getEffectiveConfig();
-        if (config.getBaseUrl() == null || config.getBaseUrl().isEmpty() || config.getAppKey() == null
-                || config.getAppKey().isEmpty() || config.getAppSecret() == null || config.getAppSecret().isEmpty()) {
+        if (!StringUtils.hasText(config.getBaseUrl()) || !StringUtils.hasText(config.getAppKey())
+                || !StringUtils.hasText(config.getAppSecret())) {
             throw new BusinessException("Community SSO未配置");
         }
 
@@ -89,7 +89,8 @@ public class CommunitySsoService implements SsoService {
         SsoConfigProvider.CommunitySsoConfig config = ssoConfigProvider.getCommunityConfig();
 
         // 检查配置是否完整
-        if (config.getBaseUrl() == null || config.getAppKey() == null || config.getAppSecret() == null) {
+        if (!StringUtils.hasText(config.getBaseUrl()) || !StringUtils.hasText(config.getAppKey())
+                || !StringUtils.hasText(config.getAppSecret())) {
             throw new BusinessException("Community SSO配置不完整，请在管理后台配置Community OAuth应用信息");
         }
 

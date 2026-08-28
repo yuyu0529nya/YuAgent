@@ -1,6 +1,5 @@
 import { httpClient } from "@/lib/http-client"
 import { withToast } from "@/lib/toast-utils"
-import { API_CONFIG } from "@/lib/api-config"
 
 // 用户信息类型
 export interface UserInfo {
@@ -30,19 +29,38 @@ export interface ApiResponse<T> {
   timestamp: number
 }
 
-// 解析JWT Token获取用户ID
-function parseJwt(token: string): any {
+interface JwtPayload {
+  userId?: unknown
+  sub?: unknown
+  id?: unknown
+}
+
+// 解析 JWT Token 获取用户 ID。
+function parseJwt(token: string): JwtPayload | null {
   try {
-    const base64Url = token.split('.')[1];
+    const base64Url = token.split('.')[1]
+    if (!base64Url) {
+      return null
+    }
     const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
-    const jsonPayload = decodeURIComponent(atob(base64).split('').map(function(c) {
+    const jsonPayload = decodeURIComponent(atob(base64.padEnd(Math.ceil(base64.length / 4) * 4, '='))
+      .split('').map(function(c) {
       return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
     }).join(''));
-    return JSON.parse(jsonPayload);
-  } catch (e) {
- 
-    return null;
+    const payload: unknown = JSON.parse(jsonPayload)
+    return payload !== null && typeof payload === 'object' ? payload as JwtPayload : null
+  } catch {
+    return null
   }
+}
+
+function getPayloadUserId(payload: JwtPayload): string | null {
+  for (const value of [payload.userId, payload.sub, payload.id]) {
+    if (typeof value === 'string' && value.trim()) {
+      return value
+    }
+  }
+  return null
 }
 
 // 获取当前用户ID
@@ -55,15 +73,8 @@ export function getCurrentUserId(): string | null {
   const token = localStorage.getItem("auth_token");
   if (token) {
     const payload = parseJwt(token);
-    if (payload && payload.userId) {
-      return payload.userId;
-    }
-    // 如果JWT中有其他字段表示用户ID
-    if (payload && payload.sub) {
-      return payload.sub;
-    }
-    if (payload && payload.id) {
-      return payload.id;
+    if (payload) {
+      return getPayloadUserId(payload)
     }
   }
   

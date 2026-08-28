@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { streamChat } from "@/lib/api"
 import { toast } from "@/hooks/use-toast"
-import { getSessionMessages, getSessionMessagesWithToast, type MessageDTO } from "@/lib/session-message-service"
+import { getSessionMessages, type MessageDTO } from "@/lib/session-message-service"
 import { AgentSessionService } from "@/lib/agent-session-service"
 import { API_CONFIG, API_ENDPOINTS } from "@/lib/api-config"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -29,18 +29,6 @@ interface ChatPanelProps {
   multiModal?: boolean // 新增：是否启用多模态功能
 }
 
-interface Message {
-  id: string
-  role: "USER" | "SYSTEM" | "assistant"
-  content: string
-  messageType?: string // 消息类型
-  type?: MessageType // 消息类型枚举
-  createdAt?: string
-  updatedAt?: string
-  isStreaming?: boolean
-  fileUrls?: string[] // 修改：文件URL列表
-}
-
 interface AssistantMessage {
   id: string
   hasContent: boolean
@@ -56,11 +44,6 @@ interface StreamData {
   messageType?: string // 消息类型
   files?: string[] // 新增：文件URL列表
 }
-
-// 定义消息类型为字符串字面量类型
-type MessageTypeValue = 
-  | "TEXT" 
-  | "TOOL_CALL";
 
 export function ChatPanel({ conversationId, isFunctionalAgent = false, agentName = "AI助手", onToggleScheduledTaskPanel, multiModal = false }: ChatPanelProps) {
   const [input, setInput] = useState("")
@@ -78,6 +61,9 @@ export function ChatPanel({ conversationId, isFunctionalAgent = false, agentName
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const chatContainerRef = useRef<HTMLDivElement>(null)
   const abortControllerRef = useRef<AbortController | null>(null) // 新增：中断控制器
+  const sessionLoadRequestRef = useRef(0)
+  // 会话切换或请求结束后使旧流失效，避免其异步分片写入当前会话。
+  const chatRequestRef = useRef(0)
   
   // 新增：使用useRef保存不需要触发重新渲染的状态
   const hasReceivedFirstResponse = useRef(false);
@@ -86,54 +72,102 @@ export function ChatPanel({ conversationId, isFunctionalAgent = false, agentName
     type: MessageType.TEXT as MessageType
   });
 
-  // 在组件顶部添加状态来跟踪已完成的TEXT消息
-  const [completedTextMessages, setCompletedTextMessages] = useState<Set<string>>(new Set());
   // 添加消息序列计数器
   const messageSequenceNumber = useRef(0);
+  const pendingAssistantMessageRef = useRef<{
+    id: string
+    content: string
+    type: MessageType
+  } | null>(null)
+  const streamUpdateFrameRef = useRef<number | null>(null)
+
+  const upsertAssistantMessage = useCallback((messageId: string, messageData: {
+    content: string
+    type: MessageType
+  }) => {
+    setMessages(prev => {
+      const messageIndex = prev.findIndex(message => message.id === messageId)
+
+      if (messageIndex >= 0) {
+        const nextMessages = [...prev]
+        nextMessages[messageIndex] = {
+          ...nextMessages[messageIndex],
+          content: messageData.content,
+        }
+        return nextMessages
+      }
+
+      return [
+        ...prev,
+        {
+          id: messageId,
+          role: "assistant",
+          content: messageData.content,
+          type: messageData.type,
+          createdAt: new Date().toISOString(),
+        },
+      ]
+    })
+  }, [])
+
+  const flushPendingAssistantMessage = useCallback(() => {
+    streamUpdateFrameRef.current = null
+    const pendingMessage = pendingAssistantMessageRef.current
+    pendingAssistantMessageRef.current = null
+
+    if (pendingMessage) {
+      upsertAssistantMessage(pendingMessage.id, pendingMessage)
+    }
+  }, [upsertAssistantMessage])
+
+  const scheduleAssistantMessageUpdate = useCallback((messageId: string, messageData: {
+    content: string
+    type: MessageType
+  }) => {
+    pendingAssistantMessageRef.current = { id: messageId, ...messageData }
+    setCurrentAssistantMessage({ id: messageId, hasContent: true })
+
+    if (streamUpdateFrameRef.current === null) {
+      streamUpdateFrameRef.current = requestAnimationFrame(flushPendingAssistantMessage)
+    }
+  }, [flushPendingAssistantMessage])
 
   // 在组件初始化和conversationId变更时重置状态
   useEffect(() => {
+    chatRequestRef.current += 1
     hasReceivedFirstResponse.current = false;
     messageContentAccumulator.current = {
       content: "",
       type: MessageType.TEXT
     };
-    setCompletedTextMessages(new Set());
     messageSequenceNumber.current = 0;
     
     // 重置中断相关状态
     setCanInterrupt(false);
     setIsInterrupting(false);
-    if (abortControllerRef.current) {
-      abortControllerRef.current = null;
+    abortControllerRef.current?.abort()
+    abortControllerRef.current = null
+    pendingAssistantMessageRef.current = null
+    if (streamUpdateFrameRef.current !== null) {
+      cancelAnimationFrame(streamUpdateFrameRef.current)
+      streamUpdateFrameRef.current = null
     }
   }, [conversationId]);
 
-  // 添加消息到列表的辅助函数
-  const addMessage = (message: {
-    id: string;
-    role: "USER" | "SYSTEM" | "assistant";
-    content: string;
-    type?: MessageType;
-    createdAt?: string | Date;
-    fileUrls?: string[]; // 修改：使用fileUrls
-  }) => {
-    const messageObj: MessageInterface = {
-      id: message.id,
-      role: message.role,
-      content: message.content,
-      type: message.type || MessageType.TEXT,
-      createdAt: message.createdAt instanceof Date 
-        ? message.createdAt.toISOString() 
-        : message.createdAt || new Date().toISOString(),
-      fileUrls: message.fileUrls || [] // 修改：使用fileUrls
-    };
-    
-    setMessages(prev => [...prev, messageObj]);
-  };
+  useEffect(() => () => {
+    if (streamUpdateFrameRef.current !== null) {
+      cancelAnimationFrame(streamUpdateFrameRef.current)
+    }
+  }, [])
 
   // 获取会话消息
   useEffect(() => {
+    const requestId = ++sessionLoadRequestRef.current
+    const controller = new AbortController()
+    const isCurrentRequest = () => (
+      sessionLoadRequestRef.current === requestId && !controller.signal.aborted
+    )
+
     const fetchSessionMessages = async () => {
       if (!conversationId) return
       
@@ -144,7 +178,13 @@ export function ChatPanel({ conversationId, isFunctionalAgent = false, agentName
         setMessages([])
         
         // 获取会话消息
-        const messagesResponse = await getSessionMessagesWithToast(conversationId)
+        const messagesResponse = await getSessionMessages(conversationId, {
+          signal: controller.signal,
+        })
+
+        if (!isCurrentRequest()) {
+          return
+        }
         
         if (messagesResponse.code === 200 && messagesResponse.data) {
           // 转换消息格式
@@ -177,24 +217,35 @@ export function ChatPanel({ conversationId, isFunctionalAgent = false, agentName
           setMessages(formattedMessages)
         } else {
           const errorMessage = messagesResponse.message || "获取会话消息失败"
- 
           setError(errorMessage)
+          toast({
+            title: "获取会话消息失败",
+            description: errorMessage,
+            variant: "destructive",
+          })
         }
       } catch (error) {
- 
+        if (!isCurrentRequest()) {
+          return
+        }
         setError(error instanceof Error ? error.message : "获取会话消息时发生未知错误")
       } finally {
-        setLoading(false)
+        if (isCurrentRequest()) {
+          setLoading(false)
+        }
       }
     }
 
     fetchSessionMessages()
+    return () => controller.abort()
   }, [conversationId])
 
   // 滚动到底部
   useEffect(() => {
     if (autoScroll) {
-      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
+      // 流式消息每帧都会更新。此处持续启动 smooth 动画会导致浏览器反复取消并重算滚动，
+      // 长回复时容易卡顿；用户主动发送时仍由 scrollToBottom 保持平滑滚动。
+      messagesEndRef.current?.scrollIntoView({ behavior: isTyping ? "auto" : "smooth" })
     }
   }, [messages, isTyping, autoScroll])
 
@@ -204,6 +255,8 @@ export function ChatPanel({ conversationId, isFunctionalAgent = false, agentName
       return
     }
 
+    // 先让正在读取的流失效，再发起服务端中断，防止中断竞态下仍消费到末尾分片。
+    chatRequestRef.current += 1
     setIsInterrupting(true)
     
     try {
@@ -267,11 +320,11 @@ export function ChatPanel({ conversationId, isFunctionalAgent = false, agentName
 
   // 处理发送消息
   const parseSSEBlock = (block: string): { event: string; data: StreamData | null } | null => {
-    const eventMatch = block.match(/^event:\s*(.+)$/m)
-    const dataLines = block
-      .split('\n')
+    const lines = block.split(/\r?\n/)
+    const eventLine = lines.find(line => line.startsWith('event:'))
+    const dataLines = lines
       .filter(line => line.startsWith('data:'))
-      .map(line => line.slice(5).trim())
+      .map(line => line.slice(5).replace(/^ /, ''))
 
     if (dataLines.length === 0) {
       return null
@@ -279,7 +332,7 @@ export function ChatPanel({ conversationId, isFunctionalAgent = false, agentName
 
     try {
       return {
-        event: eventMatch?.[1]?.trim() || 'message',
+        event: eventLine?.slice(6).trim() || 'message',
         data: JSON.parse(dataLines.join('\n')) as StreamData
       }
     } catch {
@@ -288,7 +341,11 @@ export function ChatPanel({ conversationId, isFunctionalAgent = false, agentName
   }
 
   const handleSendMessage = async () => {
-    if (!input.trim() && uploadedFiles.length === 0) return
+    // Enter 快捷键不会受 Button 的 disabled 属性限制；此处必须作为唯一发送入口兜底。
+    if (isTyping || isInterrupting || (!input.trim() && uploadedFiles.length === 0)) return
+
+    const requestId = ++chatRequestRef.current
+    const isCurrentRequest = () => chatRequestRef.current === requestId
 
     // 添加调试信息
  
@@ -308,10 +365,10 @@ export function ChatPanel({ conversationId, isFunctionalAgent = false, agentName
     scrollToBottom() // 用户发送新消息时强制滚动到底部
     
     // 创建新的AbortController
-    abortControllerRef.current = new AbortController()
+    const requestController = new AbortController()
+    abortControllerRef.current = requestController
     
     // 重置所有状态
-    setCompletedTextMessages(new Set())
     resetMessageAccumulator()
     hasReceivedFirstResponse.current = false
     messageSequenceNumber.current = 0; // 重置消息序列计数器
@@ -337,13 +394,24 @@ export function ChatPanel({ conversationId, isFunctionalAgent = false, agentName
 
     try {
       // 发送消息到服务器并获取流式响应，包含文件URL
-      const response = await streamChat(userMessage, conversationId, fileUrls.length > 0 ? fileUrls : undefined)
+      const response = await streamChat(
+        userMessage,
+        conversationId,
+        fileUrls.length > 0 ? fileUrls : undefined,
+        requestController.signal,
+      )
+
+      if (!isCurrentRequest() || requestController.signal.aborted) {
+        return
+      }
 
       // 检查响应状态，如果不是成功状态，则关闭思考状态并返回
       if (!response.ok) {
         // 错误已在streamChat中处理并显示toast
-        setIsTyping(false)
-        setIsThinking(false) // 关闭思考状态，修复动画一直显示的问题
+        if (isCurrentRequest()) {
+          setIsTyping(false)
+          setIsThinking(false) // 关闭思考状态，修复动画一直显示的问题
+        }
         return // 直接返回，不继续处理
       }
 
@@ -366,24 +434,43 @@ export function ChatPanel({ conversationId, isFunctionalAgent = false, agentName
       let buffer = ""
 
       while (true) {
-        // 检查是否被中断
-        if (abortControllerRef.current?.signal.aborted) {
+        // 既检查自身取消状态，也检查是否已被会话切换或后续请求取代。
+        if (requestController.signal.aborted || !isCurrentRequest()) {
  
           break
         }
         
         const { done, value } = await reader.read()
-        if (done) break
+        if (done) {
+          buffer += decoder.decode()
+          if (buffer.trim() && isCurrentRequest()) {
+            const parsed = parseSSEBlock(buffer)
+            if (parsed?.data) {
+              if (parsed.event === 'interrupt') {
+                setIsTyping(false)
+                setIsThinking(false)
+                setCanInterrupt(false)
+              } else {
+                handleStreamDataMessage(parsed.data, baseMessageId)
+              }
+            }
+          }
+          break
+        }
 
         // 解码数据块并添加到缓冲区
         buffer += decoder.decode(value, { stream: true })
         
         // 处理缓冲区中的SSE数据
-        const lines = buffer.split("\n\n")
+        const lines = buffer.split(/\r?\n\r?\n/)
         // 保留最后一个可能不完整的行
         buffer = lines.pop() || ""
         
         for (const block of lines) {
+          if (!isCurrentRequest() || requestController.signal.aborted) {
+            break
+          }
+
           const parsed = parseSSEBlock(block)
           if (!parsed?.data) {
             continue
@@ -403,7 +490,7 @@ export function ChatPanel({ conversationId, isFunctionalAgent = false, agentName
  
       
       // 如果是中断导致的错误，不显示错误提示
-      if (error instanceof Error && error.name === 'AbortError') {
+      if (!isCurrentRequest() || (error instanceof Error && error.name === 'AbortError')) {
  
       } else {
         setIsThinking(false) // 错误发生时关闭思考状态
@@ -414,10 +501,12 @@ export function ChatPanel({ conversationId, isFunctionalAgent = false, agentName
         })
       }
     } finally {
-      setIsTyping(false)
-      setCanInterrupt(false) // 重置中断状态
-      setIsInterrupting(false)
-      if (abortControllerRef.current) {
+      if (isCurrentRequest()) {
+        setIsTyping(false)
+        setCanInterrupt(false) // 重置中断状态
+        setIsInterrupting(false)
+      }
+      if (abortControllerRef.current === requestController) {
         abortControllerRef.current = null
       }
     }
@@ -454,8 +543,8 @@ export function ChatPanel({ conversationId, isFunctionalAgent = false, agentName
       messageContentAccumulator.current.content += data.content;
       messageContentAccumulator.current.type = messageType;
       
-      // 更新UI显示
-      updateOrCreateMessageInUI(currentMessageId, messageContentAccumulator.current);
+      // 每帧最多刷新一次，避免流式分片触发过多 React 重渲染
+      scheduleAssistantMessageUpdate(currentMessageId, messageContentAccumulator.current);
     }
     
     // 消息结束信号处理
@@ -477,45 +566,6 @@ export function ChatPanel({ conversationId, isFunctionalAgent = false, agentName
     }
   }
   
-  // 更新或创建UI消息
-  const updateOrCreateMessageInUI = (messageId: string, messageData: {
-    content: string;
-    type: MessageType;
-  }) => {
-    // 使用函数式更新，在一次原子操作中检查并更新/创建消息
-    setMessages(prev => {
-      // 检查消息是否已存在
-      const messageIndex = prev.findIndex(msg => msg.id === messageId);
-      
-      if (messageIndex >= 0) {
-        // 消息已存在，只需更新内容
- 
-        const newMessages = [...prev];
-        newMessages[messageIndex] = {
-          ...newMessages[messageIndex],
-          content: messageData.content
-        };
-        return newMessages;
-      } else {
-        // 消息不存在，创建新消息
- 
-        return [
-          ...prev,
-          {
-            id: messageId,
-            role: "assistant",
-            content: messageData.content,
-            type: messageData.type,
-            createdAt: new Date().toISOString()
-          }
-        ];
-      }
-    });
-    
-    // 更新当前助手消息状态
-    setCurrentAssistantMessage({ id: messageId, hasContent: true });
-  }
-  
   // 完成消息处理
   const finalizeMessage = (messageId: string, messageData: {
     content: string;
@@ -529,42 +579,9 @@ export function ChatPanel({ conversationId, isFunctionalAgent = false, agentName
       return;
     }
     
-    // 确保UI已更新到最终状态，使用相同的原子操作模式
-    setMessages(prev => {
-      // 检查消息是否已存在
-      const messageIndex = prev.findIndex(msg => msg.id === messageId);
-      
-      if (messageIndex >= 0) {
-        // 消息已存在，更新内容
- 
-        const newMessages = [...prev];
-        newMessages[messageIndex] = {
-          ...newMessages[messageIndex],
-          content: messageData.content
-        };
-        return newMessages;
-      } else {
-        // 消息不存在，创建新消息
- 
-        return [
-          ...prev,
-          {
-            id: messageId,
-            role: "assistant",
-            content: messageData.content,
-            type: messageData.type,
-            createdAt: new Date().toISOString()
-          }
-        ];
-      }
-    });
+    // 确保最后一个尚未渲染的分片立即显示
+    flushPendingAssistantMessage()
     
-    // 标记消息为已完成
-    setCompletedTextMessages(prev => {
-      const newSet = new Set(prev);
-      newSet.add(messageId);
-      return newSet;
-    });
   }
 
   // 重置消息累积器

@@ -57,7 +57,6 @@ export function WidgetChatInterface({
   const [inputValue, setInputValue] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isThinking, setIsThinking] = useState(false);
-  const [streamingMessageId, setStreamingMessageId] = useState<string | null>(null);
   const [sessionId] = useState<string>(generateUUID()); // 生成并保持会话ID
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -74,7 +73,6 @@ export function WidgetChatInterface({
     onInterruptSuccess: () => {
       setIsLoading(false)
       setIsThinking(false)
-      setStreamingMessageId(null)
     },
     onInterruptError: (error) => {
  
@@ -89,12 +87,12 @@ export function WidgetChatInterface({
     payload: undefined as string | undefined
   });
   const messageSequenceNumber = useRef(0);
-  const [completedTextMessages, setCompletedTextMessages] = useState<Set<string>>(new Set());
   const [currentAssistantMessage, setCurrentAssistantMessage] = useState<{ id: string; hasContent: boolean } | null>(null);
   const [autoScroll, setAutoScroll] = useState(true);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const isUserScrolling = useRef(false);
   const scrollTimer = useRef<NodeJS.Timeout | null>(null);
+  const scrollFrameRef = useRef<number | null>(null);
 
   // 检测用户是否正在手动滚动
   useEffect(() => {
@@ -108,6 +106,9 @@ export function WidgetChatInterface({
       // 清除之前的定时器
       if (scrollTimer.current) {
         clearTimeout(scrollTimer.current);
+      }
+      if (scrollFrameRef.current !== null) {
+        cancelAnimationFrame(scrollFrameRef.current);
       }
       
       // 设置定时器，500ms后认为用户停止滚动
@@ -133,15 +134,21 @@ export function WidgetChatInterface({
       if (scrollTimer.current) {
         clearTimeout(scrollTimer.current);
       }
+      if (scrollFrameRef.current !== null) {
+        cancelAnimationFrame(scrollFrameRef.current);
+      }
     };
   }, []);
 
-  // 智能滚动到底部 - 只在用户不在滚动且开启自动滚动时滚动
+  // 智能滚动到底部：同一动画帧只执行一次，避免流式分片堆积滚动动画。
   useEffect(() => {
     if (autoScroll && !isUserScrolling.current && messagesEndRef.current) {
-      // 使用requestAnimationFrame确保DOM更新完成
-      requestAnimationFrame(() => {
-        messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+      if (scrollFrameRef.current !== null) {
+        cancelAnimationFrame(scrollFrameRef.current);
+      }
+      scrollFrameRef.current = requestAnimationFrame(() => {
+        scrollFrameRef.current = null;
+        messagesEndRef.current?.scrollIntoView({ behavior: isThinking ? "auto" : "smooth" });
       });
     }
   }, [messages, isThinking, autoScroll]);
@@ -164,11 +171,10 @@ export function WidgetChatInterface({
       type: MessageType.TEXT,
       payload: undefined
     };
-    setCompletedTextMessages(new Set());
     messageSequenceNumber.current = 0;
     setCurrentAssistantMessage(null);
     
-    if (welcomeMessage && messages.length === 0) {
+    if (welcomeMessage) {
       const welcomeMsg: Message = {
         id: 'welcome',
         role: 'ASSISTANT',
@@ -176,7 +182,7 @@ export function WidgetChatInterface({
         timestamp: Date.now(),
         type: MessageType.TEXT
       };
-      setMessages([welcomeMsg]);
+      setMessages((previousMessages) => previousMessages.length === 0 ? [welcomeMsg] : previousMessages);
     }
   }, [welcomeMessage]);
 
@@ -205,7 +211,6 @@ export function WidgetChatInterface({
     scrollToBottom(); // 用户发送新消息时强制滚动到底部
     
     // 重置所有状态
-    setCompletedTextMessages(new Set());
     resetMessageAccumulator();
     hasReceivedFirstResponse.current = false;
     messageSequenceNumber.current = 0;
@@ -373,9 +378,10 @@ export function WidgetChatInterface({
       }
     });
     
-    // 更新当前助手消息状态
-    setCurrentAssistantMessage({ id: messageId, hasContent: true });
-    setStreamingMessageId(messageId);
+    // 首个分片后即可隐藏思考提示；后续分片不重复写入相同状态。
+    setCurrentAssistantMessage((current) =>
+      current?.id === messageId && current.hasContent ? current : { id: messageId, hasContent: true }
+    );
   };
   
   // 完成消息处理
@@ -426,14 +432,6 @@ export function WidgetChatInterface({
       }
     });
     
-    // 标记消息为已完成
-    setCompletedTextMessages(prev => {
-      const newSet = new Set(prev);
-      newSet.add(messageId);
-      return newSet;
-    });
-    
-    setStreamingMessageId(null);
   };
 
   // 重置消息累积器
@@ -456,16 +454,25 @@ export function WidgetChatInterface({
   };
 
   // 处理错误消息
-  const handleErrorMessage = (data: WidgetChatResponse) => {
- 
-    // 这里可以添加 toast 通知，但先保持简单
+  const handleErrorMessage = (_data: WidgetChatResponse) => {
+    setMessages(prev => [
+      ...prev,
+      {
+        id: `error-${Date.now()}`,
+        role: "ASSISTANT",
+        content: "抱歉，服务器处理请求时出现了错误，请稍后重试。",
+        timestamp: Date.now(),
+        type: MessageType.TEXT,
+        isStreaming: false
+      }
+    ]);
+    setIsThinking(false);
   };
 
   // 处理流处理错误
   const handleStreamError = (error: Error) => {
     setIsThinking(false);
     setIsLoading(false);
-    setStreamingMessageId(null);
     resetInterrupt(); // 重置中断状态
     
     // 添加错误消息到聊天

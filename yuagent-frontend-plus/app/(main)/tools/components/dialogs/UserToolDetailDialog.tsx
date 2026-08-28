@@ -1,14 +1,15 @@
 "use client"
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { UserTool, ToolFunction } from "../../utils/types";
+import { getSchemaPropertyDescription } from "../../utils/schema";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Command, Wrench, Clock, Download, ChevronDown, History, AlertTriangle } from "lucide-react";
 import { Separator } from '@/components/ui/separator';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { getMarketToolVersionDetail, getMarketToolVersions, installToolWithToast, getToolDetail } from "@/lib/tool-service";
+import { getMarketToolVersionDetail, getMarketToolVersions, getToolDetail, installTool } from "@/lib/tool-service";
 import { DeleteToolDialog } from "./DeleteToolDialog";
 import { ToolHistoryVersionsDialog } from "./ToolHistoryVersionsDialog";
 import { formatDate } from '@/lib/utils';
@@ -40,9 +41,113 @@ export function UserToolDetailDialog({
   const [isHistoryDialogOpen, setIsHistoryDialogOpen] = useState(false);
   const [isVersionPopoverOpen, setIsVersionPopoverOpen] = useState(false);
   const [installingVersion, setInstallingVersion] = useState<string | null>(null);
+  const latestDetailRequestRef = useRef(0);
+  const latestVersionsRequestRef = useRef(0);
+
+  // 获取用户自己创建的工具详情
+  const fetchUserToolDetail = useCallback(async (currentTool: UserTool, isOpen: boolean) => {
+    if (!currentTool || !isOpen) return;
+    const requestId = ++latestDetailRequestRef.current;
+    try {
+      setToolDetailLoading(true);
+      const toolId = currentTool.toolId || currentTool.id;
+      const response = await getToolDetail(toolId);
+      if (requestId !== latestDetailRequestRef.current) return;
+      if (response.code === 200) {
+        setToolDetailData(response.data);
+      } else {
+        setToolDetailData(null);
+      }
+    } catch (error) {
+      if (requestId === latestDetailRequestRef.current) {
+        setToolDetailData(null);
+      }
+    } finally {
+      if (requestId === latestDetailRequestRef.current) {
+        setToolDetailLoading(false);
+      }
+    }
+  }, [])
+
+  // 获取工具详情
+  const fetchToolDetail = useCallback(async (currentTool: UserTool, isOpen: boolean) => {
+    if (!currentTool || !isOpen) return;
+    const requestId = ++latestDetailRequestRef.current;
+
+    try {
+      setToolDetailLoading(true);
+
+      // 优先使用toolId，其次使用id获取详情
+      const toolId = currentTool.toolId || currentTool.id;
+      const version = currentTool.current_version || currentTool.currentVersion || "0.0.1";
+
+      // 调用API获取工具详情
+      const response = await getMarketToolVersionDetail(toolId, version);
+
+      if (requestId !== latestDetailRequestRef.current) return;
+
+      if (response.code === 200) {
+        setToolDetailData(response.data);
+      } else {
+        // 失败时使用传入的tool对象
+        setToolDetailData(null);
+      }
+    } catch (error) {
+      if (requestId === latestDetailRequestRef.current) {
+        setToolDetailData(null);
+      }
+    } finally {
+      if (requestId === latestDetailRequestRef.current) {
+        setToolDetailLoading(false);
+      }
+    }
+  }, [])
+
+  // 获取工具版本列表
+  const fetchToolVersions = useCallback(async (currentTool: UserTool) => {
+    if (!currentTool) return;
+    const requestId = ++latestVersionsRequestRef.current;
+
+    try {
+      setVersionsLoading(true);
+
+      // 优先使用toolId，其次使用id
+      const toolId = currentTool.toolId || currentTool.id;
+
+      // 调用API获取版本列表
+      const response = await getMarketToolVersions(toolId);
+
+      if (requestId !== latestVersionsRequestRef.current) return;
+
+      if (response.code === 200 && response.data.length > 0) {
+        // 按照版本号排序
+        const sortedVersions = [...response.data].sort((a, b) => {
+          return compareVersions(b.version, a.version);
+        });
+        setVersions(sortedVersions);
+      } else {
+        setVersions([]);
+      }
+    } catch (error) {
+      if (requestId === latestVersionsRequestRef.current) {
+        setVersions([]);
+      }
+    } finally {
+      if (requestId === latestVersionsRequestRef.current) {
+        setVersionsLoading(false);
+      }
+    }
+  }, [])
 
   useEffect(() => {
-    if (!tool || !open) return;
+    if (!tool || !open) {
+      setToolDetailData(null);
+      setVersions([]);
+      return;
+    }
+
+    setToolDetailData(null);
+    setVersions([]);
     if (tool.isOwner) {
       // 用户自己创建的工具，直接获取工具详情
       fetchUserToolDetail(tool, open);
@@ -51,86 +156,12 @@ export function UserToolDetailDialog({
       fetchToolDetail(tool, open);
       fetchToolVersions(tool);
     }
-  }, [tool, open]);
 
-  // 获取用户自己创建的工具详情
-  async function fetchUserToolDetail(currentTool: UserTool, isOpen: boolean) {
-    if (!currentTool || !isOpen) return;
-    try {
-      setToolDetailLoading(true);
-      const toolId = currentTool.toolId || currentTool.id;
-      const response = await getToolDetail(toolId);
-      if (response.code === 200) {
-        setToolDetailData(response.data);
-      } else {
-        setToolDetailData(null);
-      }
-    } catch (error) {
-      setToolDetailData(null);
-    } finally {
-      setToolDetailLoading(false);
-    }
-  }
-
-  // 获取工具详情
-  async function fetchToolDetail(currentTool: UserTool, isOpen: boolean) {
-    if (!currentTool || !isOpen) return;
-    
-    try {
-      setToolDetailLoading(true);
-      
-      // 优先使用toolId，其次使用id获取详情
-      const toolId = currentTool.toolId || currentTool.id;
-      const version = currentTool.current_version || currentTool.currentVersion || "0.0.1";
-      
-      // 调用API获取工具详情
-      const response = await getMarketToolVersionDetail(toolId, version);
-      
-      if (response.code === 200) {
-        setToolDetailData(response.data);
-      } else {
- 
-        // 失败时使用传入的tool对象
-        setToolDetailData(null);
-      }
-    } catch (error) {
- 
-      setToolDetailData(null);
-    } finally {
-      setToolDetailLoading(false);
-    }
-  }
-
-  // 获取工具版本列表
-  async function fetchToolVersions(currentTool: UserTool) {
-    if (!currentTool) return;
-    
-    try {
-      setVersionsLoading(true);
-      
-      // 优先使用toolId，其次使用id
-      const toolId = currentTool.toolId || currentTool.id;
-      
-      // 调用API获取版本列表
-      const response = await getMarketToolVersions(toolId);
-      
-      if (response.code === 200 && response.data.length > 0) {
-        // 按照版本号排序
-        const sortedVersions = [...response.data].sort((a, b) => {
-          return compareVersions(b.version, a.version);
-        });
-        setVersions(sortedVersions);
-      } else {
- 
-        setVersions([]);
-      }
-    } catch (error) {
- 
-      setVersions([]);
-    } finally {
-      setVersionsLoading(false);
-    }
-  }
+    return () => {
+      latestDetailRequestRef.current += 1;
+      latestVersionsRequestRef.current += 1;
+    };
+  }, [fetchToolDetail, fetchToolVersions, fetchUserToolDetail, open, tool]);
 
   // 比较版本号的函数
   function compareVersions(v1: string, v2: string) {
@@ -174,17 +205,23 @@ export function UserToolDetailDialog({
   }
 
   // 合并工具数据，优先使用API获取的详情数据
-  const mergedTool = toolDetailData ? {
-    ...tool,
-    ...toolDetailData,
-    // 处理不同字段格式
-    name: toolDetailData.name || tool?.name,
-    description: toolDetailData.description || tool?.description,
-    labels: toolDetailData.labels || tool?.labels || [],
-    toolList: toolDetailData.toolList || toolDetailData.tool_list || tool?.toolList || tool?.tool_list || [],
-    // 保留原有数据
-    isOwner: tool?.isOwner
-  } : tool;
+  const mergedTool = useMemo(() => {
+    if (!toolDetailData) {
+      return tool;
+    }
+
+    return {
+      ...tool,
+      ...toolDetailData,
+      // 处理不同字段格式
+      name: toolDetailData.name || tool?.name,
+      description: toolDetailData.description || tool?.description,
+      labels: toolDetailData.labels || tool?.labels || [],
+      toolList: toolDetailData.toolList || toolDetailData.tool_list || tool?.toolList || tool?.tool_list || [],
+      // 保留原有数据
+      isOwner: tool?.isOwner
+    };
+  }, [tool, toolDetailData]);
 
   // 提取工具函数列表，优先使用toolList，其次使用tool_list
   const toolFunctions = useMemo(() => {
@@ -221,8 +258,7 @@ export function UserToolDetailDialog({
       // 优先使用toolId，其次使用id
       const toolId = tool.toolId || tool.id;
       
-      // 调用安装API
-      const response = await installToolWithToast(toolId, version);
+      const response = await installTool(toolId, version);
       
       if (response.code === 200) {
         toast({
@@ -238,6 +274,12 @@ export function UserToolDetailDialog({
             current_version: version
           });
         }
+      } else {
+        toast({
+          title: "版本切换失败",
+          description: response.message || "切换版本时出错",
+          variant: "destructive",
+        });
       }
     } catch (error) {
  
@@ -427,9 +469,7 @@ export function UserToolDetailDialog({
                             .filter(([key]) => !['additionalProperties', 'definitions', 'required'].includes(key))
                             .map(([key, value]) => {
                               const cleanKey = key.replace(/^\{/, '');
-                                const description = typeof value === 'object' && value && 'description' in value 
-                                  ? (value as any).description 
-                                  : null;
+                                const description = getSchemaPropertyDescription(value);
                               return (
                                   <div key={key} className="flex items-center gap-2">
                                     <code className="text-xs text-primary bg-primary/5 px-1.5 py-0.5 rounded">{cleanKey}</code>

@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -27,6 +27,17 @@ interface PublishRagDialogProps {
   onSuccess?: () => void
 }
 
+function incrementVersion(version: string): string {
+  const parts = version.split('.')
+  if (parts.length >= 3) {
+    const major = parseInt(parts[0])
+    const minor = parseInt(parts[1])
+    const patch = parseInt(parts[2]) + 1
+    return `${major}.${minor}.${patch}`
+  }
+  return "1.0.0"
+}
+
 export function PublishRagDialog({ 
   open, 
   onOpenChange, 
@@ -40,20 +51,18 @@ export function PublishRagDialog({
     labels: [] as string[]
   })
   const [currentLabel, setCurrentLabel] = useState("")
+  const latestVersionRequestRef = useRef(0)
 
-  // 版本号自动递增逻辑
-  useEffect(() => {
-    if (open && dataset) {
-      loadAndSetVersion()
-    }
-  }, [open, dataset])
+  const loadAndSetVersion = useCallback(async () => {
+    if (!dataset?.id) return
 
-  const loadAndSetVersion = async () => {
-    if (!dataset) return
-    
+    const requestId = ++latestVersionRequestRef.current
     try {
       const response = await getLatestVersionNumber(dataset.id)
-      
+      if (requestId !== latestVersionRequestRef.current) {
+        return
+      }
+
       if (response.code === 200 && response.data) {
         // 有最新版本号，自动递增
         const currentVersion = response.data
@@ -63,22 +72,25 @@ export function PublishRagDialog({
         // 没有版本号，使用默认的1.0.0
         setFormData(prev => ({ ...prev, version: "1.0.0" }))
       }
-    } catch (error) {
-      // 出错时使用默认版本号
-      setFormData(prev => ({ ...prev, version: "1.0.0" }))
+    } catch {
+      if (requestId === latestVersionRequestRef.current) {
+        // 出错时使用默认版本号
+        setFormData(prev => ({ ...prev, version: "1.0.0" }))
+      }
     }
-  }
+  }, [dataset?.id])
 
-  const incrementVersion = (version: string): string => {
-    const parts = version.split('.')
-    if (parts.length >= 3) {
-      const major = parseInt(parts[0])
-      const minor = parseInt(parts[1])
-      const patch = parseInt(parts[2]) + 1
-      return `${major}.${minor}.${patch}`
+  // 版本号自动递增逻辑
+  useEffect(() => {
+    if (!open) {
+      return
     }
-    return "1.0.0"
-  }
+
+    void loadAndSetVersion()
+    return () => {
+      latestVersionRequestRef.current += 1
+    }
+  }, [loadAndSetVersion, open])
 
   // 重置表单
   const resetForm = () => {
@@ -167,7 +179,7 @@ export function PublishRagDialog({
         <DialogHeader>
           <DialogTitle>发布到市场</DialogTitle>
           <DialogDescription>
-            将知识库"{dataset.name}"发布到市场供其他用户使用
+            将知识库&quot;{dataset.name}&quot;发布到市场供其他用户使用
           </DialogDescription>
         </DialogHeader>
         

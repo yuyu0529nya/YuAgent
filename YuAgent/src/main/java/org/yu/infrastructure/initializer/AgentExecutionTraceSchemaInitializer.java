@@ -10,18 +10,15 @@ import org.springframework.core.annotation.Order;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
-/**
- * Ensures trace detail schema stays compatible when an existing database volume
- * missed later SQL updates.
- */
+/** Ensures trace detail schema stays compatible when an existing database volume missed later SQL updates. */
 @Component
 @Order(26)
 public class AgentExecutionTraceSchemaInitializer implements ApplicationRunner {
 
     private static final Logger log = LoggerFactory.getLogger(AgentExecutionTraceSchemaInitializer.class);
 
-    private static final List<String> SCHEMA_PATCHES = List.of(
-            "ALTER TABLE IF EXISTS public.agent_execution_details ADD COLUMN IF NOT EXISTS fallback_reason TEXT");
+    private static final List<String> SCHEMA_PATCHES = List
+            .of("ALTER TABLE IF EXISTS public.agent_execution_details ADD COLUMN IF NOT EXISTS fallback_reason TEXT");
 
     private final JdbcTemplate jdbcTemplate;
 

@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { Clock, Play, Pause, MoreHorizontal, Edit, Trash2, Calendar } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader } from "@/components/ui/card"
@@ -34,7 +34,7 @@ import {
   ScheduleTaskStatus,
   RepeatType
 } from "@/lib/scheduled-task-service"
-import { getAgentSessionsWithToast, type SessionDTO } from "@/lib/agent-session-service"
+import { getAgentSessionsWithToast } from "@/lib/agent-session-service"
 import { formatDisplayDateTime } from "@/lib/date-utils"
 
 interface ScheduledTaskListProps {
@@ -48,12 +48,15 @@ export function ScheduledTaskList({ onTaskUpdate, onEditTask, agentId }: Schedul
   const [loading, setLoading] = useState(true)
   const [deleteTaskId, setDeleteTaskId] = useState<string | null>(null)
   const [operatingTaskId, setOperatingTaskId] = useState<string | null>(null)
-  const [sessions, setSessions] = useState<SessionDTO[]>([])
   const [sessionsMap, setSessionsMap] = useState<Map<string, string>>(new Map())
+  const latestTasksRequestRef = useRef(0)
+  const latestSessionsRequestRef = useRef(0)
 
   // 获取任务列表
-  const fetchTasks = async () => {
+  const fetchTasks = useCallback(async () => {
+    const requestId = ++latestTasksRequestRef.current
     if (!agentId) {
+      setTasks([])
       setLoading(false)
       return
     }
@@ -62,25 +65,30 @@ export function ScheduledTaskList({ onTaskUpdate, onEditTask, agentId }: Schedul
       setLoading(true)
       const response = await getScheduledTasksByAgentIdWithToast(agentId)
       
-      if (response.code === 200 && response.data) {
+      if (requestId === latestTasksRequestRef.current && response.code === 200 && response.data) {
         setTasks(response.data)
       }
-    } catch (error) {
+    } catch {
  
     } finally {
-      setLoading(false)
+      if (requestId === latestTasksRequestRef.current) {
+        setLoading(false)
+      }
     }
-  }
+  }, [agentId])
 
   // 获取会话列表
-  const fetchSessions = async () => {
-    if (!agentId) return
+  const fetchSessions = useCallback(async () => {
+    const requestId = ++latestSessionsRequestRef.current
+    if (!agentId) {
+      setSessionsMap(new Map())
+      return
+    }
     
     try {
       const response = await getAgentSessionsWithToast(agentId)
       
-      if (response.code === 200 && response.data) {
-        setSessions(response.data)
+      if (requestId === latestSessionsRequestRef.current && response.code === 200 && response.data) {
         // 创建会话ID到名称的映射
         const map = new Map<string, string>()
         response.data.forEach(session => {
@@ -91,15 +99,12 @@ export function ScheduledTaskList({ onTaskUpdate, onEditTask, agentId }: Schedul
     } catch (error) {
  
     }
-  }
-
-  useEffect(() => {
-    fetchTasks()
   }, [agentId])
 
   useEffect(() => {
-    fetchSessions()
-  }, [agentId])
+    void fetchTasks()
+    void fetchSessions()
+  }, [fetchSessions, fetchTasks])
 
   // 切换任务状态
   const handleToggleStatus = async (task: ScheduledTaskDTO) => {

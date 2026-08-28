@@ -9,6 +9,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
+import java.util.HashMap;
 import java.util.Map;
 import org.apache.commons.lang3.StringUtils;
 import org.dromara.x.file.storage.core.FileInfo;
@@ -102,7 +103,8 @@ public class FileDetailDomainService {
             UploadPretreatment pretreatment = fileStorageService.of(tempFile.toFile(), filename, contentType,
                     (long) bytes.length);
             upload = pretreatment
-                    .setMetadata(Map.of("dataset", fileDetailEntity.getDataSetId(), "userid", fileDetailEntity.getUserId()))
+                    .setMetadata(
+                            Map.of("dataset", fileDetailEntity.getDataSetId(), "userid", fileDetailEntity.getUserId()))
                     .upload();
         } catch (IOException e) {
             throw new BusinessException("杩滅▼鏂囦欢涓存椂淇濆瓨澶辫触: " + e.getMessage(), e);
@@ -258,8 +260,8 @@ public class FileDetailDomainService {
         if (fileIds == null || fileIds.isEmpty()) {
             return List.of();
         }
-        return fileDetailRepository.selectList(Wrappers.<FileDetailEntity>lambdaQuery()
-                .in(FileDetailEntity::getId, fileIds));
+        return fileDetailRepository
+                .selectList(Wrappers.<FileDetailEntity>lambdaQuery().in(FileDetailEntity::getId, fileIds));
     }
 
     /** 统计数据集下的文件数量
@@ -270,6 +272,45 @@ public class FileDetailDomainService {
         LambdaQueryWrapper<FileDetailEntity> wrapper = Wrappers.<FileDetailEntity>lambdaQuery()
                 .eq(FileDetailEntity::getDataSetId, datasetId).eq(FileDetailEntity::getUserId, userId);
         return fileDetailRepository.selectCount(wrapper);
+    }
+
+    /** 批量统计多个数据集下的文件数量，避免列表展示时逐条执行 count 查询。
+     *
+     * @param datasetIds 数据集ID列表
+     * @param userId 用户ID
+     * @return 以数据集ID为键的文件数量 */
+    public Map<String, Long> countFilesByDatasets(List<String> datasetIds, String userId) {
+        return countFilesByDatasetIds(datasetIds, userId);
+    }
+
+    /** 批量统计多个数据集下的文件数量，不校验文件所属用户。
+     *
+     * @param datasetIds 数据集ID列表
+     * @return 以数据集ID为键的文件数量 */
+    public Map<String, Long> countFilesByDatasetsWithoutUserCheck(List<String> datasetIds) {
+        return countFilesByDatasetIds(datasetIds, null);
+    }
+
+    private Map<String, Long> countFilesByDatasetIds(List<String> datasetIds, String userId) {
+        if (datasetIds == null || datasetIds.isEmpty()) {
+            return Map.of();
+        }
+
+        var wrapper = Wrappers.<FileDetailEntity>query().select("data_set_id", "COUNT(*) AS file_count")
+                .in("data_set_id", datasetIds);
+        if (userId != null) {
+            wrapper.eq("user_id", userId);
+        }
+        List<Map<String, Object>> rows = fileDetailRepository.selectMaps(wrapper.groupBy("data_set_id"));
+        Map<String, Long> counts = new HashMap<>();
+        for (Map<String, Object> row : rows) {
+            Object datasetId = row.get("data_set_id");
+            Object fileCount = row.get("file_count");
+            if (datasetId != null && fileCount instanceof Number number) {
+                counts.put(datasetId.toString(), number.longValue());
+            }
+        }
+        return counts;
     }
 
     /** 统计数据集下的文件数量（不进行用户权限检查） 用于已安装RAG的文件统计，因为已安装表示用户有权限访问
@@ -287,8 +328,7 @@ public class FileDetailDomainService {
         LambdaQueryWrapper<FileDetailEntity> wrapper = Wrappers.<FileDetailEntity>lambdaQuery()
                 .in(FileDetailEntity::getProcessingStatus, FileProcessingStatusEnum.UPLOADED.getCode(),
                         FileProcessingStatusEnum.OCR_PROCESSING.getCode())
-                .le(FileDetailEntity::getUpdatedAt, threshold)
-                .orderByAsc(FileDetailEntity::getCreatedAt);
+                .le(FileDetailEntity::getUpdatedAt, threshold).orderByAsc(FileDetailEntity::getCreatedAt);
 
         if (limit > 0) {
             wrapper.last("LIMIT " + limit);
@@ -417,6 +457,17 @@ public class FileDetailDomainService {
     public FileDetailEntity getFileById(String fileId, String userId) {
         LambdaQueryWrapper<FileDetailEntity> wrapper = Wrappers.<FileDetailEntity>lambdaQuery()
                 .eq(FileDetailEntity::getId, fileId).eq(FileDetailEntity::getUserId, userId);
+        FileDetailEntity fileEntity = fileDetailRepository.selectOne(wrapper);
+        if (fileEntity == null) {
+            throw new BusinessException("文件不存在或无权限访问");
+        }
+        return fileEntity;
+    }
+
+    /** 根据文件 URL 获取当前用户的文件详情。 */
+    public FileDetailEntity getFileByUrl(String url, String userId) {
+        LambdaQueryWrapper<FileDetailEntity> wrapper = Wrappers.<FileDetailEntity>lambdaQuery()
+                .eq(FileDetailEntity::getUrl, url).eq(FileDetailEntity::getUserId, userId);
         FileDetailEntity fileEntity = fileDetailRepository.selectOne(wrapper);
         if (fileEntity == null) {
             throw new BusinessException("文件不存在或无权限访问");

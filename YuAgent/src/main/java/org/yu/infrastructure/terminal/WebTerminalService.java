@@ -78,8 +78,6 @@ public class WebTerminalService {
                         logger.warn("更新数据库容器状态失败，但容器已成功启动: {}", containerId, updateException);
                     }
 
-                    // 等待容器完全启动
-                    Thread.sleep(2000);
                 } catch (Exception e) {
                     logger.error("启动容器失败: {}", dockerContainerId, e);
                     sendMessage(webSocketSession, "错误: 启动容器失败 - " + e.getMessage() + "\r\n");

@@ -21,6 +21,7 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false)
   const [authConfig, setAuthConfig] = useState<AuthConfig | null>(null)
   const [configLoading, setConfigLoading] = useState(true)
+  const [configError, setConfigError] = useState<string | null>(null)
 
   useEffect(() => {
     async function fetchAuthConfig() {
@@ -28,7 +29,11 @@ export default function LoginPage() {
         const response = await getAuthConfigWithToast()
         if (response.code === 200) {
           setAuthConfig(response.data)
+        } else {
+          setConfigError(response.message || "无法加载登录配置")
         }
+      } catch (error) {
+        setConfigError(error instanceof Error ? error.message : "无法加载登录配置")
       } finally {
         setConfigLoading(false)
       }
@@ -87,6 +92,17 @@ export default function LoginPage() {
 
   const availableLoginMethods = authConfig?.loginMethods || {}
   const hasNormalLogin = availableLoginMethods[AUTH_FEATURE_KEY.NORMAL_LOGIN]?.enabled
+
+  if (configError) {
+    return (
+      <div className="container flex h-screen max-w-[400px] flex-col justify-center py-10">
+        <div className="space-y-4 text-center">
+          <h1 className="text-2xl font-semibold tracking-tight">登录服务暂不可用</h1>
+          <p className="text-sm text-muted-foreground">{configError}</p>
+        </div>
+      </div>
+    )
+  }
 
   if (!hasNormalLogin) {
     return (

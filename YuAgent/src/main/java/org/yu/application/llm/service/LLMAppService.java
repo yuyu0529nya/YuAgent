@@ -1,6 +1,7 @@
 package org.yu.application.llm.service;
 
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
 import org.yu.application.llm.assembler.ModelAssembler;
 import org.yu.application.llm.assembler.ProviderAssembler;
 import org.yu.application.llm.dto.ModelDTO;
@@ -203,6 +204,9 @@ public class LLMAppService {
 
     public ModelDTO getDefaultModel(String userId) {
         String userDefaultModelId = userSettingsDomainService.getUserDefaultModelId(userId);
+        if (!StringUtils.hasText(userDefaultModelId)) {
+            return null;
+        }
         ModelEntity modelEntity = llmDomainService.findModelById(userDefaultModelId);
         return ModelAssembler.toDTO(modelEntity);
     }

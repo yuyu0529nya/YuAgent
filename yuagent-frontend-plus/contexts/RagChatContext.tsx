@@ -17,6 +17,7 @@ type RagChatAction =
 const initialState: ChatUIState = {
   layout: 'single',
   selectedFile: null,
+  selectedSegment: null,
   showFileDetail: false,
   fileDetailData: null,
   fileDetailLoading: false,

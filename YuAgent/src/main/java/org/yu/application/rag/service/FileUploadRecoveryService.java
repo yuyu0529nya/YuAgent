@@ -65,8 +65,8 @@ public class FileUploadRecoveryService {
 
     private boolean isRecoverable(FileDetailEntity fileEntity) {
         boolean uploaded = FileProcessingStatusEnum.UPLOADED.getCode().equals(fileEntity.getProcessingStatus());
-        boolean zombieOcrProcessing =
-                FileProcessingStatusEnum.OCR_PROCESSING.getCode().equals(fileEntity.getProcessingStatus());
+        boolean zombieOcrProcessing = FileProcessingStatusEnum.OCR_PROCESSING.getCode()
+                .equals(fileEntity.getProcessingStatus());
         if (!uploaded && !zombieOcrProcessing) {
             return false;
         }

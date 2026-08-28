@@ -14,6 +14,10 @@ import java.util.List;
  * @author shilong.zang */
 public class RagSearchRequest {
 
+    private static final int DEFAULT_MAX_RESULTS = 15;
+    private static final double DEFAULT_MIN_SCORE = 0.7;
+    private static final int DEFAULT_CANDIDATE_MULTIPLIER = 2;
+
     /** 数据集ID列表 */
     @NotEmpty(message = "数据集ID列表不能为空")
     @Size(max = 20, message = "数据集ID列表不能超过20个")
@@ -27,12 +31,12 @@ public class RagSearchRequest {
     /** 最大返回结果数量，默认15 */
     @Min(value = 1, message = "最大返回结果数量不能小于1")
     @Max(value = 100, message = "最大返回结果数量不能超过100")
-    private Integer maxResults = 15;
+    private Integer maxResults = DEFAULT_MAX_RESULTS;
 
     /** 最小相似度阈值，默认0.7 */
     @DecimalMin(value = "0.0", message = "相似度阈值不能小于0")
     @DecimalMax(value = "1.0", message = "相似度阈值不能大于1")
-    private Double minScore = 0.7;
+    private Double minScore = DEFAULT_MIN_SCORE;
 
     /** 是否启用重排序，默认true */
     private Boolean enableRerank = true;
@@ -40,7 +44,7 @@ public class RagSearchRequest {
     /** 搜索候选结果倍数，默认2倍用于重排序 */
     @Min(value = 1, message = "候选结果倍数不能小于1")
     @Max(value = 5, message = "候选结果倍数不能超过5")
-    private Integer candidateMultiplier = 2;
+    private Integer candidateMultiplier = DEFAULT_CANDIDATE_MULTIPLIER;
 
     /** 搜索超时时间（秒），默认30秒 */
     @Min(value = 1, message = "搜索超时时间不能小于1秒")
@@ -53,12 +57,13 @@ public class RagSearchRequest {
     /** 获取智能调整后的相似度阈值 根据查询长度自动调整：短查询提高阈值，长查询降低阈值
      * @return 调整后的相似度阈值 */
     public Double getAdjustedMinScore() {
+        double configuredMinScore = minScore != null ? minScore : DEFAULT_MIN_SCORE;
         if (question == null || question.trim().isEmpty()) {
-            return minScore;
+            return configuredMinScore;
         }
 
         int queryLength = question.trim().length();
-        double adjustedScore = minScore;
+        double adjustedScore = configuredMinScore;
 
         // 短查询（<10字符）提高阈值
         if (queryLength < 10) {
@@ -75,18 +80,23 @@ public class RagSearchRequest {
     /** 获取智能调整后的候选结果倍数 根据重排序和结果数量自动调整
      * @return 调整后的候选结果倍数 */
     public Integer getAdjustedCandidateMultiplier() {
-        if (!enableRerank) {
+        if (!Boolean.TRUE.equals(enableRerank)) {
             return 1; // 不重排序时使用1倍
         }
 
+        int configuredMaxResults = maxResults != null ? maxResults : DEFAULT_MAX_RESULTS;
+        int configuredCandidateMultiplier = candidateMultiplier != null
+                ? candidateMultiplier
+                : DEFAULT_CANDIDATE_MULTIPLIER;
+
         // 根据请求的结果数量动态调整
-        if (maxResults <= 5) {
-            return Math.max(candidateMultiplier, 3); // 少量结果时增加候选数
-        } else if (maxResults >= 20) {
-            return Math.min(candidateMultiplier, 2); // 大量结果时减少候选数
+        if (configuredMaxResults <= 5) {
+            return Math.max(configuredCandidateMultiplier, 3); // 少量结果时增加候选数
+        } else if (configuredMaxResults >= 20) {
+            return Math.min(configuredCandidateMultiplier, 2); // 大量结果时减少候选数
         }
 
-        return candidateMultiplier;
+        return configuredCandidateMultiplier;
     }
 
     public List<String> getDatasetIds() {

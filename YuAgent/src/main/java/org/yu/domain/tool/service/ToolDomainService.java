@@ -172,19 +172,17 @@ public class ToolDomainService {
         LambdaQueryWrapper<ToolEntity> wrapper = Wrappers.<ToolEntity>lambdaQuery()
                 .eq(ToolEntity::getStatus, ToolStatus.FAILED)
                 .in(ToolEntity::getFailedStepStatus, ToolStatus.DEPLOYING, ToolStatus.FETCHING_TOOLS)
-                .and(q -> q.like(ToolEntity::getRejectReason, "Connection refused")
-                        .or().like(ToolEntity::getRejectReason, "localhost:")
-                        .or().like(ToolEntity::getRejectReason, "调用部署API失败")
-                        .or().like(ToolEntity::getRejectReason, "调用MCP Gateway API失败"))
-                .orderByDesc(ToolEntity::getUpdatedAt)
-                .last("LIMIT " + Math.max(limit, 1));
+                .and(q -> q.like(ToolEntity::getRejectReason, "Connection refused").or()
+                        .like(ToolEntity::getRejectReason, "localhost:").or()
+                        .like(ToolEntity::getRejectReason, "调用部署API失败").or()
+                        .like(ToolEntity::getRejectReason, "调用MCP Gateway API失败"))
+                .orderByDesc(ToolEntity::getUpdatedAt).last("LIMIT " + Math.max(limit, 1));
         return toolRepository.selectList(wrapper);
     }
 
     public List<ToolEntity> listAutoApprovableManualReviewTools(int limit) {
         LambdaQueryWrapper<ToolEntity> wrapper = Wrappers.<ToolEntity>lambdaQuery()
-                .eq(ToolEntity::getStatus, ToolStatus.MANUAL_REVIEW)
-                .orderByAsc(ToolEntity::getUpdatedAt)
+                .eq(ToolEntity::getStatus, ToolStatus.MANUAL_REVIEW).orderByAsc(ToolEntity::getUpdatedAt)
                 .last("LIMIT " + Math.max(limit, 1));
         return toolRepository.selectList(wrapper);
     }
@@ -429,7 +427,7 @@ public class ToolDomainService {
         LambdaQueryWrapper<UserToolEntity> wrapper = Wrappers.<UserToolEntity>lambdaQuery()
                 .eq(UserToolEntity::getMcpServerName, serverName).eq(UserToolEntity::getUserId, userId);
 
-        return userToolRepository.selectList(wrapper).get(0);
+        return userToolRepository.selectOne(wrapper.last("LIMIT 1"));
     }
 
     /** 根据MCP服务器名称获取用户已安装的工具对应的原始工具

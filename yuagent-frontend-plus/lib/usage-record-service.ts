@@ -24,7 +24,7 @@ export class UsageRecordService {
   // 按条件查询当前用户使用记录
   static async queryUsageRecords(params?: QueryUsageRecordRequest): Promise<ApiResponse<PageResponse<UsageRecord>>> {
     try {
-      return await httpClient.get(API_ENDPOINTS.USAGE_RECORDS, { params });
+      return await httpClient.get<ApiResponse<PageResponse<UsageRecord>>>(API_ENDPOINTS.USAGE_RECORDS, { params });
     } catch (error) {
       return {
         code: 500,
@@ -38,7 +38,7 @@ export class UsageRecordService {
   // 根据ID获取使用记录
   static async getUsageRecordById(id: string): Promise<ApiResponse<UsageRecord>> {
     try {
-      return await httpClient.get(API_ENDPOINTS.USAGE_RECORD_BY_ID(id));
+      return await httpClient.get<ApiResponse<UsageRecord>>(API_ENDPOINTS.USAGE_RECORD_BY_ID(id));
     } catch (error) {
       return {
         code: 500,
@@ -52,7 +52,7 @@ export class UsageRecordService {
   // 获取当前用户的总消费金额（后端返回BigDecimal，转为number）
   static async getCurrentUserTotalCost(): Promise<ApiResponse<number>> {
     try {
-      const response = await httpClient.get(API_ENDPOINTS.TOTAL_COST);
+      const response = await httpClient.get<ApiResponse<number>>(API_ENDPOINTS.TOTAL_COST);
       // 如果后端返回BigDecimal格式，转换为number
       if (response.code === 200 && response.data) {
         response.data = Number(response.data);
@@ -75,7 +75,7 @@ export class UsageRecordService {
     productId?: string;
   }): Promise<ApiResponse<UsageStats>> {
     try {
-      return await httpClient.get(API_ENDPOINTS.USAGE_STATS, { params });
+      return await httpClient.get<ApiResponse<UsageStats>>(API_ENDPOINTS.USAGE_STATS, { params });
     } catch (error) {
       return {
         code: 500,
@@ -94,7 +94,7 @@ export class UsageRecordService {
     granularity?: 'day' | 'week' | 'month';
   }): Promise<ApiResponse<UsageChartData[]>> {
     try {
-      return await httpClient.get(API_ENDPOINTS.USAGE_CHART, { params });
+      return await httpClient.get<ApiResponse<UsageChartData[]>>(API_ENDPOINTS.USAGE_CHART, { params });
     } catch (error) {
       return {
         code: 500,

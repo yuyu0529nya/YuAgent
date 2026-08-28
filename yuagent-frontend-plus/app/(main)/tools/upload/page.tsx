@@ -1,7 +1,8 @@
 "use client"
 
 import { useState, useRef, KeyboardEvent } from "react"
-import { ArrowLeft, Loader2, X, Bold, Italic, Strikethrough, Heading, List, Quote, Table, Code, Image, Eye, Upload } from "lucide-react"
+import dynamic from "next/dynamic"
+import { ArrowLeft, Loader2, X, Bold, Italic, Strikethrough, Heading, List, Quote, Table, Code, Image as ImageIcon, Eye, Upload } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent } from "@/components/ui/card"
@@ -22,9 +23,14 @@ import { z } from "zod"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { useForm } from "react-hook-form"
 import Link from "next/link"
+import { useRouter } from "next/navigation"
 import { uploadToolWithToast } from "@/lib/tool-service"
-import { MessageMarkdown } from '@/components/ui/message-markdown'
 import FileUpload from "@/components/ui/file-upload"
+
+const MessageMarkdown = dynamic(
+  () => import('@/components/ui/message-markdown').then(module => module.MessageMarkdown),
+  { ssr: false },
+)
 
 const mcpServerCommandTemp = '例如：{"mcpServers": {"file-system": {"args": ["-y", "@modelcontextprotocol/server-filesystem", "/etc/proxy"], "command": "npx"}}}';
 
@@ -42,6 +48,7 @@ const formSchema = z.object({
 type FormValues = z.infer<typeof formSchema>;
 
 export default function UploadToolPage() {
+  const router = useRouter()
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [previewMode, setPreviewMode] = useState(false);
   const [newLabel, setNewLabel] = useState("");
@@ -145,7 +152,7 @@ export default function UploadToolPage() {
       if (response.code === 200) {
         form.reset();
         // 移除setIconPreview(null);
-        window.location.href = "/tools";
+        router.replace("/tools")
       }
     } catch (error) {
  
@@ -586,7 +593,7 @@ export default function UploadToolPage() {
                             type="button"
                             className="h-9 w-9 p-0"
                           >
-                            <Image className="h-4 w-4" />
+                            <ImageIcon className="h-4 w-4" />
                             <span className="sr-only">图片</span>
                           </Button>
                         </div>

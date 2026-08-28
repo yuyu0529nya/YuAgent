@@ -10,9 +10,7 @@ import org.yu.domain.tool.service.ToolDomainService;
 
 import java.util.List;
 
-/**
- * Retries transient MCP deployment failures after review container/network recovery.
- */
+/** Retries transient MCP deployment failures after review container/network recovery. */
 @Service
 public class ToolDeploymentRecoveryService {
 

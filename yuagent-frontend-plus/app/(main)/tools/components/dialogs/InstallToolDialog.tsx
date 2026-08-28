@@ -1,4 +1,4 @@
-import { MarketTool } from "../../utils/types";
+import type { Tool } from "@/types/tool";
 import {
   Dialog,
   DialogContent,
@@ -14,7 +14,7 @@ import { ToolLabels } from "../shared/ToolLabels";
 interface InstallToolDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  tool: MarketTool | null;
+  tool: Tool | null;
   isInstalling?: boolean;
   onConfirm: () => Promise<boolean>;
   onSuccess?: () => void;
@@ -77,7 +77,7 @@ export function InstallToolDialog({
             <ul className="list-disc pl-5 space-y-1 text-muted-foreground">
               <li>在聊天中直接调用此工具的功能</li>
               <li>通过@{tool.name}使用工具</li>
-              <li>随时从"我的工具"中管理或卸载</li>
+              <li>随时从&quot;我的工具&quot;中管理或卸载</li>
             </ul>
           </div>
         </div>

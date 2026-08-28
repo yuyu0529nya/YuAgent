@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "@/hooks/use-toast";
 import {
   deleteToolWithToast,
@@ -8,50 +8,72 @@ import {
   getUserToolsWithToast,
   uninstallToolWithToast,
 } from "@/lib/tool-service";
+import type { PortalToolDTO, ToolVersionDTO } from "@/types/tool";
 import { ToolStatus, UserTool } from "../utils/types";
 
-function normalizeOwnedTool(tool: any): UserTool {
-  return {
-    ...tool,
-    id: tool.id,
-    toolId: tool.toolId || tool.id,
-    name: tool.name,
-    icon: tool.icon,
-    subtitle: tool.subtitle || "",
-    description: tool.description || "",
-    labels: tool.labels || [],
-    status: tool.status,
-    createdAt: tool.createdAt,
-    updatedAt: tool.updatedAt,
-    author: tool.author || tool.userName || "",
-    tool_list: tool.toolList || tool.tool_list || [],
-    toolList: tool.toolList || tool.tool_list || [],
-    usageCount: tool.usageCount || 0,
-    isOwner: true,
-  } as UserTool;
+function serializeInstallCommand(command: PortalToolDTO["installCommand"]): string | undefined {
+  if (typeof command === "string") {
+    return command
+  }
+  return command && typeof command === "object" ? JSON.stringify(command) : undefined
 }
 
-function normalizeInstalledTool(tool: any): UserTool {
+function normalizeToolStatus(status: string | null | undefined): ToolStatus {
+  return Object.values(ToolStatus).includes(status as ToolStatus)
+    ? status as ToolStatus
+    : ToolStatus.PENDING;
+}
+
+function normalizeOwnedTool(tool: PortalToolDTO): UserTool {
   return {
-    ...tool,
     id: tool.id,
-    toolId: tool.toolId || tool.id,
+    toolId: tool.id,
     name: tool.name,
     icon: tool.icon,
     subtitle: tool.subtitle || "",
     description: tool.description || "",
     labels: tool.labels || [],
-    author: tool.userName || tool.author || "",
-    tool_list: tool.toolList || tool.tool_list || [],
-    toolList: tool.toolList || tool.tool_list || [],
-    usageCount: tool.usageCount || 0,
+    status: normalizeToolStatus(tool.status),
+    createdAt: tool.createdAt || "",
+    updatedAt: tool.updatedAt || "",
+    author: tool.userName || "",
+    userId: tool.userId || undefined,
+    userName: tool.userName || undefined,
+    toolType: tool.toolType || undefined,
+    uploadType: tool.uploadType || undefined,
+    uploadUrl: tool.uploadUrl || undefined,
+    installCommand: serializeInstallCommand(tool.installCommand),
+    tool_list: tool.toolList || [],
+    toolList: tool.toolList || [],
+    usageCount: 0,
+    isOwner: true,
+  };
+}
+
+function normalizeInstalledTool(tool: ToolVersionDTO): UserTool {
+  return {
+    id: tool.id,
+    toolId: tool.toolId,
+    name: tool.name,
+    icon: tool.icon,
+    subtitle: tool.subtitle || "",
+    description: tool.description || "",
+    labels: tool.labels || [],
+    author: tool.userName || "",
+    userId: tool.userId || undefined,
+    userName: tool.userName || undefined,
+    uploadType: tool.uploadType || undefined,
+    uploadUrl: tool.uploadUrl || undefined,
+    tool_list: tool.toolList || [],
+    toolList: tool.toolList || [],
+    usageCount: 0,
     current_version: tool.version || "0.0.1",
     isOwner: false,
-    status: tool.status || "active",
-    deleted: tool.delete || tool.deleted || false,
-    createdAt: tool.createdAt,
-    updatedAt: tool.updatedAt,
-  } as UserTool;
+    status: ToolStatus.APPROVED,
+    deleted: tool.delete || false,
+    createdAt: tool.createdAt || "",
+    updatedAt: tool.updatedAt || "",
+  };
 }
 
 export function useUserTools() {
@@ -60,10 +82,86 @@ export function useUserTools() {
   const [ownedTools, setOwnedTools] = useState<UserTool[]>([]);
   const [installedTools, setInstalledTools] = useState<UserTool[]>([]);
   const [isDeletingTool, setIsDeletingTool] = useState(false);
+  const latestRequestIdRef = useRef(0);
+  const pollingRequestInFlightRef = useRef(false);
+
+  const fetchUserTools = useCallback(async (silent = false) => {
+    if (silent && pollingRequestInFlightRef.current) {
+      return;
+    }
+
+    const requestId = ++latestRequestIdRef.current;
+    if (silent) {
+      pollingRequestInFlightRef.current = true;
+    } else {
+      setUserToolsLoading(true);
+    }
+
+    try {
+      const [createdToolsResponse, installedToolsResponse] = await Promise.all([
+        silent ? getUserTools() : getUserToolsWithToast(),
+        silent
+          ? getInstalledTools({ page: 1, pageSize: 50 })
+          : getInstalledToolsWithToast({ page: 1, pageSize: 50 }),
+      ]);
+
+      if (requestId !== latestRequestIdRef.current) {
+        return;
+      }
+
+      if (createdToolsResponse.code !== 200 || installedToolsResponse.code !== 200) {
+        if (!silent) {
+          const failedResponse = createdToolsResponse.code !== 200
+            ? createdToolsResponse
+            : installedToolsResponse;
+          toast({
+            title: "获取工具列表失败",
+            description: failedResponse.message,
+            variant: "destructive",
+          });
+          setOwnedTools([]);
+          setInstalledTools([]);
+          setUserTools([]);
+        }
+        return;
+      }
+
+      const nextOwnedTools = (Array.isArray(createdToolsResponse.data) ? createdToolsResponse.data : [])
+        .map(normalizeOwnedTool);
+      const nextInstalledTools = (Array.isArray(installedToolsResponse.data?.records)
+        ? installedToolsResponse.data.records
+        : [])
+        .map(normalizeInstalledTool);
+
+      setOwnedTools(nextOwnedTools);
+      setInstalledTools(nextInstalledTools);
+      setUserTools([...nextOwnedTools, ...nextInstalledTools]);
+    } catch {
+      if (requestId !== latestRequestIdRef.current || silent) {
+        return;
+      }
+
+      toast({
+        title: "获取工具列表失败",
+        description: "请稍后重试",
+        variant: "destructive",
+      });
+      setOwnedTools([]);
+      setInstalledTools([]);
+      setUserTools([]);
+    } finally {
+      if (silent) {
+        pollingRequestInFlightRef.current = false;
+      }
+      if (!silent && requestId === latestRequestIdRef.current) {
+        setUserToolsLoading(false);
+      }
+    }
+  }, []);
 
   useEffect(() => {
     fetchUserTools();
-  }, []);
+  }, [fetchUserTools]);
 
   useEffect(() => {
     const hasPendingOwnedTool = ownedTools.some(
@@ -74,72 +172,25 @@ export function useUserTools() {
       return;
     }
 
-    const timer = window.setInterval(() => {
-      fetchUserTools(true);
-    }, 3000);
+    let cancelled = false;
+    let timer: number | undefined;
 
-    return () => window.clearInterval(timer);
-  }, [ownedTools]);
-
-  async function fetchUserTools(silent = false) {
-    try {
-      setUserToolsLoading(true);
-
-      const createdToolsResponse = silent ? await getUserTools() : await getUserToolsWithToast();
-      const installedToolsResponse = silent
-        ? await getInstalledTools({ page: 1, pageSize: 50 })
-        : await getInstalledToolsWithToast({ page: 1, pageSize: 50 });
-
-      let nextOwnedTools: UserTool[] = [];
-      if (createdToolsResponse.code === 200) {
-        const toolsList = Array.isArray(createdToolsResponse.data) ? createdToolsResponse.data : [];
-        nextOwnedTools = toolsList.map(normalizeOwnedTool);
-        setOwnedTools(nextOwnedTools);
-      } else {
-        if (!silent) {
-          toast({
-            title: "获取我的工具失败",
-            description: createdToolsResponse.message,
-            variant: "destructive",
-          });
-        }
-        setOwnedTools([]);
+    const poll = async () => {
+      await fetchUserTools(true);
+      if (!cancelled) {
+        timer = window.setTimeout(poll, 3000);
       }
+    };
 
-      let nextInstalledTools: UserTool[] = [];
-      if (installedToolsResponse.code === 200) {
-        const toolsList = Array.isArray(installedToolsResponse.data?.records)
-          ? installedToolsResponse.data.records
-          : [];
-        nextInstalledTools = toolsList.map(normalizeInstalledTool);
-        setInstalledTools(nextInstalledTools);
-      } else {
-        if (!silent) {
-          toast({
-            title: "获取已安装工具失败",
-            description: installedToolsResponse.message,
-            variant: "destructive",
-          });
-        }
-        setInstalledTools([]);
-      }
+    timer = window.setTimeout(poll, 3000);
 
-      setUserTools([...nextOwnedTools, ...nextInstalledTools]);
-    } catch (error) {
-      if (!silent) {
-        toast({
-          title: "获取工具列表失败",
-          description: "请稍后重试",
-          variant: "destructive",
-        });
+    return () => {
+      cancelled = true;
+      if (timer) {
+        window.clearTimeout(timer);
       }
-      setOwnedTools([]);
-      setInstalledTools([]);
-      setUserTools([]);
-    } finally {
-      setUserToolsLoading(false);
-    }
-  }
+    };
+  }, [fetchUserTools, ownedTools]);
 
   const handleDeleteTool = async (toolToDelete: UserTool) => {
     if (!toolToDelete) {
@@ -163,11 +214,6 @@ export function useUserTools() {
       } else {
         setInstalledTools((prev) => prev.filter((tool) => tool.id !== toolToDelete.id));
       }
-
-      toast({
-        title: toolToDelete.isOwner ? "删除成功" : "卸载成功",
-        description: `工具 "${toolToDelete.name}" 已${toolToDelete.isOwner ? "删除" : "卸载"}`,
-      });
 
       return true;
     } catch (error) {

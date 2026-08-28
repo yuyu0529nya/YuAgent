@@ -37,14 +37,6 @@ export function MessageItem({
   expandedThinking = true,
   onToggleThinking 
 }: MessageItemProps) {
-  console.log('[MessageItem] Rendering message:', {
-    id: message.id,
-    role: message.role,
-    content: message.content,
-    isStreaming: message.isStreaming,
-    isError: isErrorMessage(message.content)
-  });
-  
   return (
     <div
       className={`flex gap-3 ${

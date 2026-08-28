@@ -1,13 +1,26 @@
+ARG UV_IMAGE=ghcr.io/astral-sh/uv:latest
+FROM ${UV_IMAGE} AS uv
+
 FROM golang:1.23-alpine AS builder
 
-WORKDIR /app
-COPY go.mod go.sum ./
-RUN go env -w GO111MODULE=on && \
-    go env -w GOPROXY=https://goproxy.cn,direct && \
-    go mod download
+WORKDIR /src
 
-COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -o proxy-server
+ARG GOPROXY=https://goproxy.cn,direct
+ENV GOPROXY=$GOPROXY
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY cmd ./cmd
+COPY internal ./internal
+
+RUN CGO_ENABLED=0 go build -o /out/proxy-server ./cmd/mcp-gateway
+
+# Test-only target: bridge integration tests launch a temporary MCP server via
+# npx, while the production image intentionally contains no Go toolchain.
+FROM builder AS test
+COPY test ./test
+RUN apk add --no-cache nodejs npm
 
 FROM node:20-alpine
 
@@ -17,10 +30,10 @@ RUN apk add --update --no-cache git
 ENV PYTHONUNBUFFERED=1
 RUN apk add --update --no-cache python3 py3-pip
 
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
+COPY --from=uv /uv /uvx /usr/local/bin/
 
-# Copy the proxy server binary from builder
-COPY --from=builder /app/proxy-server /usr/local/bin/
+# Copy the proxy server binary built from this repository
+COPY --from=builder /out/proxy-server /usr/local/bin/proxy-server
 
 # Add execute permissions and set root user
 USER root

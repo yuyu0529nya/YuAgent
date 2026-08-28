@@ -191,7 +191,7 @@ function TieredPricingConfigEditor({
 
       {tiers.length === 0 ? (
         <div className="text-center py-8 text-muted-foreground">
-          点击"添加阶梯"创建价格分层
+          点击&quot;添加阶梯&quot;创建价格分层
         </div>
       ) : (
         <div className="space-y-3">

@@ -19,9 +19,9 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Badge } from "@/components/ui/badge"
-import { toast } from "@/hooks/use-toast"
 import { Skeleton } from "@/components/ui/skeleton"
 import { ApiKeyResponse } from "@/types/api-key"
+import { useCopy } from "@/hooks/use-copy"
 
 interface ApiKeyListProps {
   apiKeys: ApiKeyResponse[]
@@ -41,14 +41,11 @@ export function ApiKeyList({
   operatingKeyId
 }: ApiKeyListProps) {
   const [visibleKeys, setVisibleKeys] = useState<Set<string>>(new Set())
+  const { copyToClipboard } = useCopy()
 
   // 复制API密钥到剪贴板
-  const handleCopyKey = (apiKey: string) => {
-    navigator.clipboard.writeText(apiKey)
-    toast({
-      title: "已复制到剪贴板",
-      description: "API 密钥已复制到剪贴板",
-    })
+  const handleCopyKey = async (apiKey: string) => {
+    await copyToClipboard(apiKey, "API 密钥已复制到剪贴板")
   }
 
   // 切换密钥可见性

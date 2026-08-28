@@ -6,9 +6,9 @@ import org.yu.application.agent.service.AgentSessionAppService;
 import org.yu.application.conversation.dto.AgentPreviewRequest;
 import org.yu.application.conversation.dto.ChatRequest;
 import org.yu.application.conversation.service.ConversationAppService;
-import org.yu.application.conversation.service.ChatSessionManager;
 import org.yu.application.conversation.dto.MessageDTO;
 import org.yu.application.conversation.dto.SessionDTO;
+import org.yu.application.agent.dto.AgentDTO;
 import org.yu.infrastructure.auth.UserContext;
 import org.yu.interfaces.api.common.Result;
 import org.slf4j.Logger;
@@ -16,25 +16,26 @@ import org.slf4j.LoggerFactory;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.List;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-
 /** Agent会话管理 */
 @RestController
 @RequestMapping("/agents/sessions")
 public class PortalAgentSessionController {
 
     private final Logger logger = LoggerFactory.getLogger(PortalAgentSessionController.class);
-    private final ExecutorService executorService = Executors.newCachedThreadPool();
     private final AgentSessionAppService agentSessionAppService;
     private final ConversationAppService conversationAppService;
-    private final ChatSessionManager chatSessionManager;
 
     public PortalAgentSessionController(AgentSessionAppService agentSessionAppService,
-            ConversationAppService conversationAppService, ChatSessionManager chatSessionManager) {
+            ConversationAppService conversationAppService) {
         this.agentSessionAppService = agentSessionAppService;
         this.conversationAppService = conversationAppService;
-        this.chatSessionManager = chatSessionManager;
+    }
+
+    /** 获取当前用户的全部会话。 */
+    @GetMapping
+    public Result<List<SessionDTO>> getUserSessionList() {
+        String userId = UserContext.getCurrentUserId();
+        return Result.success(agentSessionAppService.getUserSessionList(userId));
     }
 
     /** 获取会话中的消息列表 */
@@ -42,6 +43,13 @@ public class PortalAgentSessionController {
     public Result<List<MessageDTO>> getConversationMessages(@PathVariable String sessionId) {
         String userId = UserContext.getCurrentUserId();
         return Result.success(conversationAppService.getConversationMessages(sessionId, userId));
+    }
+
+    /** 根据会话获取其关联助理。 */
+    @GetMapping("/{sessionId}/agent")
+    public Result<AgentDTO> getSessionAgent(@PathVariable String sessionId) {
+        String userId = UserContext.getCurrentUserId();
+        return Result.success(agentSessionAppService.getAgentBySessionId(sessionId, userId));
     }
 
     /** 获取助理会话列表 */
@@ -100,7 +108,7 @@ public class PortalAgentSessionController {
 
         logger.info("用户 {} 请求中断会话: {}", userId, sessionId);
 
-        boolean success = chatSessionManager.interruptSession(sessionId);
+        boolean success = agentSessionAppService.interruptSession(sessionId, userId);
 
         if (success) {
             logger.info("成功中断会话: sessionId={}, userId={}", sessionId, userId);

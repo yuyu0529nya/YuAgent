@@ -1,53 +1,53 @@
 "use client";
 
 import React, { useCallback, useEffect, useState } from "react";
+import dynamic from "next/dynamic";
 import { useParams } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AlertCircle, MessageCircle } from "lucide-react";
-import { WidgetChatInterface } from "./components/WidgetChatInterface";
-import { getWidgetInfoWithToast } from "@/lib/widget-service";
+import { getWidgetInfo } from "@/lib/widget-service";
+import type { PublicWidgetInfo } from "@/types/widget";
 
-interface WidgetInfo {
-  name: string;
-  description?: string;
-  agentName: string;
-  agentAvatar?: string;
-  welcomeMessage?: string;
-  enabled: boolean;
-  dailyLimit: number;
-  dailyCalls: number;
-  systemPrompt?: string;
-  toolIds?: string[];
-  knowledgeBaseIds?: string[];
-}
+const WidgetChatInterface = dynamic(
+  () => import("./components/WidgetChatInterface").then(module => module.WidgetChatInterface),
+  {
+    ssr: false,
+    loading: () => <Skeleton className="h-[500px] w-full" aria-label="正在加载聊天界面" />,
+  },
+);
 
 export default function WidgetChatPage() {
   const params = useParams();
   const publicId = params.publicId as string;
 
-  const [widgetInfo, setWidgetInfo] = useState<WidgetInfo | null>(null);
+  const [widgetInfo, setWidgetInfo] = useState<PublicWidgetInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const fetchWidgetInfo = useCallback(
-    async (showLoading = true) => {
+    async (showLoading = true, signal?: AbortSignal) => {
       try {
         if (showLoading) {
           setLoading(true);
         }
         setError(null);
-        const response = await getWidgetInfoWithToast(publicId);
+        const response = await getWidgetInfo(publicId, { signal });
+        if (signal?.aborted || response.code === 499) {
+          return;
+        }
         if (response.code === 200) {
           setWidgetInfo(response.data);
         } else {
           setError(response.message || "获取小组件信息失败");
         }
       } catch (err) {
-        setError(err instanceof Error ? err.message : "获取小组件信息失败");
+        if (!signal?.aborted) {
+          setError(err instanceof Error ? err.message : "获取小组件信息失败");
+        }
       } finally {
-        if (showLoading) {
+        if (showLoading && !signal?.aborted) {
           setLoading(false);
         }
       }
@@ -57,7 +57,9 @@ export default function WidgetChatPage() {
 
   useEffect(() => {
     if (publicId) {
-      fetchWidgetInfo(true);
+      const controller = new AbortController();
+      void fetchWidgetInfo(true, controller.signal);
+      return () => controller.abort();
     }
   }, [publicId, fetchWidgetInfo]);
 
@@ -183,6 +185,7 @@ export default function WidgetChatPage() {
 
             <CardContent>
               <WidgetChatInterface
+                  key={publicId}
                   publicId={publicId}
                   agentName={widgetInfo.agentName}
                   agentAvatar={widgetInfo.agentAvatar}

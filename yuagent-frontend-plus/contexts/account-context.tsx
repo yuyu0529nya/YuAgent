@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from "react";
+import { createContext, useContext, useState, useEffect, useCallback, useRef, type ReactNode } from "react";
 import { Account } from "@/types/account";
 import { AccountService } from "@/lib/account-service";
 
@@ -26,42 +26,50 @@ export function AccountProvider({ children }: { children: ReactNode }) {
   const [account, setAccount] = useState<Account | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const requestVersionRef = useRef(0);
 
   // 刷新账户数据
   const refreshAccount = useCallback(async () => {
- 
+    const requestVersion = ++requestVersionRef.current;
     setLoading(true);
     setError(null);
     
     try {
       const response = await AccountService.getCurrentUserAccount();
       
+      if (requestVersion !== requestVersionRef.current) {
+        return;
+      }
+
       if (response.code === 200) {
- 
         setAccount(response.data);
       } else {
- 
         setError(response.message);
       }
     } catch (error) {
+      if (requestVersion !== requestVersionRef.current) {
+        return;
+      }
       const errorMessage = error instanceof Error ? error.message : '网络错误，请稍后重试';
- 
       setError(errorMessage);
     } finally {
-      setLoading(false);
+      if (requestVersion === requestVersionRef.current) {
+        setLoading(false);
+      }
     }
   }, []);
 
   // 直接更新账户数据（用于支付成功后的即时更新）
   const updateAccountData = useCallback((accountData: Account) => {
- 
+    requestVersionRef.current += 1;
     setAccount(accountData);
     setError(null);
+    setLoading(false);
   }, []);
 
   // 清除账户数据
   const clearAccount = useCallback(() => {
- 
+    requestVersionRef.current += 1;
     setAccount(null);
     setError(null);
     setLoading(false);
@@ -86,14 +94,11 @@ export function AccountProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     // 如果正在SSO登录过程中，延迟初始化避免竞态条件
     if (isSsoLogin()) {
-      console.log('[AccountContext] 检测到SSO登录，延迟初始化账户数据');
-      
       // 延迟2秒后再初始化，给SSO登录过程足够时间
       const timer = setTimeout(() => {
         if (typeof window !== "undefined") {
           const token = localStorage.getItem("auth_token");
           if (token) {
-            console.log('[AccountContext] SSO登录完成，开始获取账户数据');
             refreshAccount();
           }
         }
@@ -105,6 +110,10 @@ export function AccountProvider({ children }: { children: ReactNode }) {
       refreshAccount();
     }
   }, [refreshAccount, isSsoLogin]);
+
+  useEffect(() => () => {
+    requestVersionRef.current += 1;
+  }, []);
 
   const value: AccountContextType = {
     account,

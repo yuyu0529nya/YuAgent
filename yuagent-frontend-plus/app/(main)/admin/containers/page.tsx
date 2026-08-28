@@ -682,7 +682,7 @@ export default function ContainersPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>确认删除容器</AlertDialogTitle>
             <AlertDialogDescription>
-              您确定要删除容器 "{deleteDialog.container?.name}" 吗？此操作不可撤销。
+              您确定要删除容器 &quot;{deleteDialog.container?.name}&quot; 吗？此操作不可撤销。
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

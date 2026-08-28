@@ -19,6 +19,7 @@ import org.yu.application.conversation.service.handler.context.ChatContext;
 import org.yu.application.conversation.service.message.Agent;
 import org.yu.application.conversation.service.message.builtin.BuiltInToolRegistry;
 import org.yu.application.conversation.service.ChatSessionManager;
+import org.yu.application.conversation.service.SessionTitleGenerationService;
 import org.yu.domain.agent.model.AgentEntity;
 import org.yu.domain.conversation.constant.MessageType;
 import org.yu.domain.conversation.constant.Role;
@@ -33,6 +34,7 @@ import org.yu.domain.llm.service.HighAvailabilityDomainService;
 import org.yu.domain.llm.service.LLMDomainService;
 import org.yu.domain.user.service.UserSettingsDomainService;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.core.task.TaskRejectedException;
 import org.yu.domain.memory.service.MemoryDomainService;
 import org.yu.domain.memory.service.MemoryExtractorService;
 import org.springframework.scheduling.annotation.Async;
@@ -42,7 +44,6 @@ import org.yu.domain.user.service.AccountDomainService;
 import org.yu.infrastructure.exception.BusinessException;
 import org.yu.infrastructure.llm.LLMServiceFactory;
 import org.yu.infrastructure.transport.MessageTransport;
-import org.yu.infrastructure.transport.SseEmitterUtils;
 import org.yu.application.billing.service.BillingService;
 import org.yu.application.billing.dto.RuleContext;
 import org.yu.infrastructure.exception.InsufficientBalanceException;
@@ -63,6 +64,7 @@ import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
 public abstract class AbstractMessageHandler {
@@ -75,18 +77,12 @@ public abstract class AbstractMessageHandler {
     private static final int CHAT_MEMORY_MAX_MESSAGES = 40;
     private static final int MAX_TOOL_EXECUTIONS_PER_CHAT = 8;
     private static final int MAX_IDENTICAL_TOOL_TIMEOUTS_PER_CHAT = 3;
-    private static final String TOOL_USAGE_GUARD_PROMPT =
-            "\n[??????]\n"
-                    + "1. ??????????????????????????????\n"
-                    + "2. ??????????????????????????????????????\n"
-                    + "3. ????????????????????????????????????????\n"
-                    + "4. ??????????????????????????/???????????????????????????????????\n"
-                    + "5. ???????????????????????????????????????????????????????????";
-    private static final List<String> TOOL_TIMEOUT_MARKERS = List.of(
-            "there was a timeout executing the tool",
-            "timeout executing the tool",
-            "sockettimeoutexception",
-            "sse channel failure");
+    private static final String TOOL_USAGE_GUARD_PROMPT = "\n[??????]\n" + "1. ??????????????????????????????\n"
+            + "2. ??????????????????????????????????????\n" + "3. ????????????????????????????????????????\n"
+            + "4. ??????????????????????????/???????????????????????????????????\n"
+            + "5. ???????????????????????????????????????????????????????????";
+    private static final List<String> TOOL_TIMEOUT_MARKERS = List.of("there was a timeout executing the tool",
+            "timeout executing the tool", "sockettimeoutexception", "sse channel failure");
 
     protected final LLMServiceFactory llmServiceFactory;
     protected final MessageDomainService messageDomainService;
@@ -102,6 +98,8 @@ public abstract class AbstractMessageHandler {
     protected MemoryDomainService memoryDomainService;
     @Autowired
     protected MemoryExtractorService memoryExtractorService;
+    @Autowired
+    protected SessionTitleGenerationService sessionTitleGenerationService;
     // 无需事件或单独服务，直接调用异步方法
     // 记忆注入常量（默认开启）
     private static final String MEMORY_SECTION_TITLE = "[记忆要点]";
@@ -130,38 +128,60 @@ public abstract class AbstractMessageHandler {
      * @return 连接对象
      * @param <T> 连接类型 */
     public <T> T chat(ChatContext chatContext, MessageTransport<T> transport) {
+        return chat(chatContext, transport, null);
+    }
+
+    /** 处理对话，并在连接创建后、任何流式任务启动前执行初始化回调。 这让调用方能在首个 token 到达前注册取消、超时等连接生命周期管理。 */
+    public <T> T chat(ChatContext chatContext, MessageTransport<T> transport, Consumer<T> onConnectionCreated) {
         // 1. 创建连接
         T connection = transport.createConnection(CONNECTION_TIMEOUT);
+        if (onConnectionCreated != null) {
+            onConnectionCreated.accept(connection);
+        }
+        ToolProvider toolProvider = null;
 
-        // 2. 调用对话开始钩子
-        onChatStart(chatContext);
+        try {
+            // 2. 调用对话开始钩子
+            onChatStart(chatContext);
 
-        // 3. 检查用户余额是否足够
-        checkBalanceBeforeChat(chatContext.getUserId(), transport, connection);
+            // 3. 检查用户余额是否足够
+            if (!checkBalanceBeforeChat(chatContext.getUserId(), transport, connection)) {
+                return connection;
+            }
 
-        // 4. 创建消息实体
-        MessageEntity llmMessageEntity = createLlmMessage(chatContext);
-        MessageEntity userMessageEntity = createUserMessage(chatContext);
+            // 4. 创建消息实体
+            MessageEntity llmMessageEntity = createLlmMessage(chatContext);
+            MessageEntity userMessageEntity = createUserMessage(chatContext);
 
-        // 5. 调用用户消息处理完成钩子
-        onUserMessageProcessed(chatContext, userMessageEntity);
+            // 5. 调用用户消息处理完成钩子
+            onUserMessageProcessed(chatContext, userMessageEntity);
 
-        // 6. 初始化聊天内存
-        MessageWindowChatMemory memory = initMemory();
+            // 6. 初始化聊天内存
+            MessageWindowChatMemory memory = initMemory();
 
-        // 7. 构建历史消息
-        buildHistoryMessage(chatContext, memory);
+            // 7. 构建历史消息
+            buildHistoryMessage(chatContext, memory);
 
-        // 8. 根据子类决定是否需要工具
-        ToolProvider toolProvider = provideTools(chatContext);
+            // 8. 根据子类决定是否需要工具
+            toolProvider = provideTools(chatContext);
 
-        // 9. 根据是否流式选择不同的处理方式
-        if (chatContext.isStreaming()) {
-            processStreamingChat(chatContext, connection, transport, userMessageEntity, llmMessageEntity, memory,
-                    toolProvider);
-        } else {
-            processSyncChat(chatContext, connection, transport, userMessageEntity, llmMessageEntity, memory,
-                    toolProvider);
+            // 9. 根据是否流式选择不同的处理方式
+            if (chatContext.isStreaming()) {
+                processStreamingChat(chatContext, connection, transport, userMessageEntity, llmMessageEntity, memory,
+                        toolProvider);
+            } else {
+                processSyncChat(chatContext, connection, transport, userMessageEntity, llmMessageEntity, memory,
+                        toolProvider);
+            }
+        } catch (Exception e) {
+            closeToolProvider(toolProvider);
+            String errorMessage = StringUtils.defaultIfBlank(e.getMessage(), "对话初始化失败，请稍后重试");
+            String userId = chatContext != null ? chatContext.getUserId() : null;
+            String sessionId = chatContext != null ? chatContext.getSessionId() : null;
+            logger.error("对话启动失败 - 用户: {}, 会话: {}", userId, sessionId, e);
+            transport.sendEndMessage(connection, AgentChatResponse.buildEndMessage(errorMessage, MessageType.TEXT));
+            onChatError(chatContext, ExecutionPhase.MODEL_CALL, e);
+            onChatCompleted(chatContext, false, errorMessage);
         }
 
         return connection;
@@ -255,7 +275,7 @@ public abstract class AbstractMessageHandler {
         Agent agent = buildStreamingAgent(streamingClient, memory, toolProvider, chatContext.getAgent());
 
         // 使用现有的流式处理逻辑
-        processChat(agent, connection, transport, chatContext, userEntity, llmEntity);
+        processChat(agent, connection, transport, chatContext, userEntity, llmEntity, toolProvider);
     }
 
     /** 同步聊天处理 */
@@ -322,6 +342,8 @@ public abstract class AbstractMessageHandler {
             // 调用错误处理钩子
             onChatError(chatContext, ExecutionPhase.MODEL_CALL, e);
             onChatCompleted(chatContext, false, e.getMessage());
+        } finally {
+            closeToolProvider(toolProvider);
         }
     }
 
@@ -345,7 +367,7 @@ public abstract class AbstractMessageHandler {
 
     /** 子类实现具体的聊天处理逻辑 */
     protected <T> void processChat(Agent agent, T connection, MessageTransport<T> transport, ChatContext chatContext,
-            MessageEntity userEntity, MessageEntity llmEntity) {
+            MessageEntity userEntity, MessageEntity llmEntity, ToolProvider toolProvider) {
 
         // 保存用户消息和摘要
         this.saveMessageAndUpdateContext(chatContext, userEntity);
@@ -362,6 +384,7 @@ public abstract class AbstractMessageHandler {
 
         tokenStream.onError(throwable -> {
             if (shouldStopStreaming(chatContext, streamStopped)) {
+                closeToolProvider(toolProvider);
                 return;
             }
             // 直接发送错误消息，transport内部处理连接异常
@@ -377,11 +400,13 @@ public abstract class AbstractMessageHandler {
             // 调用错误处理钩子
             onChatError(chatContext, ExecutionPhase.MODEL_CALL, throwable);
             onChatCompleted(chatContext, false, throwable.getMessage());
+            closeToolProvider(toolProvider);
         });
 
         // 部分响应处理
         tokenStream.onPartialResponse(reply -> {
             if (shouldStopStreaming(chatContext, streamStopped)) {
+                closeToolProvider(toolProvider);
                 return;
             }
             messageBuilder.get().append(reply);
@@ -397,6 +422,7 @@ public abstract class AbstractMessageHandler {
         // 完整响应处理
         tokenStream.onCompleteResponse(chatResponse -> {
             if (shouldStopStreaming(chatContext, streamStopped)) {
+                closeToolProvider(toolProvider);
                 return;
             }
 
@@ -429,6 +455,7 @@ public abstract class AbstractMessageHandler {
             onChatCompleted(chatContext, true, null);
 
             smartRenameSession(chatContext);
+            closeToolProvider(toolProvider);
         });
 
         // 错误处理
@@ -439,15 +466,17 @@ public abstract class AbstractMessageHandler {
         // 工具执行处理
         tokenStream.onToolExecuted(toolExecution -> {
             if (shouldStopStreaming(chatContext, streamStopped)) {
+                closeToolProvider(toolProvider);
                 return;
             }
 
             int currentToolExecutionCount = toolExecutionCount.incrementAndGet();
             if (currentToolExecutionCount > MAX_TOOL_EXECUTIONS_PER_CHAT) {
                 streamStopped.set(true);
-                transport.sendEndMessage(connection, AgentChatResponse.buildEndMessage(
-                        "工具调用次数过多，已自动停止本次执行，请缩小问题范围后重试。", MessageType.TEXT));
+                transport.sendEndMessage(connection,
+                        AgentChatResponse.buildEndMessage("工具调用次数过多，已自动停止本次执行，请缩小问题范围后重试。", MessageType.TEXT));
                 onChatCompleted(chatContext, false, "TOOL_EXECUTION_LIMIT_EXCEEDED");
+                closeToolProvider(toolProvider);
                 return;
             }
 
@@ -457,10 +486,10 @@ public abstract class AbstractMessageHandler {
                 int timeoutCount = timedOutToolExecutions.merge(toolExecutionKey, 1, Integer::sum);
                 if (timeoutCount > MAX_IDENTICAL_TOOL_TIMEOUTS_PER_CHAT) {
                     terminateStreamingChatWithFailure(chatContext, connection, transport, streamStopped, startTime,
-                            "工具连续超时，已终止本次对话，请稍后重试。",
-                            "TOOL_EXECUTION_TIMEOUT_RETRY_LIMIT_EXCEEDED",
+                            "工具连续超时，已终止本次对话，请稍后重试。", "TOOL_EXECUTION_TIMEOUT_RETRY_LIMIT_EXCEEDED",
                             new BusinessException("Repeated timed out tool execution: " + toolExecutionKey),
                             ExecutionPhase.TOOL_EXECUTION);
+                    closeToolProvider(toolProvider);
                     return;
                 }
             }
@@ -484,7 +513,7 @@ public abstract class AbstractMessageHandler {
         tokenStream.start();
     }
 
-    private boolean shouldStopStreaming(ChatContext chatContext, AtomicBoolean streamStopped) {
+    protected boolean shouldStopStreaming(ChatContext chatContext, AtomicBoolean streamStopped) {
         if (streamStopped.get()) {
             return true;
         }
@@ -499,9 +528,12 @@ public abstract class AbstractMessageHandler {
     }
 
     private String buildToolExecutionKey(ToolExecution toolExecution) {
-        String toolName = toolExecution != null && toolExecution.request() != null ? toolExecution.request().name() : "";
-        String requestArgs =
-                toolExecution != null && toolExecution.request() != null ? toolExecution.request().arguments() : "";
+        String toolName = toolExecution != null && toolExecution.request() != null
+                ? toolExecution.request().name()
+                : "";
+        String requestArgs = toolExecution != null && toolExecution.request() != null
+                ? toolExecution.request().arguments()
+                : "";
         return toolName + "::" + StringUtils.defaultString(requestArgs);
     }
 
@@ -521,9 +553,9 @@ public abstract class AbstractMessageHandler {
         return false;
     }
 
-    private <T> void terminateStreamingChatWithFailure(ChatContext chatContext, T connection, MessageTransport<T> transport,
-            AtomicBoolean streamStopped, long startTime, String userMessage, String errorCode, Throwable throwable,
-            ExecutionPhase errorPhase) {
+    private <T> void terminateStreamingChatWithFailure(ChatContext chatContext, T connection,
+            MessageTransport<T> transport, AtomicBoolean streamStopped, long startTime, String userMessage,
+            String errorCode, Throwable throwable, ExecutionPhase errorPhase) {
         streamStopped.set(true);
         transport.sendEndMessage(connection, AgentChatResponse.buildEndMessage(userMessage, MessageType.TEXT));
 
@@ -564,8 +596,7 @@ public abstract class AbstractMessageHandler {
     /** 初始化内存 */
     protected MessageWindowChatMemory initMemory() {
         return MessageWindowChatMemory.builder().maxMessages(CHAT_MEMORY_MAX_MESSAGES)
-                .chatMemoryStore(new InMemoryChatMemoryStore())
-                .build();
+                .chatMemoryStore(new InMemoryChatMemoryStore()).build();
     }
 
     /** 构建流式Agent */
@@ -608,12 +639,8 @@ public abstract class AbstractMessageHandler {
             }
             String normalized = text.trim().toLowerCase(Locale.ROOT);
             if (normalized.length() <= 12
-                    && (normalized.contains("你好")
-                            || normalized.contains("您好")
-                            || normalized.contains("hello")
-                            || normalized.contains("hi")
-                            || normalized.contains("在吗")
-                            || normalized.contains("在不在"))) {
+                    && (normalized.contains("你好") || normalized.contains("您好") || normalized.contains("hello")
+                            || normalized.contains("hi") || normalized.contains("在吗") || normalized.contains("在不在"))) {
                 return true;
             }
             return normalized.matches("[0-9\\s+\\-*/().=？?]+");
@@ -662,7 +689,8 @@ public abstract class AbstractMessageHandler {
         // 读取长期记忆，组装为要点，直接合入系统提示词尾部
         String memorySection = buildMemorySection(chatContext);
         String fullSystemPrompt = chatContext.getAgent().getSystemPrompt() + "\n" + presetToolPrompt
-                + (chatContext.getMcpServerNames() == null || chatContext.getMcpServerNames().isEmpty() ? ""
+                + (chatContext.getMcpServerNames() == null || chatContext.getMcpServerNames().isEmpty()
+                        ? ""
                         : TOOL_USAGE_GUARD_PROMPT)
                 + (memorySection.isEmpty() ? "" : ("\n" + memorySection));
 
@@ -725,36 +753,23 @@ public abstract class AbstractMessageHandler {
 
     // 智能重命名会话
     protected void smartRenameSession(ChatContext chatContext) {
-        Thread thread = new Thread(() -> {
-            // 获取会话 id
-            String sessionId = chatContext.getSessionId();
-            // 是否是首次对话
-            boolean isFirstConversation = messageDomainService.isFirstConversation(sessionId);
-            // 如果首次对话，则重命名会话
-            if (isFirstConversation) {
-                // 调用用户默认模型进行智能会话名称
-                String userId = chatContext.getUserId();
-                String userDefaultModelId = userSettingsDomainService.getUserDefaultModelId(userId);
-                ModelEntity model = llmDomainService.getModelById(userDefaultModelId);
-                // 4. 获取用户降级配置
-                List<String> fallbackChain = userSettingsDomainService.getUserFallbackChain(userId);
+        try {
+            sessionTitleGenerationService.generateTitle(chatContext);
+        } catch (TaskRejectedException e) {
+            logger.warn("会话标题任务队列已满，跳过自动命名: sessionId={}", chatContext.getSessionId());
+        }
+    }
 
-                // 5. 获取服务商信息（支持高可用、会话亲和性和降级）
-                HighAvailabilityResult result = highAvailabilityDomainService.selectBestProvider(model, userId,
-                        sessionId, fallbackChain);
-                ProviderEntity provider = result.getProvider();
-                ModelEntity selectedModel = result.getModel();
-                ChatModel strandClient = llmServiceFactory.getStrandClient(provider, selectedModel);
-                ArrayList<ChatMessage> chatMessages = new ArrayList<>();
-                chatMessages.add(new SystemMessage(AgentPromptTemplates.getStartConversationPrompt()));
-                chatMessages.add(new UserMessage(chatContext.getUserMessage()));
-                ChatResponse chat = strandClient.chat(chatMessages);
-                String sessionTitle = chat.aiMessage().text();
-                sessionDomainService.updateSession(chatContext.getSessionId(), userId, sessionTitle);
-
-            }
-        });
-        thread.start();
+    /** 释放当前对话创建的外部 MCP 连接。普通内置工具提供者不需要额外处理。 */
+    protected void closeToolProvider(ToolProvider toolProvider) {
+        if (!(toolProvider instanceof AutoCloseable closeable)) {
+            return;
+        }
+        try {
+            closeable.close();
+        } catch (Exception e) {
+            logger.debug("Failed to close chat tool provider: {}", e.getMessage());
+        }
     }
 
     /** 创建计费上下文
@@ -833,28 +848,31 @@ public abstract class AbstractMessageHandler {
      * @param transport 消息传输
      * @param connection 连接对象
      * @param <T> 连接类型
-     * @throws InsufficientBalanceException 余额不足时抛出 */
-    protected <T> void checkBalanceBeforeChat(String userId, MessageTransport<T> transport, T connection) {
+     * @return 余额允许继续对话时返回 true */
+    protected <T> boolean checkBalanceBeforeChat(String userId, MessageTransport<T> transport, T connection) {
         try {
             AccountEntity account = accountDomainService.getOrCreateAccount(userId);
             if (account.getBalance().compareTo(BigDecimal.ZERO) < 0) {
                 // 余额不足：发送错误消息（余额检查在对话开始前，不需要检查中断状态）
                 String errorMessage = "⚠️ 账户余额不足，当前余额：" + account.getBalance() + "元，请充值后继续使用";
                 AgentChatResponse errorResponse = AgentChatResponse.buildEndMessage(errorMessage, MessageType.TEXT);
-                transport.sendMessage(connection, errorResponse);
+                transport.sendEndMessage(connection, errorResponse);
 
                 logger.warn("用户余额不足被拒绝对话 - 用户: {}, 当前余额: {}", userId, account.getBalance());
-                throw new InsufficientBalanceException("账户余额不足，请充值后继续使用");
+                return false;
             }
 
             logger.debug("用户余额检查通过 - 用户: {}, 当前余额: {}", userId, account.getBalance());
+            return true;
         } catch (InsufficientBalanceException e) {
-            // 重新抛出余额不足异常
-            throw e;
+            logger.warn("用户余额不足被拒绝对话 - 用户: {}, 错误: {}", userId, e.getMessage());
+            transport.sendEndMessage(connection, AgentChatResponse.buildEndMessage(e.getMessage(), MessageType.TEXT));
+            return false;
         } catch (Exception e) {
             logger.error("余额检查异常 - 用户: {}, 错误: {}", userId, e.getMessage(), e);
             // 余额检查异常时，为了不影响用户体验，允许继续对话
             logger.warn("余额检查服务异常，允许用户继续对话 - 用户: {}", userId);
+            return true;
         }
     }
 

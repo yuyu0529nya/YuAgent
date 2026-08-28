@@ -1,10 +1,12 @@
 // API Key 相关类型定义
 
-// API Key 状态枚举
-export enum ApiKeyStatus {
-  ACTIVE = true,
-  INACTIVE = false
-}
+// 布尔值不能作为 TypeScript enum 成员；保留原有调用方式，同时提供准确的值类型。
+export const ApiKeyStatus = {
+  ACTIVE: true,
+  INACTIVE: false
+} as const
+
+export type ApiKeyStatus = typeof ApiKeyStatus[keyof typeof ApiKeyStatus]
 
 // API Key 响应类型
 export interface ApiKeyResponse {

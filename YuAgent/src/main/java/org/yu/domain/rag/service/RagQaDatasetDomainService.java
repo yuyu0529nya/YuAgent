@@ -135,6 +135,24 @@ public class RagQaDatasetDomainService {
         return ragQaDatasetRepository.selectList(wrapper);
     }
 
+    /** 批量查询数据集，用于列表补充展示信息。调用方仍需校验记录归属。 */
+    public List<RagQaDatasetEntity> listDatasetsByIds(List<String> datasetIds) {
+        if (datasetIds == null || datasetIds.isEmpty()) {
+            return List.of();
+        }
+        return ragQaDatasetRepository
+                .selectList(Wrappers.<RagQaDatasetEntity>lambdaQuery().in(RagQaDatasetEntity::getId, datasetIds));
+    }
+
+    /** 批量查询当前用户可访问的数据集，用于 Agent 配置。 */
+    public List<RagQaDatasetEntity> listDatasetsByIdsForUser(List<String> datasetIds, String userId) {
+        if (datasetIds == null || datasetIds.isEmpty()) {
+            return List.of();
+        }
+        return ragQaDatasetRepository.selectList(Wrappers.<RagQaDatasetEntity>lambdaQuery()
+                .in(RagQaDatasetEntity::getId, datasetIds).eq(RagQaDatasetEntity::getUserId, userId));
+    }
+
     /** 校验数据集名称唯一性
      * @param name 数据集名称
      * @param userId 用户ID */

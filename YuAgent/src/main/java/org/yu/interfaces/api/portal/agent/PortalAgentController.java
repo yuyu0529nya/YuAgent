@@ -71,7 +71,8 @@ public class PortalAgentController {
     /** 切换Agent的启用/禁用状态 */
     @PutMapping("/{agentId}/toggle-status")
     public Result<AgentDTO> toggleAgentStatus(@PathVariable String agentId) {
-        return Result.success(agentAppService.toggleAgentStatus(agentId));
+        String userId = UserContext.getCurrentUserId();
+        return Result.success(agentAppService.toggleAgentStatus(agentId, userId));
     }
 
     /** 删除Agent */
@@ -100,13 +101,15 @@ public class PortalAgentController {
     /** 获取Agent的特定版本 */
     @GetMapping("/{agentId}/versions/{versionNumber}")
     public Result<AgentVersionDTO> getAgentVersion(@PathVariable String agentId, @PathVariable String versionNumber) {
-        return Result.success(agentAppService.getAgentVersion(agentId, versionNumber));
+        String userId = UserContext.getCurrentUserId();
+        return Result.success(agentAppService.getAgentVersion(agentId, versionNumber, userId));
     }
 
     /** 获取Agent的最新版本 */
     @GetMapping("/{agentId}/versions/latest")
     public Result<AgentVersionDTO> getLatestAgentVersion(@PathVariable String agentId) {
-        return Result.success(agentAppService.getLatestAgentVersion(agentId));
+        String userId = UserContext.getCurrentUserId();
+        return Result.success(agentAppService.getLatestAgentVersion(agentId, userId));
     }
 
     /** 生成系统提示词 */

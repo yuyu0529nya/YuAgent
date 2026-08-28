@@ -1,5 +1,6 @@
 package org.yu;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.yu.infrastructure.config.OssProperties;
 import org.yu.infrastructure.storage.OssUploadService;
 import org.yu.infrastructure.storage.OssUploadService.UploadCredential;
@@ -24,11 +25,11 @@ public class OssUploadTest {
             System.out.println("  端点: " + ossProperties.getEndpoint());
             System.out.println("  存储桶: " + ossProperties.getBucketName());
             System.out.println("  区域: " + ossProperties.getRegion());
-            System.out.println("  访问密钥: " + ossProperties.getAccessKey().substring(0, 8) + "...");
+            System.out.println("  访问密钥: " + configurationStatus(ossProperties.getAccessKey()));
             System.out.println();
 
             // 创建OSS上传服务
-            OssUploadService ossUploadService = new OssUploadService(ossProperties);
+            OssUploadService ossUploadService = new OssUploadService(ossProperties, new ObjectMapper());
             System.out.println("OSS上传服务创建成功");
 
             // 生成上传凭证
@@ -47,11 +48,9 @@ public class OssUploadTest {
             System.out.println("上传凭证生成成功!");
             System.out.println("上传凭证信息:");
             System.out.println("  上传URL: " + credential.getUploadUrl());
-            System.out.println("  访问密钥ID: " + credential.getAccessKeyId());
-            System.out.println("  Policy: "
-                    + credential.getPolicy().substring(0, Math.min(50, credential.getPolicy().length())) + "...");
-            System.out.println("  签名: "
-                    + credential.getSignature().substring(0, Math.min(20, credential.getSignature().length())) + "...");
+            System.out.println("  访问密钥ID: " + configurationStatus(credential.getAccessKeyId()));
+            System.out.println("  Policy: 已生成（内容已隐藏）");
+            System.out.println("  签名: 已生成（内容已隐藏）");
             System.out.println("  对象键前缀: " + credential.getKeyPrefix());
             System.out.println("  访问URL前缀: " + credential.getAccessUrlPrefix());
             System.out.println("  过期时间: " + credential.getExpiration());
@@ -63,9 +62,9 @@ public class OssUploadTest {
             System.out.println("1. 获取上传凭证后，前端可以直接上传到OSS");
             System.out.println("2. 表单字段顺序（重要）:");
             System.out.println("   - key: " + credential.getKeyPrefix() + "your-file-name.jpg");
-            System.out.println("   - policy: " + credential.getPolicy());
-            System.out.println("   - OSSAccessKeyId: " + credential.getAccessKeyId());
-            System.out.println("   - signature: " + credential.getSignature());
+            System.out.println("   - policy: [由接口返回，日志中不显示]");
+            System.out.println("   - OSSAccessKeyId: [由接口返回，日志中不显示]");
+            System.out.println("   - signature: [由接口返回，日志中不显示]");
             System.out.println("   - file: [文件内容]");
             System.out.println("3. 上传成功后，文件可通过以下URL访问:");
             System.out.println("   " + credential.getAccessUrlPrefix() + "your-file-name.jpg");
@@ -76,5 +75,9 @@ public class OssUploadTest {
             System.err.println("测试失败: " + e.getMessage());
             e.printStackTrace();
         }
+    }
+
+    private static String configurationStatus(String value) {
+        return value == null || value.isBlank() ? "未配置" : "已配置（已隐藏）";
     }
 }

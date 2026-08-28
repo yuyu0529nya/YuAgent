@@ -105,7 +105,8 @@ public class RagDocConsumer {
 
             ensureOcrModelConfigIfRequired(docMessage, fileExt, fileEntity.getUserId());
 
-            DocumentProcessingStrategy strategy = documentProcessingFactory.getDocumentStrategyHandler(fileExt.toUpperCase());
+            DocumentProcessingStrategy strategy = documentProcessingFactory
+                    .getDocumentStrategyHandler(fileExt.toUpperCase());
             if (strategy == null) {
                 throw new BusinessException("Unsupported file extension: " + fileExt);
             }
@@ -139,12 +140,13 @@ public class RagDocConsumer {
                     System.currentTimeMillis() - startTime, e);
             try {
                 if (docMessage != null) {
-                    FileDetailEntity fileEntity = fileDetailDomainService.getFileByIdWithoutUserCheck(docMessage.getFileId());
+                    FileDetailEntity fileEntity = fileDetailDomainService
+                            .getFileByIdWithoutUserCheck(docMessage.getFileId());
                     fileDetailDomainService.failFileOcrProcessing(docMessage.getFileId(), fileEntity.getUserId());
                 }
             } catch (Exception ex) {
-                log.error("Failed to mark OCR as failed for file {}", docMessage != null ? docMessage.getFileId() : "unknown",
-                        ex);
+                log.error("Failed to mark OCR as failed for file {}",
+                        docMessage != null ? docMessage.getFileId() : "unknown", ex);
             }
         }
     }
@@ -191,7 +193,8 @@ public class RagDocConsumer {
         storageMessage.setVector(true);
         storageMessage.setDatasetId(fileEntity.getDataSetId());
         storageMessage.setUserId(fileEntity.getUserId());
-        storageMessage.setEmbeddingModelConfig(userModelConfigResolver.getUserEmbeddingModelConfig(fileEntity.getUserId()));
+        storageMessage
+                .setEmbeddingModelConfig(userModelConfigResolver.getUserEmbeddingModelConfig(fileEntity.getUserId()));
         storageMessage.setBatchUnits(documentUnits.stream().map(this::toBatchUnit).toList());
         return storageMessage;
     }
@@ -225,8 +228,8 @@ public class RagDocConsumer {
             return currentPageSize;
         }
 
-        long documentUnitCount = documentUnitRepository.selectCount(Wrappers.lambdaQuery(DocumentUnitEntity.class)
-                .eq(DocumentUnitEntity::getFileId, fileId));
+        long documentUnitCount = documentUnitRepository
+                .selectCount(Wrappers.lambdaQuery(DocumentUnitEntity.class).eq(DocumentUnitEntity::getFileId, fileId));
         int normalizedPageSize = documentUnitCount > 0 ? (int) documentUnitCount : 0;
         fileDetailDomainService.updateFilePageSize(fileId, normalizedPageSize);
         log.warn("file_page_size was empty for file {}, backfilled with {}", fileId, normalizedPageSize);
@@ -243,8 +246,8 @@ public class RagDocConsumer {
             return false;
         }
 
-        long existingUnits = documentUnitRepository.selectCount(Wrappers.lambdaQuery(DocumentUnitEntity.class)
-                .eq(DocumentUnitEntity::getFileId, fileId));
+        long existingUnits = documentUnitRepository
+                .selectCount(Wrappers.lambdaQuery(DocumentUnitEntity.class).eq(DocumentUnitEntity::getFileId, fileId));
         return existingUnits == 0;
     }
 

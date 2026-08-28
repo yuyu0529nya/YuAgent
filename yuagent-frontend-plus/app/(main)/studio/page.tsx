@@ -1,8 +1,6 @@
 "use client"
 
 import { DropdownMenuItem } from "@/components/ui/dropdown-menu"
-import { Metadata } from "next"
-import { redirect } from "next/navigation"
 
 import { useEffect, useState } from "react"
 import Link from "next/link"
@@ -20,11 +18,8 @@ import {
 import { toast } from "@/hooks/use-toast"
 import { 
   getUserAgents, 
-  deleteAgent, 
-  toggleAgentStatus,
   deleteAgentWithToast,
-  toggleAgentStatusWithToast,
-  getUserAgentsWithToast
+  toggleAgentStatusWithToast
 } from "@/lib/agent-service"
 import { resolveAssetUrl } from "@/lib/asset-url"
 import type { Agent } from "@/types/agent"
@@ -48,6 +43,7 @@ export default function StudioPage() {
   const [agentToDelete, setAgentToDelete] = useState<Agent | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
   const [isTogglingStatus, setIsTogglingStatus] = useState<string | null>(null)
+  const [refreshToken, setRefreshToken] = useState(0)
 
   // 防抖处理搜索查询
   useEffect(() => {
@@ -60,30 +56,45 @@ export default function StudioPage() {
 
   // 获取助理列表
   useEffect(() => {
+    const controller = new AbortController()
+    let active = true
+
     async function fetchAgents() {
       try {
         setLoading(true)
         setError(null)
 
-        const response = await getUserAgentsWithToast({ name: debouncedQuery })
+        const response = await getUserAgents({ name: debouncedQuery }, { signal: controller.signal })
+
+        if (!active) {
+          return
+        }
 
         if (response.code === 200) {
           setAgents(response.data)
         } else {
           setError(response.message)
-          // toast已由withToast处理
         }
       } catch (error) {
+        if (!active) {
+          return
+        }
         const errorMessage = error instanceof Error ? error.message : "未知错误"
         setError(errorMessage)
-        // toast已由withToast处理
       } finally {
-        setLoading(false)
+        if (active) {
+          setLoading(false)
+        }
       }
     }
 
     fetchAgents()
-  }, [debouncedQuery])
+
+    return () => {
+      active = false
+      controller.abort()
+    }
+  }, [debouncedQuery, refreshToken])
 
   // 处理删除助理
   const handleDeleteAgent = async () => {
@@ -208,7 +219,7 @@ export default function StudioPage() {
         // 错误状态
         <div className="text-center py-10">
           <div className="text-red-500 mb-4">{error}</div>
-          <Button variant="outline" onClick={() => window.location.reload()}>
+          <Button variant="outline" onClick={() => setRefreshToken((token) => token + 1)}>
             <RefreshCw className="mr-2 h-4 w-4" />
             重试
           </Button>
@@ -320,7 +331,7 @@ export default function StudioPage() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>确认删除</DialogTitle>
-            <DialogDescription>您确定要删除助理 "{agentToDelete?.name}" 吗？此操作无法撤销。</DialogDescription>
+            <DialogDescription>您确定要删除助理 &quot;{agentToDelete?.name}&quot; 吗？此操作无法撤销。</DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <Button variant="outline" onClick={() => setAgentToDelete(null)}>

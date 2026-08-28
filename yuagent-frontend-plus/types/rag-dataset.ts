@@ -208,16 +208,23 @@ export interface UpdateDocumentUnitRequest {
 }
 
 export interface RagStreamChatRequest {
-  datasetIds: string[]
   question: string
-  stream?: boolean
+  datasetIds?: string[]
+  fileId?: string
+  maxResults?: number
+  minScore?: number
+  enableRerank?: boolean
 }
 
 export interface SSEMessage {
-  type: "thinking" | "content" | "error" | "done"
-  data?: any
+  type?: string
+  messageType?: string
+  data?: unknown
   content?: string
   error?: string
+  payload?: string
+  timestamp?: number
+  done?: boolean
 }
 
 export interface RagThinkingData {

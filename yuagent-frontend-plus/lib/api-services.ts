@@ -1,172 +1,8 @@
-import type {
-  ApiResponse,
-  CreateSessionParams,
-  GetSessionsParams,
-  Session,
-  UpdateSessionParams,
-} from "@/types/conversation"
+import type { ApiResponse } from "@/types/conversation"
 import { withToast } from "./toast-utils"
 import { httpClient } from "@/lib/http-client"
-import { API_CONFIG, API_ENDPOINTS } from "@/lib/api-config"
-
-// 构建查询字符串
-function buildQueryString(params: Record<string, any>): string {
-  const query = Object.entries(params)
-    .filter(([_, value]) => value !== undefined && value !== null)
-    .map(([key, value]) => {
-      if (typeof value === "boolean") {
-        // 如果是布尔值，只传递键名
-        return value ? key : null
-      }
-      return `${encodeURIComponent(key)}=${encodeURIComponent(value)}`
-    })
-    .filter(Boolean)
-    .join("&")
-
-  return query ? `?${query}` : ""
-}
-
-// 创建会话
-export async function createSession(params: CreateSessionParams): Promise<ApiResponse<Session>> {
-  try {
-    const data = await httpClient.post<ApiResponse<Session>>(
-      API_ENDPOINTS.SESSION,
-      {},
-      { params }
-    )
-    return data
-  } catch (error) {
- 
-    // 返回格式化的错误响应
-    return {
-      code: 500,
-      message: error instanceof Error ? error.message : "未知错误",
-      data: null as unknown as Session, // 修复类型错误
-      timestamp: Date.now(),
-    }
-  }
-}
-
-// 获取会话列表
-export async function getSessions(params: GetSessionsParams): Promise<ApiResponse<Session[]>> {
-  try {
- 
-
-    const data = await httpClient.get<ApiResponse<Session[]>>(
-      API_ENDPOINTS.SESSION,
-      { params }
-    )
-    return data
-  } catch (error) {
- 
-    // 返回格式化的错误响应
-    return {
-      code: 500,
-      message: error instanceof Error ? error.message : "未知错误",
-      data: [] as Session[],
-      timestamp: Date.now(),
-    }
-  }
-}
-
-// 获取单个会话详情
-export async function getSession(sessionId: string): Promise<ApiResponse<Session>> {
-  try {
- 
-
-    const data = await httpClient.get<ApiResponse<Session>>(
-      API_ENDPOINTS.SESSION_DETAIL(sessionId)
-    )
-    return data
-  } catch (error) {
- 
-    // 返回格式化的错误响应，确保与API响应格式一致
-    return {
-      code: 500,
-      message: error instanceof Error ? error.message : "未知错误",
-      data: null as unknown as Session, // 类型转换以满足返回类型
-      timestamp: Date.now(),
-    }
-  }
-}
-
-// 更新会话
-export async function updateSession(sessionId: string, params: UpdateSessionParams): Promise<ApiResponse<Session>> {
-  try {
- 
-
-    const data = await httpClient.put<ApiResponse<Session>>(
-      API_ENDPOINTS.SESSION_DETAIL(sessionId),
-      {},
-      { params }
-    )
-    return data
-  } catch (error) {
- 
-    // 返回格式化的错误响应
-    return {
-      code: 500,
-      message: error instanceof Error ? error.message : "未知错误",
-      data: null as unknown as Session,
-      timestamp: Date.now(),
-    }
-  }
-}
-
-// 删除会话
-export async function deleteSession(sessionId: string): Promise<ApiResponse<null>> {
-  try {
- 
-
-    const data = await httpClient.delete<ApiResponse<null>>(
-      API_ENDPOINTS.DELETE_SESSION(sessionId)
-    )
-    return data
-  } catch (error) {
- 
-    // 返回格式化的错误响应
-    return {
-      code: 500,
-      message: error instanceof Error ? error.message : "未知错误",
-      data: null,
-      timestamp: Date.now(),
-    }
-  }
-}
-
-// withToast包装的函数
-export const createSessionWithToast = withToast(createSession, {
-  showSuccessToast: true,
-  showErrorToast: true,
-  successTitle: "创建会话成功",
-  errorTitle: "创建会话失败"
-})
-
-export const getSessionsWithToast = withToast(getSessions, {
-  showSuccessToast: false,
-  showErrorToast: true,
-  errorTitle: "获取会话列表失败"
-})
-
-export const getSessionWithToast = withToast(getSession, {
-  showSuccessToast: false,
-  showErrorToast: true,
-  errorTitle: "获取会话详情失败"
-})
-
-export const updateSessionWithToast = withToast(updateSession, {
-  showSuccessToast: true,
-  showErrorToast: true,
-  successTitle: "更新会话成功",
-  errorTitle: "更新会话失败"
-})
-
-export const deleteSessionWithToast = withToast(deleteSession, {
-  showSuccessToast: true,
-  showErrorToast: true,
-  successTitle: "删除会话成功",
-  errorTitle: "删除会话失败"
-})
+import { API_ENDPOINTS } from "@/lib/api-config"
+import type { Model } from "./user-settings-service"
 
 // 获取服务提供商列表
 export async function getProviders(type?: string): Promise<ApiResponse<any[]>> {
@@ -374,11 +210,11 @@ export async function getModels(type?: string): Promise<ApiResponse<any[]>> {
 }
 
 // 获取默认模型
-export async function getDefaultModel(): Promise<ApiResponse<any>> {
+export async function getDefaultModel(): Promise<ApiResponse<Model | null>> {
   try {
  
     
-    const response = await httpClient.get<ApiResponse<any>>(API_ENDPOINTS.DEFAULT_MODEL);
+    const response = await httpClient.get<ApiResponse<Model | null>>(API_ENDPOINTS.DEFAULT_MODEL);
     
     return response;
   } catch (error) {
@@ -587,31 +423,6 @@ export const getModelTypesWithToast = withToast(getModelTypes, {
   showSuccessToast: false,
   showErrorToast: true,
   errorTitle: "获取模型类型列表失败"
-})
-
-// 获取工作区Agent列表
-export async function getWorkspaceAgents(): Promise<ApiResponse<any[]>> {
-  try {
- 
-    
-    const response = await httpClient.get<ApiResponse<any[]>>('/agents/workspaces/agents');
-    
-    return response;
-  } catch (error) {
- 
-    return {
-      code: 500,
-      message: error instanceof Error ? error.message : "未知错误",
-      data: [],
-      timestamp: Date.now(),
-    }
-  }
-}
-
-export const getWorkspaceAgentsWithToast = withToast(getWorkspaceAgents, {
-  showSuccessToast: false,
-  showErrorToast: true,
-  errorTitle: "获取工作区Agent列表失败"
 })
 
 // 登录

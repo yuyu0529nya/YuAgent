@@ -1,5 +1,6 @@
 package org.yu.domain.tool.service;
 
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -7,6 +8,7 @@ import org.yu.application.tool.service.ToolStateStateMachineAppService;
 import org.yu.domain.tool.model.ToolEntity;
 
 @SpringBootTest
+@Disabled("依赖已部署的审核容器和指定数据库数据；保留为手工集成验证")
 public class ToolTest {
 
     @Autowired

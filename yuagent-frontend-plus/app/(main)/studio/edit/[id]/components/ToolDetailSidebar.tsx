@@ -3,16 +3,16 @@ import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription, SheetFooter } from '@/components/ui/sheet';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
-import type { Tool, ToolVersion } from '@/types/tool';
-import { getToolDetail, getMarketToolVersions, getMarketToolVersionDetail } from '@/lib/tool-service';
-import { X, RefreshCw, Puzzle, Command, Key, Save, Settings } from 'lucide-react';
+import type { Tool, ToolItem } from '@/types/tool';
+import { getToolDetail, getMarketToolVersionDetail } from '@/lib/tool-service';
+import { toMarketTool, toPortalTool } from '@/lib/market-tool-mapper';
+import { Puzzle, Command, Settings } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from 'sonner';
-import { Input } from '@/components/ui/input';
 import ToolParametersModal from './ToolParametersModal';
 
 // 缓存已请求过的工具详情
-const toolDetailsCache = new Map<string, any>();
+const toolDetailsCache = new Map<string, Tool>();
 
 interface ToolDetailSidebarProps {
   tool: Tool | null;
@@ -33,17 +33,19 @@ const ToolDetailSidebar: React.FC<ToolDetailSidebarProps> = ({
   presetParameters = {},
   onSavePresetParameters
 }) => {
-  const [detailedTool, setDetailedTool] = useState<any>(null);
+  const [detailedTool, setDetailedTool] = useState<Tool | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [showParametersModal, setShowParametersModal] = useState(false);
 
   useEffect(() => {
     if (isOpen && initialTool) {
-      const cacheKey = `${initialTool.id}-${(initialTool as any).version || ''}`;
+      const version = initialTool.current_version ?? '';
+      const cacheKey = `${initialTool.id}-${version}`;
       
       // 如果缓存中有这个工具的详情，直接使用
-      if (toolDetailsCache.has(cacheKey)) {
-        setDetailedTool(toolDetailsCache.get(cacheKey));
+      const cachedTool = toolDetailsCache.get(cacheKey);
+      if (cachedTool) {
+        setDetailedTool(cachedTool);
         return;
       }
       
@@ -52,17 +54,15 @@ const ToolDetailSidebar: React.FC<ToolDetailSidebarProps> = ({
         setDetailedTool(null);
         
         try {
-          // 使用getMarketToolVersionDetail方法获取详细信息，传入toolId和version
           const toolId = initialTool.toolId || '';
-          // 注意：Tool类型上没有version属性，尝试从initialTool对象获取，如果没有则使用空字符串
-          const version = (initialTool as any).version || '';
           
           if (toolId && version) {
             const detailResponse = await getMarketToolVersionDetail(toolId, version);
             if (detailResponse.code === 200 && detailResponse.data) {
-              setDetailedTool(detailResponse.data);
+              const detail = toMarketTool(detailResponse.data);
+              setDetailedTool(detail);
               // 保存到缓存
-              toolDetailsCache.set(cacheKey, detailResponse.data);
+              toolDetailsCache.set(cacheKey, detail);
             } else {
  
               setDetailedTool(initialTool);
@@ -73,9 +73,10 @@ const ToolDetailSidebar: React.FC<ToolDetailSidebarProps> = ({
             // 如果没有toolId或version，尝试使用普通工具详情接口
             const fallbackResponse = await getToolDetail(initialTool.id);
             if (fallbackResponse.code === 200 && fallbackResponse.data) {
-              setDetailedTool(fallbackResponse.data);
+              const detail = toPortalTool(fallbackResponse.data);
+              setDetailedTool(detail);
               // 保存到缓存
-              toolDetailsCache.set(cacheKey, fallbackResponse.data);
+              toolDetailsCache.set(cacheKey, detail);
             } else {
               setDetailedTool(initialTool);
               // 即使是失败的情况，也缓存初始工具数据，避免重复请求
@@ -150,7 +151,7 @@ const ToolDetailSidebar: React.FC<ToolDetailSidebarProps> = ({
     );
     
     // 工具功能列表
-    const toolFunctions = displayData.toolList || displayData.tool_list || [];
+    const toolFunctions: ToolItem[] = displayData.tool_list;
     
     return (
       <>
@@ -188,7 +189,7 @@ const ToolDetailSidebar: React.FC<ToolDetailSidebarProps> = ({
                   <Puzzle className="w-4 h-4 mr-2" /> 功能列表 ({toolFunctions.length})
                 </h4>
                 <div className="space-y-2 mt-3">
-                  {toolFunctions.map((item: any, index: number) => (
+                  {toolFunctions.map((item, index) => (
                     <div key={item.name || index} className="rounded-md border overflow-hidden">
                       {/* 功能名称 */}
                       <div className="px-3 py-2 bg-muted/5 flex items-center gap-2">
@@ -220,7 +221,7 @@ const ToolDetailSidebar: React.FC<ToolDetailSidebarProps> = ({
                                 return (
                                   <div key={key} className="flex items-center gap-2 px-1">
                                     <code className="text-[10px] text-primary bg-primary/5 px-1 py-0.5 rounded">{cleanKey}</code>
-                                    {item.parameters.required?.includes(cleanKey) && (
+                                    {item.parameters?.required?.includes(cleanKey) && (
                                       <Badge variant="outline" className="text-[8px] h-3 px-1">必填</Badge>
                                     )}
                                   </div>

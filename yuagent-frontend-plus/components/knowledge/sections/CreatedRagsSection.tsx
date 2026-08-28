@@ -1,6 +1,7 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useEffect, useRef, useState } from "react"
+import dynamic from "next/dynamic"
 import { Plus, Search, RefreshCw, X, Book } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
@@ -27,10 +28,12 @@ import {
 import { getDatasetsWithToast, deleteDatasetWithToast } from "@/lib/rag-dataset-service"
 import type { RagDataset, PageResponse } from "@/types/rag-dataset"
 import { CreatedRagCard } from "../cards/CreatedRagCard"
-import { CreateDatasetDialog } from "../CreateDatasetDialog"
-import { EditDatasetDialog } from "../EditDatasetDialog"
-import { PublishRagDialog } from "../dialogs/PublishRagDialog"
-import { RagVersionHistoryDialog } from "../dialogs/RagVersionHistoryDialog"
+
+const CreateDatasetDialog = dynamic(() => import("../CreateDatasetDialog").then(module => module.CreateDatasetDialog))
+const EditDatasetDialog = dynamic(() => import("../EditDatasetDialog").then(module => module.EditDatasetDialog))
+const PublishRagDialog = dynamic(() => import("../dialogs/PublishRagDialog").then(module => module.PublishRagDialog))
+const RagVersionHistoryDialog = dynamic(() => import("../dialogs/RagVersionHistoryDialog")
+  .then(module => module.RagVersionHistoryDialog))
 
 export function CreatedRagsSection() {
   const [datasets, setDatasets] = useState<RagDataset[]>([])
@@ -44,6 +47,7 @@ export function CreatedRagsSection() {
   const [datasetToViewHistory, setDatasetToViewHistory] = useState<RagDataset | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
   const [showAll, setShowAll] = useState(false)
+  const latestRequestIdRef = useRef(0)
   
   // 分页状态
   const [pageData, setPageData] = useState<PageResponse<RagDataset>>({
@@ -65,11 +69,17 @@ export function CreatedRagsSection() {
 
   // 获取数据集列表
   useEffect(() => {
+    setShowAll(false)
     loadDatasets(1, debouncedQuery)
+
+    return () => {
+      latestRequestIdRef.current += 1
+    }
   }, [debouncedQuery])
 
   // 加载数据集
   const loadDatasets = async (page: number = 1, keyword?: string) => {
+    const requestId = ++latestRequestIdRef.current
     try {
       setLoading(true)
       setError(null)
@@ -80,6 +90,10 @@ export function CreatedRagsSection() {
         keyword: keyword?.trim() || undefined
       })
 
+      if (requestId !== latestRequestIdRef.current) {
+        return
+      }
+
       if (response.code === 200) {
         setPageData(response.data)
         setDatasets(response.data.records || [])
@@ -87,10 +101,15 @@ export function CreatedRagsSection() {
         setError(response.message)
       }
     } catch (error) {
+      if (requestId !== latestRequestIdRef.current) {
+        return
+      }
       const errorMessage = error instanceof Error ? error.message : "未知错误"
       setError(errorMessage)
     } finally {
-      setLoading(false)
+      if (requestId === latestRequestIdRef.current) {
+        setLoading(false)
+      }
     }
   }
 
@@ -117,6 +136,7 @@ export function CreatedRagsSection() {
   // 分页处理
   const handlePageChange = (page: number) => {
     if (page < 1 || page > pageData.pages) return
+    setShowAll(false)
     loadDatasets(page, debouncedQuery)
   }
 
@@ -322,7 +342,7 @@ export function CreatedRagsSection() {
           <DialogHeader>
             <DialogTitle>确认删除</DialogTitle>
             <DialogDescription>
-              您确定要删除数据集 "{datasetToDelete?.name}" 吗？此操作无法撤销，将同时删除数据集中的所有文件。
+              您确定要删除数据集 &quot;{datasetToDelete?.name}&quot; 吗？此操作无法撤销，将同时删除数据集中的所有文件。
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>

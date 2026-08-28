@@ -22,6 +22,10 @@ import org.yu.interfaces.dto.agent.request.UpdateWidgetRequest;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 /** Agent小组件配置应用服务 */
 @Service
@@ -92,28 +96,7 @@ public class AgentWidgetAppService {
             return List.of();
         }
 
-        // 3. 批量获取模型和服务商信息
-        List<ModelDTO> models = new ArrayList<>();
-        List<ProviderDTO> providers = new ArrayList<>();
-
-        for (AgentWidgetEntity widget : widgets) {
-            // 查询模型信息
-            ModelEntity model = llmDomainService.getModelById(widget.getModelId());
-            ModelDTO modelDTO = model != null ? ModelAssembler.toDTO(model) : null;
-            models.add(modelDTO);
-
-            // 查询提供商信息
-            ProviderEntity provider = null;
-            if (model != null) {
-                provider = llmDomainService.getProvider(model.getProviderId());
-            }
-            ProviderDTO providerDTO = provider != null ? ProviderAssembler.toDTO(provider) : null;
-            providers.add(providerDTO);
-        }
-
-        // 4. 转换为DTO列表
-        List<AgentWidgetDTO> dtos = AgentWidgetAssembler.toDTOsWithEmbedCode(widgets, models, providers,
-                agentWidgetAssembler.frontendBaseUrl);
+        List<AgentWidgetDTO> dtos = assembleWidgetDtos(widgets);
         fillDailyCalls(dtos);
         return dtos;
     }
@@ -129,26 +112,7 @@ public class AgentWidgetAppService {
             return List.of();
         }
 
-        List<ModelDTO> models = new ArrayList<>();
-        List<ProviderDTO> providers = new ArrayList<>();
-
-        for (AgentWidgetEntity widget : widgets) {
-            // 查询模型信息
-            ModelEntity model = llmDomainService.getModelById(widget.getModelId());
-            ModelDTO modelDTO = model != null ? ModelAssembler.toDTO(model) : null;
-            models.add(modelDTO);
-
-            // 查询提供商信息
-            ProviderEntity provider = null;
-            if (model != null) {
-                provider = llmDomainService.getProvider(model.getProviderId());
-            }
-            ProviderDTO providerDTO = provider != null ? ProviderAssembler.toDTO(provider) : null;
-            providers.add(providerDTO);
-        }
-
-        List<AgentWidgetDTO> dtos = AgentWidgetAssembler.toDTOsWithEmbedCode(widgets, models, providers,
-                agentWidgetAssembler.frontendBaseUrl);
+        List<AgentWidgetDTO> dtos = assembleWidgetDtos(widgets);
         fillDailyCalls(dtos);
         return dtos;
     }
@@ -259,7 +223,6 @@ public class AgentWidgetAppService {
         info.setDescription(widget.getDescription());
         info.setDailyLimit(widget.getDailyLimit());
         info.setEnabled(widget.getEnabled());
-        // TODO: 实现每日调用次数统计，目前暂时设置为0
         info.setDailyCalls(agentWidgetUsageDomainService.getTodayCallCount(widget.getId()));
 
         // Agent配置信息（用于无会话聊天）
@@ -420,5 +383,27 @@ public class AgentWidgetAppService {
         java.util.Map<String, Integer> usageMap = agentWidgetUsageDomainService
                 .getTodayCallCounts(widgets.stream().map(AgentWidgetDTO::getId).toList());
         widgets.forEach(widget -> widget.setDailyCalls(usageMap.getOrDefault(widget.getId(), 0)));
+    }
+
+    private List<AgentWidgetDTO> assembleWidgetDtos(List<AgentWidgetEntity> widgets) {
+        Set<String> modelIds = widgets.stream().map(AgentWidgetEntity::getModelId).filter(id -> id != null)
+                .collect(Collectors.toSet());
+        Map<String, ModelEntity> modelsById = llmDomainService.getModelsByIds(modelIds).stream()
+                .collect(Collectors.toMap(ModelEntity::getId, Function.identity()));
+        Set<String> providerIds = modelsById.values().stream().map(ModelEntity::getProviderId).filter(id -> id != null)
+                .collect(Collectors.toSet());
+        Map<String, ProviderEntity> providersById = llmDomainService.getProvidersByIds(providerIds).stream()
+                .collect(Collectors.toMap(ProviderEntity::getId, Function.identity()));
+
+        List<ModelDTO> models = new ArrayList<>(widgets.size());
+        List<ProviderDTO> providers = new ArrayList<>(widgets.size());
+        for (AgentWidgetEntity widget : widgets) {
+            ModelEntity model = modelsById.get(widget.getModelId());
+            ProviderEntity provider = model == null ? null : providersById.get(model.getProviderId());
+            models.add(model == null ? null : ModelAssembler.toDTO(model));
+            providers.add(provider == null ? null : ProviderAssembler.toDTO(provider));
+        }
+        return AgentWidgetAssembler.toDTOsWithEmbedCode(widgets, models, providers,
+                agentWidgetAssembler.frontendBaseUrl);
     }
 }

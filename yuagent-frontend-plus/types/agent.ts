@@ -58,7 +58,6 @@ export interface ApiResponse<T> {
 
 // 获取助理列表请求参数
 export interface GetAgentsParams {
-  userId: string
   name?: string // 添加名称搜索参数
 }
 
@@ -70,8 +69,6 @@ export interface CreateAgentRequest {
 
   systemPrompt?: string
   welcomeMessage?: string
-  modelConfig: ModelConfig
-  tools?: AgentTool[]
   toolIds?: string[] // 工具ID列表，用于传递给后端
   toolPresetParams?: {
     [serverName: string]: {
@@ -81,7 +78,6 @@ export interface CreateAgentRequest {
     }
   } // 工具预设参数
   knowledgeBaseIds?: string[]
-  userId: string
   multiModal?: boolean // 多模态功能开关
 }
 
@@ -126,11 +122,6 @@ export interface PublishAgentVersionRequest {
   } // 工具预设参数
   knowledgeBaseIds?: string[]
   multiModal?: boolean // 多模态功能开关
-}
-
-// 搜索助理请求参数
-export interface SearchAgentsRequest {
-  name?: string
 }
 
 // 助理版本信息

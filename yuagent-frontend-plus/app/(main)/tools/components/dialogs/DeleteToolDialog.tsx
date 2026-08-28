@@ -33,7 +33,7 @@ export function DeleteToolDialog({
         <AlertDialogHeader>
           <AlertDialogTitle>确认删除工具</AlertDialogTitle>
           <AlertDialogDescription>
-            您确定要删除 "{tool.name}" 吗？此操作无法撤销，删除后您将需要重新安装才能使用此工具。
+            您确定要删除 &quot;{tool.name}&quot; 吗？此操作无法撤销，删除后您将需要重新安装才能使用此工具。
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>

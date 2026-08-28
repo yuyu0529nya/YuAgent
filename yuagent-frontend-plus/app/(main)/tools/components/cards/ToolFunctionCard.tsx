@@ -1,5 +1,6 @@
 import React from 'react';
 import { ToolFunction } from '../../utils/types';
+import { getSchemaPropertyDescription } from '../../utils/schema';
 import { Command } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
@@ -43,7 +44,7 @@ export function ToolFunctionCard({ func, className }: ToolFunctionCardProps) {
                 // 处理特殊键名，移除可能的前缀
                 const cleanKey = key.replace(/^\{/, '');
                 // 确保value是对象并且有description属性
-                const description = typeof value === 'object' && value ? (value as any).description : null;
+                const description = getSchemaPropertyDescription(value);
                 
                 if (description === null) return null;
                 

@@ -32,20 +32,15 @@ import org.yu.infrastructure.exception.BusinessException;
 public class RemoteFileImportService {
 
     private static final int MAX_REDIRECTS = 3;
-    private static final List<String> SUPPORTED_EXTENSIONS =
-            List.of("pdf", "doc", "docx", "txt", "md", "html", "json", "csv", "xlsx", "xls");
-    private static final Pattern HTML_DOWNLOAD_LINK_PATTERN = Pattern.compile(
-            "(?:iframe|embed|object|a)[^>]+(?:src|href)=[\"']([^\"']+)[\"']",
-            Pattern.CASE_INSENSITIVE);
-    private static final Pattern DIRECT_PDF_PATTERN = Pattern.compile(
-            "https?://[^\"'\\s>]+\\.pdf(?:\\?[^\"'\\s>]*)?",
+    private static final List<String> SUPPORTED_EXTENSIONS = List.of("pdf", "doc", "docx", "txt", "md", "html", "json",
+            "csv", "xlsx", "xls");
+    private static final Pattern HTML_DOWNLOAD_LINK_PATTERN = Pattern
+            .compile("(?:iframe|embed|object|a)[^>]+(?:src|href)=[\"']([^\"']+)[\"']", Pattern.CASE_INSENSITIVE);
+    private static final Pattern DIRECT_PDF_PATTERN = Pattern.compile("https?://[^\"'\\s>]+\\.pdf(?:\\?[^\"'\\s>]*)?",
             Pattern.CASE_INSENSITIVE);
     private static final List<String> PROTECTED_HTML_MARKERS = List.of(
-            "please enable javascript to view the page content",
-            "your support id is",
-            "/tspd/",
-            "cf-browser-verification",
-            "challenge-platform");
+            "please enable javascript to view the page content", "your support id is", "/tspd/",
+            "cf-browser-verification", "challenge-platform");
 
     private final HttpClient httpClient;
 
@@ -56,68 +51,67 @@ public class RemoteFileImportService {
     private long maxFileSize;
 
     public RemoteFileImportService() {
-        this.httpClient = HttpClient.newBuilder()
-                .followRedirects(HttpClient.Redirect.NEVER)
-                .connectTimeout(Duration.ofSeconds(10))
-                .build();
+        this.httpClient = HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NEVER)
+                .connectTimeout(Duration.ofSeconds(10)).build();
     }
 
     public DownloadedRemoteFile download(String rawUrl, String requestedFilename) {
         URI currentUri = sanitizeAndValidate(rawUrl);
 
         for (int redirectCount = 0; redirectCount <= MAX_REDIRECTS; redirectCount++) {
-            HttpRequest request = HttpRequest.newBuilder(currentUri)
-                    .timeout(readTimeout)
-                    .header("User-Agent", "YuAgent-Remote-Importer/1.0")
-                    .GET()
-                    .build();
+            HttpRequest request = HttpRequest.newBuilder(currentUri).timeout(readTimeout)
+                    .header("User-Agent", "YuAgent-Remote-Importer/1.0").GET().build();
 
             try {
-                HttpResponse<InputStream> response = httpClient.send(request, HttpResponse.BodyHandlers.ofInputStream());
-                int statusCode = response.statusCode();
+                HttpResponse<InputStream> response = httpClient.send(request,
+                        HttpResponse.BodyHandlers.ofInputStream());
+                try (InputStream responseBody = response.body()) {
+                    int statusCode = response.statusCode();
 
-                if (isRedirect(statusCode)) {
-                    if (redirectCount == MAX_REDIRECTS) {
-                        throw new BusinessException("远程文件重定向次数过多");
+                    if (isRedirect(statusCode)) {
+                        if (redirectCount == MAX_REDIRECTS) {
+                            throw new BusinessException("远程文件重定向次数过多");
+                        }
+                        String location = response.headers().firstValue("location")
+                                .orElseThrow(() -> new BusinessException("远程文件重定向失败"));
+                        currentUri = sanitizeAndValidate(currentUri.resolve(location).toString());
+                        continue;
                     }
-                    String location = response.headers().firstValue("location")
-                            .orElseThrow(() -> new BusinessException("远程文件重定向失败"));
-                    currentUri = sanitizeAndValidate(currentUri.resolve(location).toString());
-                    continue;
+
+                    if (statusCode >= 400) {
+                        throw new BusinessException("远程文件下载失败，状态码: " + statusCode);
+                    }
+
+                    String contentType = resolveContentType(response.headers(), currentUri);
+                    long declaredLength = response.headers().firstValueAsLong("content-length").orElse(-1L);
+                    if (declaredLength > maxFileSize) {
+                        throw new BusinessException("远程文件超过当前导入上限");
+                    }
+
+                    byte[] body = readWithinLimit(responseBody);
+                    if (body.length == 0) {
+                        throw new BusinessException("远程文件内容为空");
+                    }
+
+                    String detectedContentType = detectContentType(contentType, body);
+
+                    URI discoveredDownloadUri = discoverDownloadUri(currentUri, detectedContentType, body);
+                    if (discoveredDownloadUri != null) {
+                        currentUri = discoveredDownloadUri;
+                        continue;
+                    }
+
+                    ensureImportableBody(currentUri, detectedContentType, body);
+
+                    String filename = resolveFilename(requestedFilename, response.headers(), currentUri,
+                            detectedContentType);
+                    String extension = getExtension(filename);
+                    if (!SUPPORTED_EXTENSIONS.contains(extension)) {
+                        throw new BusinessException("当前仅支持导入 PDF、Word、TXT、Markdown、HTML、CSV、Excel、JSON 文件");
+                    }
+
+                    return new DownloadedRemoteFile(rawUrl, filename, detectedContentType, body);
                 }
-
-                if (statusCode >= 400) {
-                    throw new BusinessException("远程文件下载失败，状态码: " + statusCode);
-                }
-
-                String contentType = resolveContentType(response.headers(), currentUri);
-                long declaredLength = response.headers().firstValueAsLong("content-length").orElse(-1L);
-                if (declaredLength > maxFileSize) {
-                    throw new BusinessException("远程文件超过当前导入上限");
-                }
-
-                byte[] body = readWithinLimit(response.body());
-                if (body.length == 0) {
-                    throw new BusinessException("远程文件内容为空");
-                }
-
-                String detectedContentType = detectContentType(contentType, body);
-
-                URI discoveredDownloadUri = discoverDownloadUri(currentUri, detectedContentType, body);
-                if (discoveredDownloadUri != null) {
-                    currentUri = discoveredDownloadUri;
-                    continue;
-                }
-
-                ensureImportableBody(currentUri, detectedContentType, body);
-
-                String filename = resolveFilename(requestedFilename, response.headers(), currentUri, detectedContentType);
-                String extension = getExtension(filename);
-                if (!SUPPORTED_EXTENSIONS.contains(extension)) {
-                    throw new BusinessException("当前仅支持导入 PDF、Word、TXT、Markdown、HTML、CSV、Excel、JSON 文件");
-                }
-
-                return new DownloadedRemoteFile(rawUrl, filename, detectedContentType, body);
             } catch (HttpTimeoutException e) {
                 throw new BusinessException("远程文件下载超时", e);
             } catch (IOException e) {
@@ -216,7 +210,8 @@ public class RemoteFileImportService {
 
         String html = new String(body, StandardCharsets.UTF_8).toLowerCase(Locale.ROOT);
         if (isProtectedHtmlPage(html) || isProtectedAcademicLandingPage(currentUri, html)) {
-            throw new BusinessException("璇ラ摼鎺ユ寚鍚戠殑鏄綉绔欓槻鎶撳彇鎴栨潈闄愭牎楠岄〉闈紝鏃犳硶鐩存帴瀵煎叆銆傝浣跨敤鍙洿鎺ヨ闂殑 PDF 閾炬帴锛屾垨鍏堝湪鏈湴涓嬭浇鍚庡啀涓婁紶");
+            throw new BusinessException(
+                    "璇ラ摼鎺ユ寚鍚戠殑鏄綉绔欓槻鎶撳彇鎴栨潈闄愭牎楠岄〉闈紝鏃犳硶鐩存帴瀵煎叆銆傝浣跨敤鍙洿鎺ヨ闂殑 PDF 閾炬帴锛屾垨鍏堝湪鏈湴涓嬭浇鍚庡啀涓婁紶");
         }
     }
 
@@ -234,8 +229,7 @@ public class RemoteFileImportService {
             return false;
         }
         String host = currentUri.getHost().toLowerCase(Locale.ROOT);
-        return host.contains("ieeexplore.ieee.org")
-                && !html.contains(".pdf")
+        return host.contains("ieeexplore.ieee.org") && !html.contains(".pdf")
                 && (html.contains("ieee") || html.contains("xplore"));
     }
 
@@ -322,10 +316,8 @@ public class RemoteFileImportService {
     }
 
     private String resolveContentType(HttpHeaders headers, URI uri) {
-        String contentType = headers.firstValue("content-type")
-                .map(value -> value.split(";")[0].trim())
-                .filter(StringUtils::hasText)
-                .orElse(null);
+        String contentType = headers.firstValue("content-type").map(value -> value.split(";")[0].trim())
+                .filter(StringUtils::hasText).orElse(null);
         if (StringUtils.hasText(contentType)) {
             return contentType;
         }
@@ -334,11 +326,11 @@ public class RemoteFileImportService {
     }
 
     private byte[] readWithinLimit(InputStream inputStream) throws IOException {
-        try (InputStream in = inputStream; ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+        try (ByteArrayOutputStream out = new ByteArrayOutputStream()) {
             byte[] buffer = new byte[8192];
             long totalRead = 0;
             int read;
-            while ((read = in.read(buffer)) != -1) {
+            while ((read = inputStream.read(buffer)) != -1) {
                 totalRead += read;
                 if (totalRead > maxFileSize) {
                     throw new BusinessException("远程文件超过当前导入上限");
@@ -380,8 +372,7 @@ public class RemoteFileImportService {
                 String value = trimmed.substring("filename*=".length());
                 int quoteIndex = value.indexOf("''");
                 if (quoteIndex >= 0 && quoteIndex + 2 < value.length()) {
-                    return URLDecoder.decode(value.substring(quoteIndex + 2).replace("\"", ""),
-                            StandardCharsets.UTF_8);
+                    return URLDecoder.decode(value.substring(quoteIndex + 2).replace("\"", ""), StandardCharsets.UTF_8);
                 }
             }
             if (trimmed.startsWith("filename=")) {

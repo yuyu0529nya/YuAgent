@@ -5,18 +5,11 @@ import { Copy, ChevronDown, ChevronUp, Key, Code, Book, Shield } from "lucide-re
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
-import { toast } from "@/hooks/use-toast"
+import { useCopy } from "@/hooks/use-copy"
 
 export function ApiUsageGuide() {
   const [isExpanded, setIsExpanded] = useState(false)
-
-  const copyToClipboard = (text: string, description: string) => {
-    navigator.clipboard.writeText(text)
-    toast({
-      title: "已复制到剪贴板",
-      description,
-    })
-  }
+  const { copyToClipboard } = useCopy()
 
   const curlExample = `curl -X POST https://api.yuagent.ai/v1/chat/completions \\
   -H "Authorization: Bearer YOUR_API_KEY" \\
@@ -91,7 +84,7 @@ axios.post('https://api.yuagent.ai/v1/chat/completions', data, { headers })
               variant="ghost"
               size="sm"
               className="mt-2"
-              onClick={() => copyToClipboard("Authorization: Bearer YOUR_API_KEY", "认证头已复制")}
+              onClick={() => void copyToClipboard("Authorization: Bearer YOUR_API_KEY", "认证头已复制")}
             >
               <Copy className="mr-2 h-4 w-4" />
               复制认证头
@@ -110,7 +103,7 @@ axios.post('https://api.yuagent.ai/v1/chat/completions', data, { headers })
               variant="ghost"
               size="sm"
               className="mt-2"
-              onClick={() => copyToClipboard(curlExample, "cURL 示例已复制")}
+              onClick={() => void copyToClipboard(curlExample, "cURL 示例已复制")}
             >
               <Copy className="mr-2 h-4 w-4" />
               复制 cURL 示例
@@ -141,7 +134,7 @@ axios.post('https://api.yuagent.ai/v1/chat/completions', data, { headers })
                   variant="ghost"
                   size="sm"
                   className="mt-2"
-                  onClick={() => copyToClipboard(pythonExample, "Python 示例已复制")}
+                  onClick={() => void copyToClipboard(pythonExample, "Python 示例已复制")}
                 >
                   <Copy className="mr-2 h-4 w-4" />
                   复制 Python 代码
@@ -160,7 +153,7 @@ axios.post('https://api.yuagent.ai/v1/chat/completions', data, { headers })
                   variant="ghost"
                   size="sm"
                   className="mt-2"
-                  onClick={() => copyToClipboard(nodejsExample, "Node.js 示例已复制")}
+                  onClick={() => void copyToClipboard(nodejsExample, "Node.js 示例已复制")}
                 >
                   <Copy className="mr-2 h-4 w-4" />
                   复制 Node.js 代码

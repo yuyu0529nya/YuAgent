@@ -1,8 +1,7 @@
 import { useState } from "react"
 import { Wrench, Download } from "lucide-react"
 import { 
-  AlertDialog, 
-  AlertDialogAction, 
+  AlertDialog,
   AlertDialogCancel, 
   AlertDialogContent, 
   AlertDialogFooter, 
@@ -10,6 +9,7 @@ import {
   AlertDialogTitle 
 } from "@/components/ui/alert-dialog"
 import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
 import { toast } from "@/hooks/use-toast"
 import { Tool } from "@/types/tool"
 import { installToolWithToast } from "@/lib/tool-service"
@@ -50,24 +50,16 @@ export function InstallToolDialog({
           description: "工具ID不存在",
           variant: "destructive"
         });
-        setInstalling(false);
         return;
       }
       
       // 直接调用API
       const response = await installToolWithToast(actualToolId, versionToUse)
         
-        if (response.code !== 200) {
-          // 错误处理由withToast处理
-          setInstalling(false)
-          onOpenChange(false)
-          return
+      if (response.code !== 200) {
+        // 错误提示由 withToast 统一展示，保留对话框以便用户修正后重试。
+        return
       }
-      
-      toast({
-        title: "安装成功",
-        description: `${tool.name} (${displayVersion}) 已成功安装`,
-      })
       
       if (onSuccess) {
         onSuccess()
@@ -118,14 +110,15 @@ export function InstallToolDialog({
         )}
         
         <AlertDialogFooter className="gap-2 mt-4">
-          <AlertDialogCancel className="flex-1">取消</AlertDialogCancel>
-          <AlertDialogAction 
+          <AlertDialogCancel className="flex-1" disabled={installing}>取消</AlertDialogCancel>
+          <Button
+            type="button"
             className="flex-1"
             onClick={handleInstallTool}
             disabled={installing}
           >
             {installing ? "安装中..." : "安装"}
-          </AlertDialogAction>
+          </Button>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>

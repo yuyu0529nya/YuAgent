@@ -6,6 +6,7 @@ import com.github.dockerjava.api.command.CreateContainerResponse;
 import com.github.dockerjava.api.command.InspectContainerResponse;
 import com.github.dockerjava.api.command.StartContainerCmd;
 import com.github.dockerjava.api.exception.DockerException;
+import com.github.dockerjava.api.exception.NotFoundException;
 import com.github.dockerjava.api.model.*;
 import com.github.dockerjava.core.DefaultDockerClientConfig;
 import com.github.dockerjava.core.DockerClientImpl;
@@ -168,6 +169,10 @@ public class DockerService {
             dockerClient.stopContainerCmd(containerId).withTimeout(10) // 10秒超时
                     .exec();
             logger.info("成功停止容器: {}", containerId);
+        } catch (NotFoundException e) {
+            // Stop is intentionally idempotent. Cleanup can race with a
+            // previous removal or with Docker's own lifecycle handling.
+            logger.debug("容器已不存在，无需停止: {}", containerId);
         } catch (Exception e) {
             logger.error("容器停止失败: {}", containerId, e);
         }
@@ -212,6 +217,10 @@ public class DockerService {
 
             dockerClient.removeContainerCmd(containerId).withForce(force).exec();
             logger.info("成功删除容器: {}", containerId);
+        } catch (NotFoundException e) {
+            // A missing container already satisfies a delete request. Do not
+            // turn normal cleanup into an error or keep retrying it in logs.
+            logger.debug("容器已不存在，无需删除: {}", containerId);
         } catch (DockerException e) {
             logger.error("删除容器失败: {}", containerId, e);
         }

@@ -5,6 +5,7 @@ import { ChevronDown, ChevronUp, Copy, Check } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { cn } from "@/lib/utils"
+import { useCopy } from "@/hooks/use-copy"
 
 interface ContentDisplayProps {
   content: string
@@ -23,6 +24,7 @@ export function ContentDisplay({
 }: ContentDisplayProps) {
   const [isOpen, setIsOpen] = useState(false)
   const [copied, setCopied] = useState(false)
+  const { copyToClipboard } = useCopy()
 
   // 如果内容为空或null，显示占位符
   if (!content) {
@@ -52,12 +54,10 @@ export function ContentDisplay({
   const truncatedContent = isLong ? formattedContent.substring(0, maxLength) + "..." : formattedContent
 
   const handleCopy = async () => {
-    try {
-      await navigator.clipboard.writeText(formattedContent)
+    const succeeded = await copyToClipboard(formattedContent, "内容已复制")
+    if (succeeded) {
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
-    } catch (err) {
- 
     }
   }
 

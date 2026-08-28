@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/components/ui/sheet';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
@@ -37,29 +37,35 @@ const KnowledgeBaseDetailSidebar: React.FC<KnowledgeBaseDetailSidebarProps> = ({
   const [versions, setVersions] = useState<UserRagDTO[]>([]);
   const [isLoadingVersions, setIsLoadingVersions] = useState(false);
   const [isSwitchingVersion, setIsSwitchingVersion] = useState(false);
+  const latestDetailsRequestRef = useRef(0);
+  const latestFilesRequestRef = useRef(0);
+  const latestVersionsRequestRef = useRef(0);
 
   // 获取版本列表
-  const fetchVersionList = async () => {
-    const knowledgeBaseToUse = detailedKnowledgeBase || initialKnowledgeBase;
+  const fetchVersionList = useCallback(async (knowledgeBaseToUse: KnowledgeBase) => {
     if (!knowledgeBaseToUse?.userRagId) return;
 
+    const requestId = ++latestVersionsRequestRef.current;
     setIsLoadingVersions(true);
     try {
- 
       const response = await getInstalledRagVersionsWithToast(knowledgeBaseToUse.userRagId);
+      if (requestId !== latestVersionsRequestRef.current) return;
+
       if (response.code === 200) {
         setVersions(response.data || []);
       } else {
- 
         setVersions([]);
       }
-    } catch (error) {
- 
-      setVersions([]);
+    } catch {
+      if (requestId === latestVersionsRequestRef.current) {
+        setVersions([]);
+      }
     } finally {
-      setIsLoadingVersions(false);
+      if (requestId === latestVersionsRequestRef.current) {
+        setIsLoadingVersions(false);
+      }
     }
-  };
+  }, []);
 
   // 版本切换
   const handleVersionSwitch = async (targetVersionId: string) => {
@@ -86,10 +92,7 @@ const KnowledgeBaseDetailSidebar: React.FC<KnowledgeBaseDetailSidebarProps> = ({
         knowledgeBaseDetailsCache.delete(knowledgeBaseToUse.id);
         
         // 刷新版本列表和文件列表
-        await Promise.all([
-          fetchVersionList(),
-          fetchFileList()
-        ]);
+        await Promise.all([fetchVersionList(updatedKnowledgeBase), fetchFileList(updatedKnowledgeBase)]);
 
         // 通知父组件更新
         if (onVersionSwitch) {
@@ -104,93 +107,92 @@ const KnowledgeBaseDetailSidebar: React.FC<KnowledgeBaseDetailSidebarProps> = ({
   };
 
   // 获取文件列表
-  const fetchFileList = async () => {
-    if (!initialKnowledgeBase) return;
-    
+  const fetchFileList = useCallback(async (knowledgeBaseToUse: KnowledgeBase) => {
+    if (!knowledgeBaseToUse) return;
+
+    const requestId = ++latestFilesRequestRef.current;
     setIsLoadingFiles(true);
     try {
       // 优先使用已安装RAG的文件接口，使用详细信息中的userRagId
-      const knowledgeBaseToUse = detailedKnowledgeBase || initialKnowledgeBase;
-      
       if (knowledgeBaseToUse.userRagId) {
- 
         const response = await getInstalledRagFilesWithToast(knowledgeBaseToUse.userRagId);
+        if (requestId !== latestFilesRequestRef.current) return;
+
         if (response.code === 200) {
           setFiles(response.data || []);
         } else {
- 
           setFiles([]);
         }
       } else {
- 
         // 向后兼容：如果没有userRagId，使用原始方法
         const response = await getAllKnowledgeBaseFilesWithToast(knowledgeBaseToUse.id);
+        if (requestId !== latestFilesRequestRef.current) return;
+
         if (response.code === 200) {
           setFiles(response.data);
         } else {
- 
           setFiles([]);
         }
       }
-    } catch (error) {
- 
-      setFiles([]);
+    } catch {
+      if (requestId === latestFilesRequestRef.current) {
+        setFiles([]);
+      }
     } finally {
-      setIsLoadingFiles(false);
+      if (requestId === latestFilesRequestRef.current) {
+        setIsLoadingFiles(false);
+      }
     }
-  };
+  }, []);
 
   useEffect(() => {
-    if (isOpen && initialKnowledgeBase) {
-      const cacheKey = initialKnowledgeBase.id;
-      
-      // 如果缓存中有这个知识库的详情且包含userRagId，直接使用
-      const cachedData = knowledgeBaseDetailsCache.get(cacheKey);
-      if (cachedData && cachedData.userRagId) {
-        setDetailedKnowledgeBase(cachedData);
-        // 缓存命中时也要获取文件列表和版本列表
-        setTimeout(() => {
-          Promise.all([
-            fetchVersionList(),
-            cachedData.fileCount > 0 ? fetchFileList() : Promise.resolve()
-          ]);
-        }, 100);
-      } else {
-        const fetchDetails = async () => {
-          setIsLoading(true);
-          try {
-            const response = await getKnowledgeBaseDetail(initialKnowledgeBase.id);
-            if (response.code === 200) {
-              const detailData = response.data;
-              setDetailedKnowledgeBase(detailData);
-              // 缓存详情数据
-              knowledgeBaseDetailsCache.set(cacheKey, detailData);
-              
-              // 获取详细信息后立即获取版本列表和文件列表
-              setTimeout(() => {
-                Promise.all([
-                  fetchVersionList(),
-                  detailData.fileCount > 0 ? fetchFileList() : Promise.resolve()
-                ]);
-              }, 100); // 小延迟确保状态更新完成
-            } else {
- 
-            }
-          } catch (error) {
- 
-          } finally {
-            setIsLoading(false);
-          }
-        };
+    if (!isOpen || !initialKnowledgeBase) return;
 
-        fetchDetails();
+    const cacheKey = initialKnowledgeBase.id;
+    const requestId = ++latestDetailsRequestRef.current;
+    setDetailedKnowledgeBase(null);
+    setIsLoading(false);
+    setFiles([]);
+    setVersions([]);
+    setShowFileList(true);
+
+    const load = async () => {
+      const cachedData = knowledgeBaseDetailsCache.get(cacheKey);
+      if (cachedData?.userRagId) {
+        setDetailedKnowledgeBase(cachedData);
+        await Promise.all([
+          fetchVersionList(cachedData),
+          cachedData.fileCount > 0 ? fetchFileList(cachedData) : Promise.resolve(),
+        ]);
+        return;
       }
-      
-      // 重置文件列表状态
-      setFiles([]);
-      setShowFileList(true);
-    }
-  }, [isOpen, initialKnowledgeBase]);
+
+      setIsLoading(true);
+      try {
+        const response = await getKnowledgeBaseDetail(cacheKey);
+        if (requestId !== latestDetailsRequestRef.current || response.code !== 200) return;
+
+        const detailData = response.data;
+        setDetailedKnowledgeBase(detailData);
+        knowledgeBaseDetailsCache.set(cacheKey, detailData);
+        await Promise.all([
+          fetchVersionList(detailData),
+          detailData.fileCount > 0 ? fetchFileList(detailData) : Promise.resolve(),
+        ]);
+      } finally {
+        if (requestId === latestDetailsRequestRef.current) {
+          setIsLoading(false);
+        }
+      }
+    };
+
+    void load();
+    return () => {
+      latestDetailsRequestRef.current += 1;
+      latestFilesRequestRef.current += 1;
+      latestVersionsRequestRef.current += 1;
+    };
+  }, [fetchFileList, fetchVersionList, initialKnowledgeBase, isOpen]);
 
   const handleClose = () => {
     onClose();

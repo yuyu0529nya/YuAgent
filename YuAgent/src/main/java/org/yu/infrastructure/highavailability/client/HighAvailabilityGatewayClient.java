@@ -1,5 +1,11 @@
 package org.yu.infrastructure.highavailability.client;
 
+import jakarta.annotation.PreDestroy;
+import java.io.IOException;
+import java.net.URI;
+import java.nio.charset.StandardCharsets;
+import java.util.List;
+import org.apache.http.client.config.RequestConfig;
 import org.apache.http.client.methods.CloseableHttpResponse;
 import org.apache.http.client.methods.HttpDelete;
 import org.apache.http.client.methods.HttpPost;
@@ -24,10 +30,6 @@ import org.yu.infrastructure.highavailability.dto.response.ApiInstanceDTO;
 import org.yu.infrastructure.highavailability.dto.response.GatewayResult;
 import org.yu.infrastructure.utils.JsonUtils;
 import org.apache.http.client.methods.HttpEntityEnclosingRequestBase;
-import java.net.URI;
-
-import java.nio.charset.StandardCharsets;
-import java.util.List;
 
 /** 高可用网关HTTP客户端 负责与高可用网关进行HTTP通信
  * 
@@ -43,7 +45,23 @@ public class HighAvailabilityGatewayClient {
 
     public HighAvailabilityGatewayClient(HighAvailabilityProperties properties) {
         this.properties = properties;
-        this.httpClient = HttpClients.createDefault();
+        this.httpClient = createHttpClient();
+    }
+
+    @PreDestroy
+    public void close() {
+        try {
+            httpClient.close();
+        } catch (IOException e) {
+            logger.warn("Failed to close high-availability gateway HTTP client", e);
+        }
+    }
+
+    private CloseableHttpClient createHttpClient() {
+        RequestConfig requestConfig = RequestConfig.custom().setConnectTimeout(properties.getConnectTimeout())
+                .setSocketTimeout(properties.getReadTimeout())
+                .setConnectionRequestTimeout(properties.getConnectTimeout()).build();
+        return HttpClients.custom().setDefaultRequestConfig(requestConfig).build();
     }
 
     /** 选择最佳API实例 */

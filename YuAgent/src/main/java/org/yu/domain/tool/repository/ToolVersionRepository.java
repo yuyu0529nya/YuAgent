@@ -1,16 +1,22 @@
 package org.yu.domain.tool.repository;
 
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+
 import org.apache.ibatis.annotations.Mapper;
+import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
 import org.yu.domain.tool.model.ToolVersionEntity;
 import org.yu.infrastructure.repository.MyBatisPlusExtRepository;
 
-import java.util.List;
-
 @Mapper
 public interface ToolVersionRepository extends MyBatisPlusExtRepository<ToolVersionEntity> {
 
-    @Select("SELECT * FROM tool_version t1 " + "WHERE t1.public_status = true "
-            + "AND t1.created_at = (SELECT MAX(t2.created_at) FROM tool_version t2 WHERE t2.tool_id = t1.tool_id AND t2.public_status = true)")
-    List<ToolVersionEntity> listLatestPublicToolVersions();
+    @Select("SELECT * FROM (" + "SELECT t.*, ROW_NUMBER() OVER (PARTITION BY t.tool_id "
+            + "ORDER BY t.created_at DESC, t.id DESC) AS row_number "
+            + "FROM tool_versions t WHERE t.public_status = true AND t.deleted_at IS NULL" + ") latest "
+            + "WHERE latest.row_number = 1 "
+            + "AND (#{toolName} IS NULL OR #{toolName} = '' OR latest.name LIKE CONCAT('%', #{toolName}, '%')) "
+            + "ORDER BY latest.created_at DESC, latest.id DESC")
+    Page<ToolVersionEntity> selectLatestPublicToolVersions(Page<ToolVersionEntity> page,
+            @Param("toolName") String toolName);
 }

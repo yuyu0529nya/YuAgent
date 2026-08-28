@@ -9,7 +9,8 @@ import { ChatInputArea } from "@/components/rag-chat/ChatInputArea"
 import { FileDetailPanel } from "@/components/rag-chat/FileDetailPanel"
 import { useUserRagChatSession } from "@/hooks/rag-chat/useUserRagChatSession"
 import { useChatLayout } from "@/hooks/rag-chat/useChatLayout"
-import type { UserRagDTO, RetrievedFileInfo } from "@/types/rag-dataset"
+import type { RetrievedFileInfo } from "@/types/rag-dataset"
+import type { UserRagDTO } from "@/types/rag-publish"
 
 interface InstalledRagChatDialogProps {
   open: boolean

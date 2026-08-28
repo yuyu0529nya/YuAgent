@@ -29,12 +29,8 @@ export default function AgentsPage() {
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchInput, setSearchInput] = useState("");
-  const searchTimeoutRef = useRef<NodeJS.Timeout>();
+  const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   
-  // 初始化时同步searchInput和searchQuery
-  useEffect(() => {
-    setSearchInput(searchQuery);
-  }, []);
   const [statusFilter, setStatusFilter] = useState<boolean | undefined>(undefined);
   const [pagination, setPagination] = useState({
     current: 1,

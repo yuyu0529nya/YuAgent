@@ -1,7 +1,7 @@
 "use client"
 
 import { Book, User, FileText, Trash, FolderOpen, Eye, MessageSquare, RefreshCw, History } from "lucide-react"
-import { useMemo, useState, useEffect } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -56,6 +56,8 @@ export function InstalledRagDetailDialog({
   const [selectedVersionId, setSelectedVersionId] = useState<string>("")
   const [isSwitchingVersion, setIsSwitchingVersion] = useState(false)
   const [versionsLoading, setVersionsLoading] = useState(false)
+  const latestFileCountRequestRef = useRef(0)
+  const latestVersionsRequestRef = useRef(0)
 
   // 判断是否为用户自己的知识库
   const isOwner = useMemo(() => {
@@ -67,55 +69,71 @@ export function InstalledRagDetailDialog({
     return new Date(dateString).toLocaleString('zh-CN')
   }
   
-  // 获取实时文件数量 - 当对话框打开或版本切换时更新
-  useEffect(() => {
-    const fetchFileCount = async () => {
-      if (!open || !userRag?.id) {
-        setRealTimeFileCount(null)
-        return
-      }
-      
-      try {
-        const response = await getInstalledRagFilesWithToast(userRag.id)
-        if (response.code === 200) {
-          setRealTimeFileCount(response.data.length)
-        } else {
-          // API失败时，使用后端返回的统计数据
-          setRealTimeFileCount(userRag.fileCount || 0)
-        }
-      } catch (error) {
- 
-        // 失败时使用后端返回的统计数据
+  const loadFileCount = useCallback(async () => {
+    const userRagId = userRag?.id
+    if (!open || !userRagId) {
+      setRealTimeFileCount(null)
+      return
+    }
+
+    const requestId = ++latestFileCountRequestRef.current
+    try {
+      const response = await getInstalledRagFilesWithToast(userRagId)
+      if (requestId !== latestFileCountRequestRef.current) return
+
+      setRealTimeFileCount(response.code === 200 ? response.data.length : userRag.fileCount || 0)
+    } catch {
+      if (requestId === latestFileCountRequestRef.current) {
         setRealTimeFileCount(userRag.fileCount || 0)
       }
     }
-    
-    fetchFileCount()
-  }, [open, userRag?.id, userRag?.ragVersionId]) // 添加ragVersionId依赖，版本切换时重新获取
+  }, [open, userRag?.fileCount, userRag?.id])
 
-  // 获取可用版本列表
-  useEffect(() => {
-    const fetchVersions = async () => {
-      if (!open || !userRag?.originalRagId) {
-        return
+  const loadVersions = useCallback(async () => {
+    const originalRagId = userRag?.originalRagId
+    if (!open || !originalRagId) {
+      setAvailableVersions([])
+      return
+    }
+
+    const requestId = ++latestVersionsRequestRef.current
+    setVersionsLoading(true)
+    try {
+      const response = await getRagVersionHistory(originalRagId)
+      if (requestId !== latestVersionsRequestRef.current) return
+
+      if (response.code === 200) {
+        setAvailableVersions(response.data)
+        setSelectedVersionId(userRag?.ragVersionId || "")
+      } else {
+        setAvailableVersions([])
       }
-      
-      setVersionsLoading(true)
-      try {
-        const response = await getRagVersionHistory(userRag.originalRagId)
-        if (response.code === 200) {
-          setAvailableVersions(response.data)
-          setSelectedVersionId(userRag.ragVersionId || "")
-        }
-      } catch (error) {
- 
-      } finally {
+    } catch {
+      if (requestId === latestVersionsRequestRef.current) {
+        setAvailableVersions([])
+      }
+    } finally {
+      if (requestId === latestVersionsRequestRef.current) {
         setVersionsLoading(false)
       }
     }
-    
-    fetchVersions()
   }, [open, userRag?.originalRagId, userRag?.ragVersionId])
+
+  // 获取实时文件数量 - 当对话框打开或版本切换时更新
+  useEffect(() => {
+    void loadFileCount()
+    return () => {
+      latestFileCountRequestRef.current += 1
+    }
+  }, [loadFileCount, userRag?.ragVersionId])
+
+  // 获取可用版本列表
+  useEffect(() => {
+    void loadVersions()
+    return () => {
+      latestVersionsRequestRef.current += 1
+    }
+  }, [loadVersions])
 
   // 处理版本切换
   const handleVersionSwitch = async (targetVersionId: string) => {

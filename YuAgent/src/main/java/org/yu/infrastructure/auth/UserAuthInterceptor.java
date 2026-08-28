@@ -45,7 +45,8 @@ public class UserAuthInterceptor implements HandlerInterceptor {
             }
 
             if (!authHeader.startsWith(BEARER_PREFIX)) {
-                logger.warn("认证失败 - Authorization头格式错误: {} {}, header: {}", method, requestURI, authHeader);
+                // Authorization 头可能包含凭据，日志中绝不能记录其原始内容。
+                logger.warn("认证失败 - Authorization头格式错误: {} {}", method, requestURI);
                 writeErrorResponse(response, "认证头格式错误");
                 return false;
             }
@@ -61,8 +62,7 @@ public class UserAuthInterceptor implements HandlerInterceptor {
 
             // 验证token
             if (!JwtUtils.validateToken(token)) {
-                logger.warn("认证失败 - Token验证失败: {} {}, token前缀: {}", method, requestURI,
-                        token.length() > 20 ? token.substring(0, 20) + "..." : token);
+                logger.warn("认证失败 - Token验证失败: {} {}", method, requestURI);
                 writeErrorResponse(response, "Token无效或已过期");
                 return false;
             }

@@ -14,9 +14,7 @@ import org.yu.infrastructure.mcp_gateway.MCPGatewayService;
 import java.util.List;
 import java.util.Map;
 
-/**
- * Fetches tool definitions from the review container after deployment.
- */
+/** Fetches tool definitions from the review container after deployment. */
 public class AppFetchingToolsProcessor implements AppToolStateProcessor {
 
     private static final Logger logger = LoggerFactory.getLogger(AppFetchingToolsProcessor.class);
@@ -54,8 +52,8 @@ public class AppFetchingToolsProcessor implements AppToolStateProcessor {
             ReviewContainerService.ReviewContainerConnection reviewConnection = reviewContainerService
                     .getReviewContainerConnection();
 
-            logger.info("Fetching tool definitions from review container {}:{} for server {}", reviewConnection.getIpAddress(),
-                    reviewConnection.getPort(), mcpServerName);
+            logger.info("Fetching tool definitions from review container {}:{} for server {}",
+                    reviewConnection.getIpAddress(), reviewConnection.getPort(), mcpServerName);
 
             List<ToolDefinition> toolDefinitions = fetchToolDefinitionsWithRetry(mcpServerName, reviewConnection);
             if (toolDefinitions == null || toolDefinitions.isEmpty()) {
@@ -87,12 +85,16 @@ public class AppFetchingToolsProcessor implements AppToolStateProcessor {
         BusinessException lastBusinessException = null;
         for (int attempt = 1; attempt <= 5; attempt++) {
             try {
-                Thread.sleep(attempt == 1 ? 3000L : 2000L);
                 return mcpGatewayService.listToolsFromReviewContainer(mcpServerName, reviewConnection.getIpAddress(),
                         reviewConnection.getPort());
             } catch (BusinessException ex) {
                 lastBusinessException = ex;
                 logger.warn("Fetch tool list attempt {}/5 failed for {}: {}", attempt, mcpServerName, ex.getMessage());
+                if (attempt < 5) {
+                    // A successful deployment is usually ready immediately. Delay only after
+                    // a failed probe, with a small bounded backoff for slow-starting tools.
+                    Thread.sleep(Math.min(1000L * attempt, 3000L));
+                }
             }
         }
         throw lastBusinessException == null ? new BusinessException("获取工具列表失败") : lastBusinessException;

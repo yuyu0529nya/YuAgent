@@ -1,6 +1,7 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useEffect, useRef, useState } from "react"
+import dynamic from "next/dynamic"
 import { Search, RefreshCw, X, Book, Download } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
@@ -31,7 +32,9 @@ import {
 import { getCurrentUserId, getCurrentUserIdAsync } from "@/lib/user-service"
 import type { UserRagDTO, PageResponse } from "@/types/rag-publish"
 import { InstalledRagCard } from "../cards/InstalledRagCard"
-import { InstalledRagDetailDialog } from "../dialogs/InstalledRagDetailDialog"
+
+const InstalledRagDetailDialog = dynamic(() => import("../dialogs/InstalledRagDetailDialog")
+  .then(module => module.InstalledRagDetailDialog))
 
 export function InstalledRagsSection() {
   const [installedRags, setInstalledRags] = useState<UserRagDTO[]>([])
@@ -43,6 +46,8 @@ export function InstalledRagsSection() {
   const [ragToUninstall, setRagToUninstall] = useState<UserRagDTO | null>(null)
   const [ragToViewDetails, setRagToViewDetails] = useState<UserRagDTO | null>(null)
   const [isUninstalling, setIsUninstalling] = useState(false)
+  const [showAll, setShowAll] = useState(false)
+  const latestRequestIdRef = useRef(0)
   
   // 分页状态
   const [pageData, setPageData] = useState<PageResponse<UserRagDTO>>({
@@ -79,11 +84,17 @@ export function InstalledRagsSection() {
 
   // 获取安装的RAG列表
   useEffect(() => {
+    setShowAll(false)
     loadInstalledRags(1, debouncedQuery)
+
+    return () => {
+      latestRequestIdRef.current += 1
+    }
   }, [debouncedQuery])
 
   // 加载安装的RAG
   const loadInstalledRags = async (page: number = 1, keyword?: string) => {
+    const requestId = ++latestRequestIdRef.current
     try {
       setLoading(true)
       setError(null)
@@ -94,6 +105,10 @@ export function InstalledRagsSection() {
         keyword: keyword?.trim() || undefined
       })
 
+      if (requestId !== latestRequestIdRef.current) {
+        return
+      }
+
       if (response.code === 200) {
         setPageData(response.data)
         setInstalledRags(response.data.records || [])
@@ -101,10 +116,15 @@ export function InstalledRagsSection() {
         setError(response.message)
       }
     } catch (error) {
+      if (requestId !== latestRequestIdRef.current) {
+        return
+      }
       const errorMessage = error instanceof Error ? error.message : "未知错误"
       setError(errorMessage)
     } finally {
-      setLoading(false)
+      if (requestId === latestRequestIdRef.current) {
+        setLoading(false)
+      }
     }
   }
 
@@ -147,6 +167,7 @@ export function InstalledRagsSection() {
   // 分页处理
   const handlePageChange = (page: number) => {
     if (page < 1 || page > pageData.pages) return
+    setShowAll(false)
     loadInstalledRags(page, debouncedQuery)
   }
 
@@ -198,8 +219,8 @@ export function InstalledRagsSection() {
   }
 
   // 显示的数据集数量
-  const displayedRags = installedRags.slice(0, 4)
-  const hasMore = installedRags.length > 4
+  const displayedRags = showAll ? installedRags : installedRags.slice(0, 4)
+  const hasMore = !showAll && installedRags.length > 4
 
   return (
     <div className="mb-8 bg-white p-6 rounded-lg shadow-sm border border-gray-100">
@@ -305,11 +326,56 @@ export function InstalledRagsSection() {
             <div className="flex justify-center mt-4">
               <Button
                 variant="outline"
-                onClick={() => loadInstalledRags(1, debouncedQuery)}
+                onClick={() => setShowAll(true)}
               >
                 查看全部 ({installedRags.length})
               </Button>
             </div>
+          )}
+
+          {pageData.pages > 1 && (
+            <Pagination className="mt-6">
+              <PaginationContent>
+                <PaginationItem>
+                  <PaginationPrevious
+                    href="#installed-rags"
+                    onClick={(event) => {
+                      event.preventDefault()
+                      handlePageChange(pageData.current - 1)
+                    }}
+                    aria-disabled={pageData.current === 1}
+                    className={pageData.current === 1 ? "pointer-events-none opacity-50" : undefined}
+                  />
+                </PaginationItem>
+                {generatePageNumbers().map((page, index) => (
+                  <PaginationItem key={`${page}-${index}`}>
+                    {typeof page === "string" ? <PaginationEllipsis /> : (
+                      <PaginationLink
+                        href="#installed-rags"
+                        isActive={page === pageData.current}
+                        onClick={(event) => {
+                          event.preventDefault()
+                          handlePageChange(page)
+                        }}
+                      >
+                        {page}
+                      </PaginationLink>
+                    )}
+                  </PaginationItem>
+                ))}
+                <PaginationItem>
+                  <PaginationNext
+                    href="#installed-rags"
+                    onClick={(event) => {
+                      event.preventDefault()
+                      handlePageChange(pageData.current + 1)
+                    }}
+                    aria-disabled={pageData.current === pageData.pages}
+                    className={pageData.current === pageData.pages ? "pointer-events-none opacity-50" : undefined}
+                  />
+                </PaginationItem>
+              </PaginationContent>
+            </Pagination>
           )}
         </>
       )}
@@ -330,7 +396,7 @@ export function InstalledRagsSection() {
           <DialogHeader>
             <DialogTitle>确认卸载</DialogTitle>
             <DialogDescription>
-              您确定要卸载知识库 "{ragToUninstall?.name}" 吗？卸载后将无法在对话中使用该知识库。
+              您确定要卸载知识库 &quot;{ragToUninstall?.name}&quot; 吗？卸载后将无法在对话中使用该知识库。
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>

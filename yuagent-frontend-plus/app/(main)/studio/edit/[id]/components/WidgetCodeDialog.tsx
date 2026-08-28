@@ -108,7 +108,7 @@ export default function WidgetCodeDialog({ open, onClose, widget, onCopy }: Widg
       <DialogContent className="max-h-[80vh] max-w-4xl overflow-auto">
         <DialogHeader>
           <DialogTitle>小组件嵌入代码</DialogTitle>
-          <DialogDescription>复制以下代码到你的网站中，即可嵌入 "{widget.name}" 小组件。</DialogDescription>
+          <DialogDescription>复制以下代码到你的网站中，即可嵌入 &quot;{widget.name}&quot; 小组件。</DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4">

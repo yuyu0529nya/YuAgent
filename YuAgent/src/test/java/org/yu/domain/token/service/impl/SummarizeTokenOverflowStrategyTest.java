@@ -2,10 +2,10 @@ package org.yu.domain.token.service.impl;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.yu.domain.token.model.TokenMessage;
 import org.yu.domain.token.model.TokenProcessResult;
 import org.yu.domain.token.model.config.TokenOverflowConfig;
+import org.yu.infrastructure.exception.BusinessException;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -17,7 +17,6 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.*;
 
 /** 摘要策略测试类 */
-@SpringBootTest
 public class SummarizeTokenOverflowStrategyTest {
 
     private SummarizeTokenOverflowStrategy strategy;
@@ -35,8 +34,9 @@ public class SummarizeTokenOverflowStrategyTest {
         strategy = new SummarizeTokenOverflowStrategy(config);
     }
 
-    /** 测试正常处理逻辑 */
+    /** 真实摘要依赖已配置的模型服务商，保留为手工集成测试。 */
     @Test
+    @org.junit.jupiter.api.Disabled("需要真实模型服务商配置和网络访问")
     public void testProcess() {
         // 执行处理
         TokenProcessResult process = strategy.process(messages, new TokenOverflowConfig());
@@ -96,8 +96,9 @@ public class SummarizeTokenOverflowStrategyTest {
         assertEquals(smallMessages, result, "应该返回原始列表");
     }
 
-    /** 测试GetMessagesToSummarize方法 */
+    /** 真实摘要依赖已配置的模型服务商，保留为手工集成测试。 */
     @Test
+    @org.junit.jupiter.api.Disabled("需要真实模型服务商配置和网络访问")
     public void testGetMessagesToSummarize() {
         // 先执行处理
         strategy.process(messages, new TokenOverflowConfig());
@@ -115,6 +116,14 @@ public class SummarizeTokenOverflowStrategyTest {
                     messagesToSummarize.get(i - 1).getCreatedAt().isAfter(messagesToSummarize.get(i).getCreatedAt()),
                     "需要摘要的消息应该按时间顺序排序");
         }
+    }
+
+    @Test
+    public void shouldFailClearlyWhenProviderConfigIsMissing() {
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> strategy.process(messages, new TokenOverflowConfig()));
+
+        assertEquals("摘要策略需要模型服务商配置", exception.getMessage());
     }
 
     /** 创建指定数量和token数的测试消息 */

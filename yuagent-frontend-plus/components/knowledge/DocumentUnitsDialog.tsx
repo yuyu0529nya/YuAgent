@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { MessageMarkdown } from '@/components/ui/message-markdown'
 import { 
   FileText, 
@@ -77,6 +77,8 @@ export function DocumentUnitsDialog({ open, onOpenChange, file }: DocumentUnitsD
   const [editContent, setEditContent] = useState("")
   const [savingUnit, setSavingUnit] = useState<string | null>(null)
   const [deletingUnit, setDeletingUnit] = useState<DocumentUnitDTO | null>(null)
+  const latestFileInfoRequestRef = useRef(0)
+  const latestUnitsRequestRef = useRef(0)
   
   // 分页状态
   const [pageData, setPageData] = useState<PageResponse<DocumentUnitDTO>>({
@@ -95,28 +97,22 @@ export function DocumentUnitsDialog({ open, onOpenChange, file }: DocumentUnitsD
     return () => clearTimeout(timer)
   }, [searchQuery])
 
-  // 加载文件信息和文档单元
-  useEffect(() => {
-    if (open && file) {
-      loadFileInfo()
-      loadDocumentUnits(1, debouncedQuery)
-    }
-  }, [open, file, debouncedQuery])
-
   // 加载文件信息
-  const loadFileInfo = async () => {
+  const loadFileInfo = useCallback(async () => {
+    const requestId = ++latestFileInfoRequestRef.current
     try {
       const response = await getFileInfoWithToast(file.id)
-      if (response.code === 200) {
+      if (requestId === latestFileInfoRequestRef.current && response.code === 200) {
         setFileInfo(response.data)
       }
-    } catch (error) {
+    } catch {
  
     }
-  }
+  }, [file.id])
 
   // 加载文档单元列表
-  const loadDocumentUnits = async (page: number = 1, keyword?: string) => {
+  const loadDocumentUnits = useCallback(async (page: number = 1, keyword?: string) => {
+    const requestId = ++latestUnitsRequestRef.current
     try {
       setLoading(true)
       const response = await getDocumentUnitsWithToast({
@@ -126,16 +122,40 @@ export function DocumentUnitsDialog({ open, onOpenChange, file }: DocumentUnitsD
         keyword: keyword?.trim() || undefined
       })
       
-      if (response.code === 200) {
+      if (requestId === latestUnitsRequestRef.current && response.code === 200) {
         setPageData(response.data)
         setDocumentUnits(response.data.records || [])
       }
-    } catch (error) {
+    } catch {
  
     } finally {
-      setLoading(false)
+      if (requestId === latestUnitsRequestRef.current) {
+        setLoading(false)
+      }
     }
-  }
+  }, [file.id])
+
+  useEffect(() => {
+    if (!open) {
+      return
+    }
+
+    void loadFileInfo()
+    return () => {
+      latestFileInfoRequestRef.current += 1
+    }
+  }, [loadFileInfo, open])
+
+  useEffect(() => {
+    if (!open) {
+      return
+    }
+
+    void loadDocumentUnits(1, debouncedQuery)
+    return () => {
+      latestUnitsRequestRef.current += 1
+    }
+  }, [debouncedQuery, loadDocumentUnits, open])
 
   // 开始编辑
   const startEdit = (unit: DocumentUnitDTO) => {

@@ -4,7 +4,6 @@ import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
 import org.yu.domain.rag.model.VectorStoreResult;
-import org.yu.infrastructure.repository.MyBatisPlusExtRepository;
 
 import java.util.List;
 
@@ -12,7 +11,7 @@ import java.util.List;
  * 
  * @author claude */
 @Mapper
-public interface VectorStoreRepository extends MyBatisPlusExtRepository<VectorStoreResult> {
+public interface VectorStoreRepository {
 
     /** 基于PostgreSQL全文搜索的关键词检索 使用中文分词配置和ts_rank_cd进行相关性排序
      * 

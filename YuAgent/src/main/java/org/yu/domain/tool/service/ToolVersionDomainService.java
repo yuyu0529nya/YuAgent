@@ -6,7 +6,6 @@ import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 
 import java.util.List;
-import java.util.Map;
 
 import org.springframework.stereotype.Service;
 import org.yu.domain.tool.model.ToolVersionEntity;
@@ -24,31 +23,10 @@ public class ToolVersionDomainService {
     }
 
     public Page<ToolVersionEntity> listToolVersion(QueryToolRequest queryToolRequest) {
-        long page = queryToolRequest.getPage();
-        long pageSize = queryToolRequest.getPageSize();
-        String toolName = queryToolRequest.getToolName();
-        // 1. 查询所有公开版本，支持名称模糊
-        LambdaQueryWrapper<ToolVersionEntity> wrapper = Wrappers.<ToolVersionEntity>lambdaQuery()
-                .eq(ToolVersionEntity::getPublicStatus, true)
-                .like(toolName != null && !toolName.isEmpty(), ToolVersionEntity::getName, toolName)
-                .orderByDesc(ToolVersionEntity::getCreatedAt);
-        List<ToolVersionEntity> allPublicList = toolVersionRepository.selectList(wrapper);
-        // 2. 按tool_id分组，取每组created_at最大的一条
-        Map<String, ToolVersionEntity> latestMap = allPublicList.stream()
-                .collect(java.util.stream.Collectors.toMap(ToolVersionEntity::getToolId, v -> v,
-                        (v1, v2) -> v1.getCreatedAt().isAfter(v2.getCreatedAt()) ? v1 : v2));
-        List<ToolVersionEntity> latestList = new java.util.ArrayList<>(latestMap.values());
-        // 3. 按创建时间倒序排列
-        latestList.sort((a, b) -> b.getCreatedAt().compareTo(a.getCreatedAt()));
-        // 4. 手动分页
-        int fromIndex = (int) ((page - 1) * pageSize);
-        int toIndex = Math.min(fromIndex + (int) pageSize, latestList.size());
-        List<ToolVersionEntity> pageList = fromIndex >= latestList.size()
-                ? new java.util.ArrayList<>()
-                : latestList.subList(fromIndex, toIndex);
-        Page<ToolVersionEntity> resultPage = new Page<>(page, pageSize, latestList.size());
-        resultPage.setRecords(pageList);
-        return resultPage;
+        long page = Math.max(queryToolRequest.getPage() == null ? 1 : queryToolRequest.getPage(), 1);
+        long pageSize = Math.max(queryToolRequest.getPageSize() == null ? 15 : queryToolRequest.getPageSize(), 1);
+        return toolVersionRepository.selectLatestPublicToolVersions(new Page<>(page, pageSize),
+                queryToolRequest.getToolName());
     }
 
     /** 获取工具版本（带权限验证）

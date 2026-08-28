@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { UserTool, VersionData } from "../../utils/types";
 import {
   Dialog,
@@ -39,8 +39,8 @@ export function ToolHistoryVersionsDialog({
   const [updatingStatus, setUpdatingStatus] = useState<string | null>(null); // 记录正在更新状态的版本ID
   
   // 获取工具版本列表
-  const fetchVersions = async () => {
-    if (!tool || !tool.toolId) return;
+  const fetchVersions = useCallback(async () => {
+    if (!tool?.toolId) return;
     
     try {
       setLoading(true);
@@ -70,22 +70,22 @@ export function ToolHistoryVersionsDialog({
           id: item.id,
           name: item.name,
           icon: item.icon,
-          subtitle: item.subtitle,
-          description: item.description,
-          userId: item.userId || item.user_id || "",
+          subtitle: item.subtitle ?? "",
+          description: item.description ?? "",
+          userId: item.userId ?? "",
           version: item.version,
-          toolId: item.toolId || item.tool_id || "",
-          uploadType: item.uploadType || item.upload_type || null,
-          uploadUrl: item.uploadUrl || item.upload_url || null,
-          toolList: item.toolList || item.tool_list || [],
-          labels: item.labels || [],
-          publicStatus: item.publicStatus || item.public_status || false,
-          changeLog: item.changeLog || "",
-          createdAt: item.createdAt,
-          updatedAt: item.updatedAt,
-          userName: item.userName || null,
-          installCount: item.installCount || null,
-          office: item.office || item.is_office || false
+          toolId: item.toolId,
+          uploadType: item.uploadType,
+          uploadUrl: item.uploadUrl,
+          toolList: item.toolList ?? [],
+          labels: item.labels ?? [],
+          publicStatus: Boolean(item.publicStatus),
+          changeLog: item.changeLog ?? "",
+          createdAt: item.createdAt ?? "",
+          updatedAt: item.updatedAt ?? "",
+          userName: item.userName,
+          installCount: item.installCount ?? null,
+          office: Boolean(item.isOffice ?? item.office)
         }));
         
         setVersions(typedVersions);
@@ -97,20 +97,20 @@ export function ToolHistoryVersionsDialog({
       } else {
         setError("获取版本历史失败");
       }
-    } catch (error) {
+    } catch {
       setError("获取版本历史出错");
  
     } finally {
       setLoading(false);
     }
-  };
+  }, [tool?.toolId]);
   
   // 当对话框打开时获取版本信息
   useEffect(() => {
     if (open && tool) {
       fetchVersions();
     }
-  }, [open, tool]);
+  }, [fetchVersions, open, tool]);
   
   // 选择版本
   const handleSelectVersion = (version: VersionData) => {
@@ -133,7 +133,7 @@ export function ToolHistoryVersionsDialog({
       
       if (response.code === 200) {
         // 更新本地版本列表状态
-        setVersions(versions.map(v => {
+        setVersions(previousVersions => previousVersions.map(v => {
           if (v.id === version.id) {
             return { ...v, publicStatus: newStatus };
           }
@@ -141,11 +141,11 @@ export function ToolHistoryVersionsDialog({
         }));
         
         // 如果当前选中的是这个版本，也更新选中版本的状态
-        if (selectedVersion && selectedVersion.id === version.id) {
-          setSelectedVersion({ ...selectedVersion, publicStatus: newStatus });
-        }
+        setSelectedVersion(previousVersion => previousVersion?.id === version.id
+          ? { ...previousVersion, publicStatus: newStatus }
+          : previousVersion);
       }
-    } catch (error) {
+    } catch {
  
     } finally {
       setUpdatingStatus(null);

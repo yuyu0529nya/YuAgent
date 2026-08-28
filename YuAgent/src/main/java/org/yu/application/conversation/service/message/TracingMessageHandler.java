@@ -68,8 +68,14 @@ public abstract class TracingMessageHandler extends AbstractMessageHandler {
 
     @Override
     public <T> T chat(ChatContext chatContext, org.yu.infrastructure.transport.MessageTransport<T> transport) {
+        return chat(chatContext, transport, null);
+    }
+
+    @Override
+    public <T> T chat(ChatContext chatContext, org.yu.infrastructure.transport.MessageTransport<T> transport,
+            Consumer<T> onConnectionCreated) {
         try {
-            return super.chat(chatContext, transport);
+            return super.chat(chatContext, transport, onConnectionCreated);
         } finally {
             currentTraceContext.remove();
         }

@@ -13,11 +13,26 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.when;
 
 class ToolDomainServiceTest {
+
+    @Test
+    void shouldReturnNullWhenNoInstalledToolMatchesServerName() {
+        ToolRepository toolRepository = Mockito.mock(ToolRepository.class);
+        ToolVersionRepository toolVersionRepository = Mockito.mock(ToolVersionRepository.class);
+        UserToolRepository userToolRepository = Mockito.mock(UserToolRepository.class);
+        UserRepository userRepository = Mockito.mock(UserRepository.class);
+        when(userToolRepository.selectOne(any())).thenReturn(null);
+
+        ToolDomainService toolDomainService = new ToolDomainService(toolRepository, toolVersionRepository,
+                userToolRepository, userRepository);
+
+        assertNull(toolDomainService.getUserInstalledToolByServerName("missing-server", "u1"));
+    }
 
     @Test
     void shouldClassifyCommandBasedGithubSourceAsLocalUpload() {

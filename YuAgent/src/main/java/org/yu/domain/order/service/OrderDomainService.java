@@ -319,8 +319,8 @@ public class OrderDomainService {
         }
     }
     /** 只有在订单仍为期望状态时才更新，用于支付成功链路的幂等控制。 */
-    public boolean transitionOrderStatusAndProviderInfo(String orderId, OrderStatus expectedStatus, OrderStatus newStatus,
-            String providerOrderId) {
+    public boolean transitionOrderStatusAndProviderInfo(String orderId, OrderStatus expectedStatus,
+            OrderStatus newStatus, String providerOrderId) {
         if (!StringUtils.hasText(orderId)) {
             throw new BusinessException("订单ID不能为空");
         }

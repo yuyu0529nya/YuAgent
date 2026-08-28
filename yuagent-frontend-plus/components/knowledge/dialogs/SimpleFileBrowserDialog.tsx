@@ -1,12 +1,12 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { 
   FolderOpen, 
   Search, 
   File, 
   FileText, 
-  Image, 
+  Image as ImageIcon, 
   Video,
   Eye,
   X
@@ -36,9 +36,9 @@ import {
   getInstalledRagFilesWithToast 
 } from "@/lib/rag-publish-service"
 import type { 
-  UserRagDTO,
   FileDetail
 } from "@/types/rag-dataset"
+import type { UserRagDTO } from "@/types/rag-publish"
 import { FileDetailPanel } from "@/components/rag-chat/FileDetailPanel"
 
 interface SimpleFileBrowserDialogProps {
@@ -58,6 +58,7 @@ export function SimpleFileBrowserDialog({
   const [debouncedQuery, setDebouncedQuery] = useState("")
   const [selectedFile, setSelectedFile] = useState<FileDetail | null>(null)
   const [showFileDetail, setShowFileDetail] = useState(false)
+  const latestLoadRequestRef = useRef(0)
 
   // 搜索防抖
   useEffect(() => {
@@ -69,12 +70,18 @@ export function SimpleFileBrowserDialog({
   }, [searchQuery])
 
   // 加载文件列表
-  const loadFiles = async () => {
+  const loadFiles = useCallback(async () => {
     if (!userRag?.id) return
+
+    const requestId = ++latestLoadRequestRef.current
 
     setLoading(true)
     try {
       const response = await getInstalledRagFilesWithToast(userRag.id)
+
+      if (requestId !== latestLoadRequestRef.current) {
+        return
+      }
 
       if (response.code === 200) {
         let files = response.data || []
@@ -90,22 +97,32 @@ export function SimpleFileBrowserDialog({
         setFiles(files.slice(0, 100)) // 限制最多显示100个文件
       }
     } catch (error) {
+      if (requestId !== latestLoadRequestRef.current) {
+        return
+      }
       toast({
         title: "加载文件列表失败",
         description: error instanceof Error ? error.message : "未知错误",
         variant: "destructive"
       })
     } finally {
-      setLoading(false)
+      if (requestId === latestLoadRequestRef.current) {
+        setLoading(false)
+      }
     }
-  }
+  }, [debouncedQuery, userRag?.id])
 
   // 初始加载和搜索变化时重新加载
   useEffect(() => {
-    if (open && userRag) {
-      loadFiles()
+    if (!open || !userRag?.id) {
+      return
     }
-  }, [open, userRag, debouncedQuery])
+
+    void loadFiles()
+    return () => {
+      latestLoadRequestRef.current += 1
+    }
+  }, [loadFiles, open, userRag?.id])
 
   // 获取文件类型图标
   const getFileIcon = (fileName: string) => {
@@ -115,7 +132,7 @@ export function SimpleFileBrowserDialog({
     const extension = fileName.split('.').pop()?.toLowerCase()
     
     if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(extension || '')) {
-      return <Image className="h-4 w-4" />
+      return <ImageIcon className="h-4 w-4" />
     }
     if (['mp4', 'avi', 'mov', 'mkv'].includes(extension || '')) {
       return <Video className="h-4 w-4" />

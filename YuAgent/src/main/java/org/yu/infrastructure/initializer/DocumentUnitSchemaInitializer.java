@@ -10,10 +10,8 @@ import org.springframework.core.annotation.Order;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
-/**
- * Ensures newer document_unit metadata columns exist even when DB migrations
- * were skipped in an existing environment.
- */
+/** Ensures newer document_unit metadata columns exist even when DB migrations were skipped in an existing
+ * environment. */
 @Component
 @Order(20)
 public class DocumentUnitSchemaInitializer implements ApplicationRunner {

@@ -2,6 +2,8 @@ package org.yu.application.rag.service.manager;
 
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.yu.infrastructure.mq.core.MessageEnvelope;
 import org.yu.infrastructure.mq.core.MessagePublisher;
 import org.springframework.stereotype.Service;
@@ -25,6 +27,8 @@ import java.util.List;
  * @author shilong.zang */
 @Service
 public class FileOperationAppService {
+
+    private static final Logger log = LoggerFactory.getLogger(FileOperationAppService.class);
 
     private final FileDetailDomainService fileDetailDomainService;
     private final DocumentUnitDomainService documentUnitDomainService;
@@ -56,9 +60,6 @@ public class FileOperationAppService {
      * @param userId 用户ID
      * @return 分页结果 */
     public Page<DocumentUnitDTO> listDocumentUnits(QueryDocumentUnitsRequest request, String userId) {
-        // 验证文件是否存在和权限
-        fileDetailDomainService.getFileById(request.getFileId(), userId);
-
         IPage<DocumentUnitEntity> entityPage = documentUnitDomainService.listDocumentUnits(request.getFileId(), userId,
                 request.getPage(), request.getPageSize(), request.getKeyword());
 
@@ -112,10 +113,6 @@ public class FileOperationAppService {
      * @param userId 用户ID */
     @Transactional
     public void deleteDocumentUnit(String documentUnitId, String userId) {
-        // 验证语料是否存在
-        documentUnitDomainService.checkDocumentUnitExists(documentUnitId, userId);
-
-        // 删除语料
         documentUnitDomainService.deleteDocumentUnit(documentUnitId, userId);
     }
 
@@ -125,12 +122,13 @@ public class FileOperationAppService {
      * @param userId 用户ID */
     @Transactional
     public void batchDeleteFiles(BatchDeleteFilesRequest request, String userId) {
-        for (String fileUrl : request.getFileUrls()) {
+        List<FileDetailEntity> files = request.getFileUrls().stream()
+                .map(fileUrl -> fileDetailDomainService.getFileByUrl(fileUrl, userId)).toList();
+        for (FileDetailEntity file : files) {
             try {
-                fileStorageService.delete(fileUrl);
+                fileStorageService.delete(file.getUrl());
             } catch (Exception e) {
-                // 记录日志但继续删除其他文件
-                System.err.println("删除文件失败: " + fileUrl + ", 错误: " + e.getMessage());
+                log.warn("删除文件失败: {}", file.getId(), e);
             }
         }
     }
@@ -161,9 +159,7 @@ public class FileOperationAppService {
             messagePublisher.publish(RagDocSyncStorageEvent.route(), envelope);
 
         } catch (Exception e) {
-            // 记录日志但不影响主流程
-            // 可以考虑使用日志框架记录错误
-            System.err.println("触发重新向量化失败: " + e.getMessage());
+            log.warn("触发重新向量化失败: documentUnitId={}", documentUnit.getId(), e);
         }
     }
 }

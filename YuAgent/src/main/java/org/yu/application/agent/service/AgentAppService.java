@@ -157,8 +157,8 @@ public class AgentAppService {
     }
 
     /** 切换Agent的启用/禁用状态 */
-    public AgentDTO toggleAgentStatus(String agentId) {
-        AgentEntity agentEntity = agentServiceDomainService.toggleAgentStatus(agentId);
+    public AgentDTO toggleAgentStatus(String agentId, String userId) {
+        AgentEntity agentEntity = agentServiceDomainService.toggleAgentStatus(agentId, userId);
         return AgentAssembler.toDTO(agentEntity);
     }
 
@@ -209,13 +209,15 @@ public class AgentAppService {
     }
 
     /** 获取Agent的特定版本 */
-    public AgentVersionDTO getAgentVersion(String agentId, String versionNumber) {
+    public AgentVersionDTO getAgentVersion(String agentId, String versionNumber, String userId) {
+        agentServiceDomainService.getAgent(agentId, userId);
         AgentVersionEntity agentVersion = agentServiceDomainService.getAgentVersion(agentId, versionNumber);
         return AgentVersionAssembler.toDTO(agentVersion);
     }
 
     /** 获取Agent的最新版本 */
-    public AgentVersionDTO getLatestAgentVersion(String agentId) {
+    public AgentVersionDTO getLatestAgentVersion(String agentId, String userId) {
+        agentServiceDomainService.getAgent(agentId, userId);
         AgentVersionEntity latestAgentVersion = agentServiceDomainService.getLatestAgentVersion(agentId);
         return AgentVersionAssembler.toDTO(latestAgentVersion);
     }

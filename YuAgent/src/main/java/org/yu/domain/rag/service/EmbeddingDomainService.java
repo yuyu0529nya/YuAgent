@@ -69,15 +69,15 @@ public class EmbeddingDomainService implements MetadataConstant {
                     : finalMaxResults;
 
             Embedding queryEmbedding = Embedding.from(embeddingModel.embed(question).content().vector());
-            EmbeddingSearchResult<TextSegment> searchResult = embeddingStore.search(EmbeddingSearchRequest.builder()
-                    .filter(new IsIn(DATA_SET_ID, dataSetIds)).maxResults(searchLimit).minScore(finalMinScore)
-                    .queryEmbedding(queryEmbedding).build());
+            EmbeddingSearchResult<TextSegment> searchResult = embeddingStore
+                    .search(EmbeddingSearchRequest.builder().filter(new IsIn(DATA_SET_ID, dataSetIds))
+                            .maxResults(searchLimit).minScore(finalMinScore).queryEmbedding(queryEmbedding).build());
 
             List<EmbeddingMatch<TextSegment>> embeddingMatches = searchResult.matches();
             if (embeddingMatches.isEmpty() && finalMinScore > 0.3) {
-                EmbeddingSearchResult<TextSegment> fallbackResult = embeddingStore.search(EmbeddingSearchRequest
-                        .builder().filter(new IsIn(DATA_SET_ID, dataSetIds)).maxResults(searchLimit).minScore(0.3)
-                        .queryEmbedding(queryEmbedding).build());
+                EmbeddingSearchResult<TextSegment> fallbackResult = embeddingStore
+                        .search(EmbeddingSearchRequest.builder().filter(new IsIn(DATA_SET_ID, dataSetIds))
+                                .maxResults(searchLimit).minScore(0.3).queryEmbedding(queryEmbedding).build());
                 embeddingMatches = fallbackResult.matches();
             }
 

@@ -1,5 +1,6 @@
 package org.yu.application.container.service;
 
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -12,6 +13,7 @@ import static org.junit.jupiter.api.Assertions.*;
 /** 容器应用服务集成测试 - 使用真实数据 */
 @SpringBootTest
 @ActiveProfiles("test")
+@Disabled("需要真实 Docker、数据库和外部依赖；保留为手工冒烟验证，不参与自动化测试")
 class ContainerAppServiceIntegrationTest {
 
     @Autowired
@@ -39,10 +41,6 @@ class ContainerAppServiceIntegrationTest {
             System.err.println("获取审核容器连接信息失败: " + e.getMessage());
             e.printStackTrace();
             throw e;
-        }
-        // 需要加上 while，不然容器会自动关闭，这里只是为了测试使用
-        while (true) {
-            Thread.sleep(1000l);
         }
     }
 
@@ -73,13 +71,6 @@ class ContainerAppServiceIntegrationTest {
         System.out.println("- 外部端口: " + result.getExternalPort());
         System.out.println("- 卷路径: " + result.getVolumePath());
         System.out.println("- 状态: " + result.getStatus());
-        while (true) {
-            try {
-                Thread.sleep(1000L);
-            } catch (InterruptedException e) {
-                throw new RuntimeException(e);
-            }
-        }
     }
 
     /** 测试检查用户容器健康状态 - 使用真实数据 */

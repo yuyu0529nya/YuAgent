@@ -96,10 +96,6 @@ public class GlobalExceptionHandler {
     @ResponseStatus(HttpStatus.INTERNAL_SERVER_ERROR)
     public Result<Void> handleException(Exception e, HttpServletRequest request) {
         logger.error("Unexpected exception, URL: {}", request.getRequestURL(), e);
-        String message = e.getMessage();
-        if (message == null || message.isBlank()) {
-            return Result.serverError("服务器内部错误");
-        }
-        return Result.serverError("服务器内部错误: " + message);
+        return Result.serverError("服务器内部错误，请稍后重试");
     }
 }

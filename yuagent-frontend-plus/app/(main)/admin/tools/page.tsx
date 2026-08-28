@@ -39,7 +39,7 @@ export default function ToolsPage() {
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchInput, setSearchInput] = useState("");
-  const searchTimeoutRef = useRef<NodeJS.Timeout>();
+  const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [statusFilter, setStatusFilter] = useState<ToolStatus | undefined>(undefined);
   const [officeFilter, setOfficeFilter] = useState<boolean | undefined>(undefined);
   const [pagination, setPagination] = useState({
@@ -63,11 +63,6 @@ export default function ToolsPage() {
     officialTools: 0
   });
   const { toast } = useToast();
-
-  // 初始化时同步searchInput和searchQuery
-  useEffect(() => {
-    setSearchInput(searchQuery);
-  }, []);
 
   // 使用useMemo优化搜索参数
   const searchParams = useMemo(() => ({
@@ -514,7 +509,6 @@ export default function ToolsPage() {
                         checked={tool.isGlobal || false}
                         onCheckedChange={() => handleToggleGlobalStatus(tool)}
                         disabled={updatingToolIds.has(tool.id)}
-                        size="sm"
                       />
                       <span className={`text-sm ${updatingToolIds.has(tool.id) ? 'text-gray-400' : 'text-gray-600'}`}>
                         {updatingToolIds.has(tool.id) ? '更新中...' : (tool.isGlobal ? "全局" : "用户")}

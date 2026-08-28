@@ -37,6 +37,7 @@ import org.yu.interfaces.dto.tool.request.UpdateToolRequest;
 public class ToolAppService {
 
     private static final Logger logger = LoggerFactory.getLogger(ToolAppService.class);
+    private static final int RECOMMENDATION_LIMIT = 10;
 
     private final ToolDomainService toolDomainService;
 
@@ -176,7 +177,9 @@ public class ToolAppService {
         ToolVersionDTO toolVersionDTO = ToolAssembler.toDTO(toolVersionEntity);
         // 设置创建者昵称
         UserEntity userInfo = userDomainService.getUserInfo(toolVersionDTO.getUserId());
-        toolVersionDTO.setUserName(userInfo.getNickname());
+        if (userInfo != null) {
+            toolVersionDTO.setUserName(userInfo.getNickname());
+        }
 
         // 设置历史版本
         List<ToolVersionEntity> toolVersionEntities = toolVersionDomainService.getToolVersions(toolId, userId);
@@ -215,15 +218,12 @@ public class ToolAppService {
         Page<UserToolEntity> userToolEntityPage = userToolDomainService.listByUserId(userId, queryToolRequest);
 
         // 查询对应的工具是否还存在
-        ArrayList<String> toolIds = new ArrayList<>();
-
         Map<String, ToolEntity> toolMap = toolDomainService
                 .getByIds(userToolEntityPage.getRecords().stream().map(UserToolEntity::getToolId).toList()).stream()
                 .collect(Collectors.toMap(ToolEntity::getId, Function.identity()));
 
         List<ToolVersionDTO> list = userToolEntityPage.getRecords().stream().map(userToolEntity -> {
             ToolVersionDTO dto = ToolAssembler.toDTO(userToolEntity);
-            toolIds.add(userToolEntity.getToolId());
             if (!toolMap.containsKey(userToolEntity.getToolId())) {
                 dto.setDelete(true);
             }
@@ -236,32 +236,42 @@ public class ToolAppService {
         return tPage;
     }
 
+    /** Checks whether the current user installed one exact tool version.
+     *
+     * <p>
+     * This intentionally avoids loading the user's complete installed-tool page when a detail view only needs a boolean
+     * state.
+     * </p>
+     */
+    public boolean isToolVersionInstalled(String userId, String toolId, String version) {
+        UserToolEntity installedTool = userToolDomainService.findByToolIdAndUserId(toolId, userId);
+        return installedTool != null && version.equals(installedTool.getVersion());
+    }
+
     public List<ToolVersionDTO> getToolVersions(String toolId, String userId) {
         List<ToolVersionEntity> toolVersionEntities = toolVersionDomainService.getToolVersions(toolId, userId);
         return toolVersionEntities.stream().map(ToolAssembler::toDTO).toList();
     }
 
     public void uninstallTool(String toolId, String userId) {
-        // 先检查是否是用户自己创建的工具
+        ToolEntity toolEntity = null;
         try {
-            ToolEntity toolEntity = toolDomainService.getTool(toolId);
-            if (toolEntity != null && toolEntity.getUserId().equals(userId)) {
-                // 不允许删除用户自己创建的工具
-                throw new BusinessException("不允许卸载自己创建的工具");
-            }
+            toolEntity = toolDomainService.getTool(toolId);
         } catch (BusinessException e) {
-            // 如果原始工具不存在，说明已被删除，允许用户卸载已安装的工具
             logger.info("原始工具不存在，允许用户卸载已安装的工具: toolId={}, userId={}", toolId, userId);
         }
 
-        // 执行正常的卸载流程
+        if (toolEntity != null && userId.equals(toolEntity.getUserId())) {
+            throw new BusinessException("不允许卸载自己创建的工具");
+        }
+
         userToolDomainService.delete(toolId, userId);
     }
 
     public List<ToolVersionDTO> getRecommendTools() {
         QueryToolRequest queryToolRequest = new QueryToolRequest();
         queryToolRequest.setPage(1);
-        queryToolRequest.setPageSize(Integer.MAX_VALUE);
+        queryToolRequest.setPageSize(RECOMMENDATION_LIMIT);
         Page<ToolVersionEntity> listToolVersion = toolVersionDomainService.listToolVersion(queryToolRequest);
         List<ToolVersionEntity> records = listToolVersion.getRecords();
 
@@ -273,12 +283,6 @@ public class ToolAppService {
             dto.setInstallCount(toolsInstallMap.get(dto.getToolId()));
             return dto;
         }).toList();
-
-        if (records.size() > 10) {
-            // 使用随机数从所有记录中选取10条不重复的记录
-            Random random = new Random();
-            toolVersionDTOs = toolVersionDTOs.stream().sorted((a, b) -> random.nextInt(2) - 1).limit(10).toList();
-        }
 
         Map<String, String> userNicknameMap = userDomainService
                 .getByIds(toolVersionDTOs.stream().map(ToolVersionDTO::getUserId).toList()).stream()

@@ -2,15 +2,15 @@
 
 import type React from "react"
 
-import { useState, useEffect } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
+import dynamic from "next/dynamic"
 import { useRouter, usePathname } from "next/navigation"
-import { ChevronDown, ChevronRight, Compass, FolderOpen, Bot, RefreshCw, MoreHorizontal, Trash2, Settings } from "lucide-react"
+import { ChevronDown, ChevronRight, Compass, FolderOpen, Bot, MoreHorizontal, Trash2, Settings } from "lucide-react"
 
 import { cn } from "@/lib/utils"
 import { resolveAssetUrl } from "@/lib/asset-url"
 import { Button } from "@/components/ui/button"
 import { useWorkspace } from "@/contexts/workspace-context"
-import { getUserAgents, deleteWorkspaceAgent } from "@/lib/agent-service"
 import { Skeleton } from "@/components/ui/skeleton"
 import type { Agent } from "@/types/agent"
 import {
@@ -22,13 +22,12 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
-import { ModelSelectDialog } from "../components/model-select-dialog"
-import { 
-  getWorkspaceAgentsWithToast
-} from "@/lib/api-services"
-import { 
-  deleteWorkspaceAgentWithToast 
-} from "@/lib/agent-service"
+import { deleteWorkspaceAgentWithToast, getWorkspaceAgentsWithToast } from "@/lib/agent-service"
+
+const ModelSelectDialog = dynamic(
+  () => import("@/components/model-select-dialog").then(module => module.ModelSelectDialog),
+  { ssr: false },
+)
 
 type SidebarItem = {
   title: string
@@ -42,6 +41,7 @@ type SidebarItem = {
 type SidebarItemProps = {
   item: SidebarItem & { id?: string }
   depth?: number
+  onWorkspaceDeleted?: () => Promise<void> | void
 }
 
 type WorkspaceItemProps = {
@@ -50,9 +50,10 @@ type WorkspaceItemProps = {
   icon?: string
   avatar?: string | null
   onClick?: () => void
+  onDeleted?: () => Promise<void> | void
 }
 
-function WorkspaceItem({ id, name, icon, avatar, onClick }: WorkspaceItemProps) {
+function WorkspaceItem({ id, name, icon, avatar, onClick, onDeleted }: WorkspaceItemProps) {
   const { selectedWorkspaceId, setSelectedWorkspaceId, setSelectedConversationId } = useWorkspace()
   const isActive = selectedWorkspaceId === id
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
@@ -73,7 +74,7 @@ function WorkspaceItem({ id, name, icon, avatar, onClick }: WorkspaceItemProps) 
   const confirmDeleteWorkspace = async () => {
     try {
       setIsDeleting(true)
-      const response = await deleteWorkspaceAgent(id)
+      const response = await deleteWorkspaceAgentWithToast(id)
 
       if (response.code === 200) {
         // If the deleted workspace was selected, clear the selection
@@ -83,14 +84,13 @@ function WorkspaceItem({ id, name, icon, avatar, onClick }: WorkspaceItemProps) 
           router.push("/explore")
         }
 
-        // Refresh the sidebar
-        window.location.reload()
+        await onDeleted?.()
       } else {
         throw new Error(response.message || "删除失败")
       }
     } catch (error) {
  
-      alert("删除失败: " + (error instanceof Error ? error.message : "未知错误"))
+      // 失败提示由 deleteWorkspaceAgentWithToast 统一处理。
     } finally {
       setIsDeleting(false)
       setShowDeleteDialog(false)
@@ -119,8 +119,7 @@ function WorkspaceItem({ id, name, icon, avatar, onClick }: WorkspaceItemProps) 
   
   // 模型设置成功回调
   const handleModelSetSuccess = () => {
-    // 可以添加刷新agent列表的逻辑
-    window.location.reload()
+    setShowModelDialog(false)
   }
 
   return (
@@ -173,7 +172,7 @@ function WorkspaceItem({ id, name, icon, avatar, onClick }: WorkspaceItemProps) 
           <DialogHeader>
             <DialogTitle>确认移除</DialogTitle>
             <DialogDescription>
-              您确定要将助理 "{name}" 从工作区移除吗？此操作不会删除助理，但会移除与此助理的关联。
+              您确定要将助理 &quot;{name}&quot; 从工作区移除吗？此操作不会删除助理，但会移除与此助理的关联。
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -202,7 +201,7 @@ function WorkspaceItem({ id, name, icon, avatar, onClick }: WorkspaceItemProps) 
   )
 }
 
-function SidebarItemComponent({ item, depth = 0 }: SidebarItemProps) {
+function SidebarItemComponent({ item, depth = 0, onWorkspaceDeleted }: SidebarItemProps) {
   const router = useRouter()
   const pathname = usePathname()
   const { setSelectedWorkspaceId, setSelectedConversationId } = useWorkspace()
@@ -248,6 +247,7 @@ function SidebarItemComponent({ item, depth = 0 }: SidebarItemProps) {
                   name={child.title}
                   icon={typeof child.icon === "string" ? child.icon : undefined}
                   avatar={child.avatar}
+                  onDeleted={onWorkspaceDeleted}
                   onClick={() => {
                     if (childId) {
                       handleWorkspaceClick(childId)
@@ -286,40 +286,32 @@ export function Sidebar() {
   const { refreshTrigger } = useWorkspace()
   const [agents, setAgents] = useState<Agent[]>([])
   const [loading, setLoading] = useState(true)
-  const [modelDialogOpen, setModelDialogOpen] = useState(false)
-  const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null)
+  const latestRequestIdRef = useRef(0)
 
   // 加载工作区Agent列表
-  const loadWorkspaceAgents = async () => {
+  const loadWorkspaceAgents = useCallback(async () => {
+    const requestId = ++latestRequestIdRef.current
     setLoading(true)
     try {
       const response = await getWorkspaceAgentsWithToast()
-      if (response.code === 200 && Array.isArray(response.data)) {
+      if (requestId === latestRequestIdRef.current && response.code === 200 && Array.isArray(response.data)) {
         setAgents(response.data)
       }
     } catch (error) {
  
     } finally {
-      setLoading(false)
+      if (requestId === latestRequestIdRef.current) {
+        setLoading(false)
+      }
     }
-  }
+  }, [])
 
   useEffect(() => {
-    loadWorkspaceAgents()
-  }, [refreshTrigger])
-
-  // 处理移除Agent
-  const handleRemoveAgent = async (agentId: string) => {
-    try {
-      const response = await deleteWorkspaceAgentWithToast(agentId)
-      if (response.code === 200) {
-        // 重新加载工作区Agent列表
-        await loadWorkspaceAgents()
-      }
-    } catch (error) {
- 
+    void loadWorkspaceAgents()
+    return () => {
+      latestRequestIdRef.current += 1
     }
-  }
+  }, [loadWorkspaceAgents, refreshTrigger])
 
   // Create sidebar items with real agent data
   const sidebarItems: SidebarItem[] = [
@@ -347,7 +339,7 @@ export function Sidebar() {
       <div className="flex-1 overflow-auto py-4 px-3">
         <div className="space-y-2">
           {sidebarItems.map((item, index) => (
-            <SidebarItemComponent key={index} item={item} />
+            <SidebarItemComponent key={index} item={item} onWorkspaceDeleted={loadWorkspaceAgents} />
           ))}
 
           {/* Show loading state for workspaces */}

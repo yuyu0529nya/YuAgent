@@ -119,11 +119,7 @@ public class ScheduledTaskDomainService {
      * @param taskId 任务ID
      * @param executeTime 执行时间 */
     public void recordExecution(String taskId, LocalDateTime executeTime) {
-        ScheduledTaskEntity scheduledTaskEntity = new ScheduledTaskEntity();
-        scheduledTaskEntity.setNextExecuteTime(executeTime);
-        scheduledTaskEntity.setId(taskId);
-
-        scheduledTaskRepository.checkedUpdate(scheduledTaskEntity, Wrappers.<ScheduledTaskEntity>lambdaUpdate()
+        scheduledTaskRepository.checkedUpdate(Wrappers.<ScheduledTaskEntity>lambdaUpdate()
                 .eq(ScheduledTaskEntity::getId, taskId).set(ScheduledTaskEntity::getLastExecuteTime, executeTime));
     }
 

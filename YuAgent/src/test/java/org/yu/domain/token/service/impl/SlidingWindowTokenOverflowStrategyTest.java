@@ -2,7 +2,6 @@ package org.yu.domain.token.service.impl;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.yu.domain.token.model.TokenMessage;
 import org.yu.domain.token.model.TokenProcessResult;
 import org.yu.domain.token.model.config.TokenOverflowConfig;
@@ -17,7 +16,6 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.*;
 
 /** 滑动窗口策略测试类 */
-@SpringBootTest
 public class SlidingWindowTokenOverflowStrategyTest {
 
     private SlidingWindowTokenOverflowStrategy strategy;

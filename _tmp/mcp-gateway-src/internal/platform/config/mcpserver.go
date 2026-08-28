@@ -1,0 +1,25 @@
+package config
+
+import "sort"
+
+// MCPServerConfig 定义单个MCP服务器的配置
+type MCPServerConfig struct {
+	Workspace       string            `json:"workspace,omitempty"`
+	URL             string            `json:"url,omitempty"`
+	Command         string            `json:"command,omitempty"`
+	Args            []string          `json:"args,omitempty"`
+	Env             map[string]string `json:"env,omitempty"`
+	GatewayProtocol string            `json:"gateway_protocol,omitempty"`
+
+	LogConfig
+	McpServiceMgrConfig
+}
+
+func (c *MCPServerConfig) GetEnvs() []string {
+	list := make([]string, 0, len(c.Env))
+	for key, value := range c.Env {
+		list = append(list, key+"="+value)
+	}
+	sort.Strings(list)
+	return list
+}

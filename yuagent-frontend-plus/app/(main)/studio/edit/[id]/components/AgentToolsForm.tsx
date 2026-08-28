@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
 import { getInstalledTools } from "@/lib/tool-service"; // 导入获取工具的函数
+import { toMarketTool } from "@/lib/market-tool-mapper";
 import { getAvailableKnowledgeBasesWithToast } from "@/lib/agent-knowledge-base-service"; // 导入获取知识库的函数
 import type { Tool } from "@/types/tool"; // 导入 Tool 类型
 import type { AgentTool } from "@/types/agent"; // <-- Import AgentTool
@@ -52,7 +53,7 @@ const AgentToolsForm: React.FC<AgentToolsFormProps> = ({
       try {
         const response = await getInstalledTools({ pageSize: 100 });
         if (response.code === 200 && response.data && Array.isArray(response.data.records)) {
-          const tools = response.data.records;
+          const tools = response.data.records.map(toMarketTool);
           setInstalledTools(tools);
           // 缓存工具数据
           cachedTools = tools;

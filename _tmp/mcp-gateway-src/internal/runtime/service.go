@@ -1,0 +1,569 @@
+package runtime
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+	"os"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/lucky-aeon/agentx/plugin-helper/internal/platform/config"
+	"github.com/lucky-aeon/agentx/plugin-helper/internal/platform/xlog"
+	"github.com/lucky-aeon/agentx/plugin-helper/internal/runtime/bridge"
+	"github.com/mark3labs/mcp-go/client/transport"
+)
+
+type (
+	CmdStatus string
+)
+
+const (
+	Starting CmdStatus = "starting"
+	Running  CmdStatus = "Running"
+	Stopping CmdStatus = "Stopping"
+	Stopped  CmdStatus = "Stopped"
+	Failed   CmdStatus = "Failed"
+)
+
+const (
+	bridgeInitTimeout   = 20 * time.Second
+	bridgePingTimeout   = 3 * time.Second
+	bridgeStartupWindow = 3 * time.Second
+	messageSendTimeout  = 15 * time.Second
+)
+
+var messageHTTPClient = &http.Client{Timeout: messageSendTimeout}
+
+type ExportMcpService interface {
+	GetUrl() string
+	GetSSEUrl() string
+	GetMessageUrl() string
+	GetStatus() CmdStatus
+	SendMessage(message string) error
+	Info() McpServiceInfo
+	GetHealthStatus() map[string]interface{}
+}
+
+// McpService 表示一个运行中的服务实例
+type McpService struct {
+	Name    string
+	Config  config.MCPServerConfig
+	LogFile *os.File
+	logger  xlog.Logger // 用于记录CMD输出
+	Port    int         // 添加端口字段
+
+	portMgr PortManagerI
+
+	// 状态
+	Status CmdStatus
+
+	// 重试次数
+	RetryCount int
+	RetryMax   int
+
+	// bridge
+	bridge bridge.Bridge
+	isSSE  bool
+
+	// 状态详情
+	LastError      string    // 最后一次错误信息
+	FailureReason  string    // 失败原因
+	DeployedAt     time.Time // 部署时间
+	LastStartedAt  time.Time // 最后启动时间
+	LastStoppedAt  time.Time // 最后停止时间
+	HealthCheckURL string    // 健康检查URL
+
+	mutex sync.RWMutex
+}
+
+// NewMcpService 创建一个McpService实例
+func NewMcpService(name string, cfg config.MCPServerConfig, portMgr PortManagerI) *McpService {
+	logger := xlog.NewLogger(fmt.Sprintf("[MCP-%s]", name))
+	return &McpService{
+		Name:       name,
+		Config:     cfg,
+		Port:       0,
+		portMgr:    portMgr,
+		Status:     Stopped,
+		logger:     logger,
+		RetryMax:   cfg.McpServiceMgrConfig.GetMcpServiceRetryCount(),
+		DeployedAt: time.Now(),
+	}
+}
+
+// IsSSE 判断是否是SSE类型
+func (s *McpService) IsSSE() bool {
+	return s.Config.Command == "" && s.Config.URL != ""
+}
+
+// Stop 停止服务
+func (s *McpService) Stop(logger xlog.Logger) (err error) {
+	if s.IsSSE() {
+		s.mutex.Lock()
+		defer s.mutex.Unlock()
+		if s.Status != Running && s.Status != Starting {
+			return nil
+		}
+		logger.Infof("Stopping remote service %s", s.Name)
+		s.Status = Stopped
+		s.LastStoppedAt = time.Now()
+		return
+	}
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	if s.Status != Running && s.Status != Starting {
+		return
+	}
+
+	logger.Infof("Stopping service %s", s.Name)
+	s.Status = Stopping
+	s.LastStoppedAt = time.Now()
+	defer func() {
+		if s.Status == Stopping {
+			s.Status = Stopped
+		}
+		s.bridge = nil
+		if s.Port != 0 {
+			s.portMgr.ReleasePort(s.Port)
+			s.Port = 0
+		}
+	}()
+
+	// 停止stdio-sse桥接
+	if s.bridge != nil {
+		if err := s.bridge.Close(); err != nil {
+			logger.Errorf("Failed to stop stdio-sse bridge: %v", err)
+		}
+	}
+
+	// 关闭日志文件
+	if s.LogFile != nil {
+		err = s.LogFile.Close()
+		if err != nil {
+			logger.Errorf("Failed to close log file: %v", err)
+		}
+		s.LogFile = nil
+	}
+	return
+}
+
+// Start 启动服务
+func (s *McpService) Start(logger xlog.Logger) error {
+	if s.IsSSE() {
+		s.mutex.Lock()
+		defer s.mutex.Unlock()
+		if s.Status == Running {
+			return nil
+		}
+		s.Status = Running
+		s.LastStartedAt = time.Now()
+		s.LastError = ""
+		s.FailureReason = ""
+		s.HealthCheckURL = s.Config.URL
+		logger.Infof("服务 %s 是 SSE 类型，无需启动进程", s.Name)
+		return nil
+	}
+
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	if s.Status == Running {
+		return fmt.Errorf("服务 %s 已运行", s.Name)
+	}
+	if s.Status == Failed {
+		return fmt.Errorf("服务 %s 已失败，无法启动", s.Name)
+	}
+	if strings.TrimSpace(s.Config.Command) == "" {
+		s.LastError = "command is required"
+		s.FailureReason = "Invalid service configuration"
+		s.Status = Failed
+		return fmt.Errorf("service %s command is required", s.Name)
+	}
+
+	s.Status = Starting
+	s.LastStartedAt = time.Now()
+	s.LastError = ""
+	s.FailureReason = ""
+
+	if s.Port == 0 {
+		s.Port = s.portMgr.GetNextAvailablePort()
+		if s.Port == 0 {
+			s.LastError = "failed to allocate a local port"
+			s.FailureReason = "Port allocation failed"
+			s.Status = Failed
+			return fmt.Errorf("failed to allocate a local port for service %s", s.Name)
+		}
+		logger.Infof("Assigned port: %d", s.Port)
+	}
+	allocatedPort := s.Port
+	releasePort := func() {
+		if s.Port == allocatedPort {
+			s.portMgr.ReleasePort(allocatedPort)
+			s.Port = 0
+		}
+	}
+
+	// 创建日志文件。命名规则：{workspace}.{mcpname}.log，便于同一 logs/ 下区分不同 workspace。
+	// Workspace 缺省时只用 mcpname，保持向后兼容。
+	logName := s.Name + ".log"
+	if s.Config.Workspace != "" {
+		logName = s.Config.Workspace + "." + logName
+	}
+	logFile, err := xlog.CreateLogFile(s.Config.LogConfig.Path, logName)
+	if err != nil {
+		releasePort()
+		s.LastError = fmt.Sprintf("failed to create log file: %v", err)
+		s.FailureReason = "Log file creation failed"
+		s.Status = Failed
+		return fmt.Errorf("failed to create log file: %v", err)
+	}
+	logger.Infof("Created log file: %s", logFile.Name())
+	s.LogFile = logFile
+	closeLogFile := func() {
+		if s.LogFile == nil {
+			return
+		}
+		if closeErr := s.LogFile.Close(); closeErr != nil {
+			logger.Warnf("close logfile: %v", closeErr)
+		}
+		s.LogFile = nil
+	}
+
+	// 使用stdio-sse桥接代替supergateway
+	logger.Infof("Creating stdio-sse bridge for command: %s %s", s.Config.Command, strings.Join(s.Config.Args, " "))
+
+	// 创建stdio-sse桥接
+	ctx, cancel := context.WithTimeout(context.Background(), bridgeInitTimeout)
+	defer cancel()
+
+	var bridgeInstance bridge.Bridge
+	if s.Config.GatewayProtocol == "streamhttp" {
+		bridgeInstance, err = bridge.NewStdioToHTTPStreamBridge(ctx, transport.NewStdio(s.Config.Command, s.Config.GetEnvs(), s.Config.Args...), s.Name)
+		if err == nil {
+			s.isSSE = false
+		}
+	} else {
+		bridgeInstance, err = bridge.NewStdioToSSEBridge(ctx, transport.NewStdio(s.Config.Command, s.Config.GetEnvs(), s.Config.Args...), s.Name)
+		if err == nil {
+			s.isSSE = true
+		}
+	}
+	if err != nil {
+		closeLogFile()
+		releasePort()
+		s.LastError = fmt.Sprintf("failed to create bridge: %v", err)
+		s.FailureReason = "Bridge creation failed"
+		s.Status = Failed
+		return fmt.Errorf("failed to create bridge: %w", err)
+	}
+
+	s.bridge = bridgeInstance
+
+	// 使用通道来同步服务器启动状态
+	startupChan := make(chan error, 1)
+
+	// 在goroutine中启动bridge服务器（会阻塞运行）
+	go func() {
+		defer close(startupChan)
+		logger.Infof("Starting bridge server on port %d", s.Port)
+
+		// 启动服务器，这里会阻塞
+		if err := bridgeInstance.Start(fmt.Sprintf("0.0.0.0:%d", s.Port)); err != nil {
+			logger.Errorf("Bridge server failed: %v", err)
+			startupChan <- err
+			return
+		}
+	}()
+
+	// 等待服务器启动结果，最多等待3秒
+	startupTimeout := time.NewTimer(bridgeStartupWindow)
+	defer startupTimeout.Stop()
+
+	select {
+	case err := <-startupChan:
+		if err == nil {
+			err = fmt.Errorf("bridge server exited during startup")
+		}
+		if err != nil {
+			if closeErr := bridgeInstance.Close(); closeErr != nil {
+				logger.Warnf("failed to close bridge after startup error: %v", closeErr)
+			}
+			s.bridge = nil
+			closeLogFile()
+			releasePort()
+			s.LastError = err.Error()
+			s.FailureReason = "Bridge server startup failed"
+			s.Status = Failed
+			return fmt.Errorf("bridge server startup failed: %w", err)
+		}
+	case <-startupTimeout.C:
+		// 超时意味着服务器可能正在正常运行（因为Start()会阻塞）
+		// 我们可以通过健康检查来验证
+		logger.Infof("Bridge server startup timeout - checking if server is running")
+
+		// 简单检查：尝试ping bridge
+		pingCtx, pingCancel := context.WithTimeout(context.Background(), bridgePingTimeout)
+		defer pingCancel()
+		if err := bridgeInstance.Ping(pingCtx); err != nil {
+			if closeErr := bridgeInstance.Close(); closeErr != nil {
+				logger.Warnf("failed to close bridge after health check error: %v", closeErr)
+			}
+			s.bridge = nil
+			closeLogFile()
+			releasePort()
+			s.LastError = fmt.Sprintf("Bridge health check failed: %v", err)
+			s.FailureReason = "Bridge server not responding"
+			s.Status = Failed
+			return fmt.Errorf("bridge server not responding: %w", err)
+		}
+
+		logger.Infof("Bridge server is running and responding to ping")
+		break
+	}
+
+	s.Status = Running
+	s.RetryCount = s.RetryMax
+	s.HealthCheckURL = fmt.Sprintf("http://0.0.0.0:%d/health", s.Port)
+
+	logger.Infof("Started stdio-sse bridge for service %s on port %d", s.Name, s.Port)
+
+	// 监控桥接状态
+	return nil
+}
+
+// Restart 重启服务
+func (s *McpService) Restart(logger xlog.Logger) {
+	if s.IsSSE() {
+		logger.Infof("服务 %s 是 SSE 类型，刷新运行状态", s.Name)
+		if err := s.Stop(logger); err != nil {
+			logger.Errorf("Failed to stop remote service %s during restart: %v", s.Name, err)
+		}
+		if err := s.Start(logger); err != nil {
+			logger.Errorf("Failed to restart remote service %s: %v", s.Name, err)
+		}
+		return
+	}
+
+	// 检查重试次数，避免在锁内调用自身
+	s.mutex.Lock()
+	if s.RetryCount <= 0 {
+		logger.Warnf("No retry restart count left for %s, marking as failed", s.Name)
+		s.Status = Failed
+		s.FailureReason = "Max retry count reached"
+		s.LastError = "Service failed after maximum retry attempts"
+		s.mutex.Unlock()
+		return
+	}
+
+	s.RetryCount--
+	currentAttempt := s.RetryMax - s.RetryCount
+	retryCount := s.RetryCount
+	logger.Infof("Restarting %s (attempt %d/%d)", s.Name, currentAttempt, s.RetryMax)
+	s.mutex.Unlock()
+
+	if err := s.Stop(logger); err != nil {
+		logger.Errorf("Failed to stop service %s during restart: %v", s.Name, err)
+	}
+
+	// 在锁外调用Start
+	err := s.Start(logger)
+	if err != nil {
+		logger.Errorf("Failed to restart %s: %v", s.Name, err)
+
+		s.mutex.Lock()
+		s.LastError = fmt.Sprintf("Failed to restart: %v", err)
+		if retryCount > 0 {
+			s.FailureReason = fmt.Sprintf("Restart attempt %d/%d failed", currentAttempt, s.RetryMax)
+			s.mutex.Unlock()
+			// 在锁外延时重启，避免死锁
+			time.AfterFunc(5*time.Second, func() {
+				s.Restart(logger)
+			})
+		} else {
+			s.Status = Failed
+			s.FailureReason = "All restart attempts failed"
+			s.mutex.Unlock()
+		}
+	}
+}
+
+// SetConfig 设置配置, 下次启动时生效
+func (s *McpService) SetConfig(cfg config.MCPServerConfig) error {
+	if s.Status != Stopped {
+		return fmt.Errorf("service %s is running, cannot set config", s.Name)
+	}
+	s.Config = cfg
+	return nil
+}
+
+func (s *McpService) GetUrl() string {
+	if s.GetStatus() != Running {
+		return ""
+	}
+	if s.Config.URL != "" {
+		return s.Config.URL
+	}
+	if s.bridge != nil {
+		return "http://127.0.0.1:" + strconv.Itoa(s.Port)
+	}
+
+	return ""
+}
+
+func (s *McpService) GetSSEUrl() string {
+	if s.GetStatus() != Running {
+		return ""
+	}
+	if s.IsSSE() && s.Config.GatewayProtocol != "streamhttp" {
+		return s.Config.URL
+	}
+	if s.isSSE {
+		if sseBridge, ok := s.bridge.(bridge.SSEBridge); ok && sseBridge != nil {
+			sseUrl, _ := sseBridge.CompleteSseEndpoint()
+			return s.GetUrl() + sseUrl
+		}
+	}
+	return ""
+}
+
+func (s *McpService) GetMessageUrl() string {
+	if s.GetStatus() != Running {
+		return ""
+	}
+	if s.IsSSE() && s.Config.GatewayProtocol == "streamhttp" {
+		return s.Config.URL
+	}
+	if s.isSSE {
+		if sseBridge, ok := s.bridge.(bridge.SSEBridge); ok && sseBridge != nil {
+			mesUrl, _ := sseBridge.CompleteMessageEndpoint()
+			return s.GetUrl() + mesUrl
+		}
+		return ""
+	}
+	if httpBridge, ok := s.bridge.(bridge.HTTPStreamBridge); ok && httpBridge != nil {
+		httpUrl, _ := httpBridge.CompleteHTTPStreamEndpoint()
+		return s.GetUrl() + httpUrl
+	}
+	return ""
+}
+
+func (s *McpService) GetPort() int {
+	return s.Port
+}
+
+func (s *McpService) GetStatus() CmdStatus {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+	return s.Status
+}
+
+func (s *McpService) SendMessage(message string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), messageSendTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.GetMessageUrl(), strings.NewReader(message))
+	if err != nil {
+		return fmt.Errorf("failed to create message request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := messageHTTPClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to send message: %v", err)
+	}
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			s.logger.Errorf("Failed to close response body: %v", err)
+		}
+	}()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("failed to send message, status code: %d", resp.StatusCode)
+	}
+
+	return nil
+}
+
+type McpServiceInfo struct {
+	Name          string                 `json:"name"`
+	Status        CmdStatus              `json:"status"`
+	Config        config.MCPServerConfig `json:"config"`
+	Port          int                    `json:"port"`
+	LastError     string                 `json:"last_error,omitempty"`
+	FailureReason string                 `json:"failure_reason,omitempty"`
+	DeployedAt    time.Time              `json:"deployed_at"`
+	LastStartedAt time.Time              `json:"last_started_at,omitempty"`
+	LastStoppedAt time.Time              `json:"last_stopped_at,omitempty"`
+	RetryCount    int                    `json:"retry_count"`
+	RetryMax      int                    `json:"retry_max"`
+	URLs          ServiceURLs            `json:"urls"`
+}
+
+type ServiceURLs struct {
+	BaseURL    string `json:"base_url,omitempty"`
+	SSEUrl     string `json:"sse_url,omitempty"`
+	MessageUrl string `json:"message_url,omitempty"`
+}
+
+func (s *McpService) Info() McpServiceInfo {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+	return McpServiceInfo{
+		Name:          s.Name,
+		Status:        s.Status,
+		Config:        s.Config,
+		Port:          s.Port,
+		LastError:     s.LastError,
+		FailureReason: s.FailureReason,
+		DeployedAt:    s.DeployedAt,
+		LastStartedAt: s.LastStartedAt,
+		LastStoppedAt: s.LastStoppedAt,
+		RetryCount:    s.RetryCount,
+		RetryMax:      s.RetryMax,
+		URLs: ServiceURLs{
+			BaseURL:    s.GetUrl(),
+			SSEUrl:     s.GetSSEUrl(),
+			MessageUrl: s.GetMessageUrl(),
+		},
+	}
+}
+
+// GetHealthStatus returns detailed health information for the service
+func (s *McpService) GetHealthStatus() map[string]interface{} {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+
+	health := map[string]interface{}{
+		"name":            s.Name,
+		"status":          s.Status,
+		"healthy":         s.Status == Running,
+		"port":            s.Port,
+		"deployed_at":     s.DeployedAt,
+		"last_started_at": s.LastStartedAt,
+		"last_stopped_at": s.LastStoppedAt,
+		"retry_count":     s.RetryCount,
+		"retry_max":       s.RetryMax,
+	}
+
+	if s.LastError != "" {
+		health["last_error"] = s.LastError
+	}
+
+	if s.FailureReason != "" {
+		health["failure_reason"] = s.FailureReason
+	}
+
+	if s.HealthCheckURL != "" {
+		health["health_check_url"] = s.HealthCheckURL
+	}
+
+	// Calculate uptime if service is running
+	if s.Status == Running && !s.LastStartedAt.IsZero() {
+		health["uptime_seconds"] = time.Since(s.LastStartedAt).Seconds()
+	}
+
+	return health
+}

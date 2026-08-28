@@ -35,8 +35,7 @@ public class AgentWidgetUsageDomainService {
     public int getTodayCallCount(String widgetId) {
         Integer count = jdbcTemplate.query(
                 "SELECT call_count FROM public.agent_widget_daily_usage WHERE widget_id = ? AND usage_date = CURRENT_DATE",
-                rs -> rs.next() ? rs.getInt("call_count") : 0,
-                widgetId);
+                rs -> rs.next() ? rs.getInt("call_count") : 0, widgetId);
         return count != null ? count : 0;
     }
 
@@ -46,18 +45,15 @@ public class AgentWidgetUsageDomainService {
         }
 
         Map<String, Integer> usageMap = new HashMap<>();
-        namedParameterJdbcTemplate.query(
-                """
-                        SELECT widget_id, call_count
-                        FROM public.agent_widget_daily_usage
-                        WHERE usage_date = CURRENT_DATE
-                          AND widget_id IN (:widgetIds)
-                        """,
-                new MapSqlParameterSource("widgetIds", widgetIds),
-                (rs, rowNum) -> {
-                    usageMap.put(rs.getString("widget_id"), rs.getInt("call_count"));
-                    return null;
-                });
+        namedParameterJdbcTemplate.query("""
+                SELECT widget_id, call_count
+                FROM public.agent_widget_daily_usage
+                WHERE usage_date = CURRENT_DATE
+                  AND widget_id IN (:widgetIds)
+                """, new MapSqlParameterSource("widgetIds", widgetIds), (rs, rowNum) -> {
+            usageMap.put(rs.getString("widget_id"), rs.getInt("call_count"));
+            return null;
+        });
         return usageMap;
     }
 
@@ -66,12 +62,8 @@ public class AgentWidgetUsageDomainService {
             return null;
         }
 
-        List<Integer> counts = jdbcTemplate.query(
-                UPSERT_DAILY_CALL_SQL,
-                (rs, rowNum) -> rs.getInt("call_count"),
-                widgetId,
-                dailyLimit != null ? dailyLimit : -1,
-                dailyLimit != null ? dailyLimit : -1);
+        List<Integer> counts = jdbcTemplate.query(UPSERT_DAILY_CALL_SQL, (rs, rowNum) -> rs.getInt("call_count"),
+                widgetId, dailyLimit != null ? dailyLimit : -1, dailyLimit != null ? dailyLimit : -1);
 
         return counts.isEmpty() ? null : counts.get(0);
     }

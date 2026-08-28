@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { MessageMarkdown } from '@/components/ui/message-markdown';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Badge } from '@/components/ui/badge';
@@ -42,7 +42,7 @@ import type {
 
 interface FileDetailPanelProps {
   selectedFile: RetrievedFileInfo | null;
-  selectedSegment: DocumentSegment | null;
+  selectedSegment?: DocumentSegment | null;
   onDataLoad?: (data: any) => void;
 }
 
@@ -63,204 +63,173 @@ export function FileDetailPanel({ selectedFile, selectedSegment, onDataLoad }: F
     current: 1,
     pages: 0
   });
+  const latestFileInfoRequestRef = useRef(0)
+  const latestContentRequestRef = useRef(0)
+  const onDataLoadRef = useRef(onDataLoad)
+  const selectedFileId = selectedFile?.fileId
+  const selectedFileName = selectedFile?.fileName ?? ''
+  const selectedFilePath = selectedFile?.filePath ?? ''
+  const selectedFileUserRagId = selectedFile?.userRagId
+  const isInstalledRagFile = selectedFile?.isInstalledRag === true
+  const selectedSegmentDocumentId = selectedSegment?.documentId
+  const selectedSegmentFileName = selectedSegment?.fileName ?? ''
 
-  // 防抖处理搜索
   useEffect(() => {
-    const timer = setTimeout(() => {
-      setDebouncedQuery(searchQuery);
-    }, 500);
-    return () => clearTimeout(timer);
-  }, [searchQuery]);
+    onDataLoadRef.current = onDataLoad
+  }, [onDataLoad])
 
-  // 加载文件信息和文档单元
-  useEffect(() => {
-    if (selectedFile) {
-      loadFileInfo();
-      loadDocumentUnits(1, debouncedQuery);
-    } else if (selectedSegment) {
-      // 处理文档片段选择
-      loadSegmentInfo();
-    } else {
-      setFileInfo(null);
-      setDocumentUnits([]);
-      setError(null);
-    }
-  }, [selectedFile, selectedSegment, debouncedQuery]);
+  const loadFileInfo = useCallback(async () => {
+    if (!selectedFileId) return
 
-  // 加载文件信息
-  const loadFileInfo = async () => {
-    if (!selectedFile) return;
-    
- 
-    
-    // 对于已安装RAG的文件，调用专门的API获取文件信息
-    if (selectedFile.isInstalledRag && selectedFile.userRagId) {
- 
-      
+    const requestId = ++latestFileInfoRequestRef.current
+    if (isInstalledRagFile && selectedFileUserRagId) {
       try {
-        const response = await getInstalledRagFileInfoWithToast(selectedFile.userRagId, selectedFile.fileId);
-        
+        const response = await getInstalledRagFileInfoWithToast(selectedFileUserRagId, selectedFileId)
+        if (requestId !== latestFileInfoRequestRef.current) return
+
         if (response.code === 200 && response.data) {
-          // 使用从API获取的实际文件信息
           const installedFileInfo: FileDetailInfoDTO = {
-            id: selectedFile.fileId,
-            originalFilename: selectedFile.fileName,
-            filename: selectedFile.fileName,
-            url: response.data.url || selectedFile.filePath || '',
-            size: response.data.size || 0, // 使用API返回的文件大小
+            id: selectedFileId,
+            originalFilename: selectedFileName,
+            filename: selectedFileName,
+            url: response.data.url || selectedFilePath,
+            size: response.data.size || 0,
             ext: response.data.ext || '',
             contentType: response.data.contentType || '',
-            filePageSize: response.data.filePageSize || 0, // 使用API返回的页数信息
+            filePageSize: response.data.filePageSize || 0,
             isInitialize: response.data.processingStatus === 2 ? 1 : 0,
             isEmbedding: response.data.processingStatus === 2 ? 1 : 0,
-            dataSetId: selectedFile.userRagId,
+            dataSetId: selectedFileUserRagId,
             userId: response.data.userId || '',
             createdAt: response.data.createdAt || '',
             updatedAt: response.data.updatedAt || ''
-          };
-          
-          setFileInfo(installedFileInfo);
-          onDataLoad?.(installedFileInfo);
-          return;
-        } else {
-          throw new Error(response.message || '获取文件信息失败');
+          }
+          setFileInfo(installedFileInfo)
+          onDataLoadRef.current?.(installedFileInfo)
+          return
         }
-      } catch (error) {
- 
-        // 如果API调用失败，仍然显示基本信息
+      } catch {
+        // Fall through to the metadata already present in the search result.
+      }
+
+      if (requestId === latestFileInfoRequestRef.current) {
         const fallbackFileInfo: FileDetailInfoDTO = {
-          id: selectedFile.fileId,
-          originalFilename: selectedFile.fileName,
-          filename: selectedFile.fileName,
-          url: selectedFile.filePath || '',
+          id: selectedFileId,
+          originalFilename: selectedFileName,
+          filename: selectedFileName,
+          url: selectedFilePath,
           size: 0,
           ext: '',
           contentType: '',
           filePageSize: 0,
           isInitialize: 1,
           isEmbedding: 1,
-          dataSetId: selectedFile.userRagId,
+          dataSetId: selectedFileUserRagId,
           userId: '',
           createdAt: '',
           updatedAt: ''
-        };
-        
-        setFileInfo(fallbackFileInfo);
-        onDataLoad?.(fallbackFileInfo);
-        return;
-      }
-    }
-    
-    try {
-      const response = await getFileInfoWithToast(selectedFile.fileId);
-      if (response.code === 200) {
-        setFileInfo(response.data);
-        onDataLoad?.(response.data);
-      } else {
-        setError(response.message || '获取文件信息失败');
-      }
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : '获取文件信息失败';
-      setError(errorMessage);
- 
-    }
-  };
-
-  // 加载文档单元列表
-  const loadDocumentUnits = async (page: number = 1, keyword?: string) => {
-    if (!selectedFile) return;
-    
-    try {
-      setLoading(true);
-      setError(null);
-      
-      let response;
-      
-      if (selectedFile.isInstalledRag && selectedFile.userRagId) {
-        // 已安装RAG：使用快照感知API
- 
-        const documentsResponse = await getInstalledRagFileDocumentsWithToast(
-          selectedFile.userRagId, 
-          selectedFile.fileId
-        );
- 
-        
-        if (documentsResponse.code === 200) {
-          let documents = documentsResponse.data || [];
-          
-          // 客户端过滤（如果有搜索查询）
-          if (keyword?.trim()) {
-            const query = keyword.trim().toLowerCase();
-            documents = documents.filter(doc => 
-              doc.content?.toLowerCase().includes(query)
-            );
-          }
-          
-          // 客户端分页
-          const startIndex = (page - 1) * 10;
-          const endIndex = startIndex + 10;
-          const paginatedDocs = documents.slice(startIndex, endIndex);
-          
-          // 构造分页响应格式
-          response = {
-            code: 200,
-            data: {
-              records: paginatedDocs,
-              total: documents.length,
-              size: 10,
-              current: page,
-              pages: Math.ceil(documents.length / 10)
-            }
-          };
-        } else {
-          response = documentsResponse;
         }
-      } else {
-        // 原始RAG：使用原有API
-        response = await getDocumentUnitsWithToast({
-          fileId: selectedFile.fileId,
-          page,
-          pageSize: 10,
-          keyword: keyword?.trim() || undefined
-        });
+        setFileInfo(fallbackFileInfo)
+        onDataLoadRef.current?.(fallbackFileInfo)
       }
-      
-      if (response.code === 200) {
-        setPageData(response.data);
-        setDocumentUnits(response.data.records || []);
-      } else {
-        setError(response.message || '获取文档单元失败');
-      }
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : '获取文档单元失败';
-      setError(errorMessage);
- 
-    } finally {
-      setLoading(false);
+      return
     }
-  };
 
-  // 加载文档片段信息
-  const loadSegmentInfo = async () => {
-    if (!selectedSegment) return;
-    
- 
-    
     try {
-      setLoading(true);
-      setError(null);
-      
-      // 调用API获取真实的文档单元数据
-      const response = await getDocumentUnitWithToast(selectedSegment.documentId);
-      
+      const response = await getFileInfoWithToast(selectedFileId)
+      if (requestId !== latestFileInfoRequestRef.current) return
+
       if (response.code === 200 && response.data) {
-        const documentUnit = response.data;
-        
-        // 创建基于文档单元的文件信息
+        setFileInfo(response.data)
+        onDataLoadRef.current?.(response.data)
+      } else {
+        setError(response.message || '获取文件信息失败')
+      }
+    } catch (error) {
+      if (requestId === latestFileInfoRequestRef.current) {
+        setError(error instanceof Error ? error.message : '获取文件信息失败')
+      }
+    }
+  }, [isInstalledRagFile, selectedFileId, selectedFileName, selectedFilePath, selectedFileUserRagId])
+
+  const loadDocumentUnits = useCallback(async (page: number = 1, keyword?: string) => {
+    if (!selectedFileId) return
+
+    const requestId = ++latestContentRequestRef.current
+    try {
+      setLoading(true)
+      setError(null)
+
+      if (isInstalledRagFile && selectedFileUserRagId) {
+        const documentsResponse = await getInstalledRagFileDocumentsWithToast(selectedFileUserRagId, selectedFileId)
+        if (requestId !== latestContentRequestRef.current) return
+
+        if (documentsResponse.code === 200) {
+          let documents = (documentsResponse.data || []) as DocumentUnitDTO[]
+          if (keyword?.trim()) {
+            const query = keyword.trim().toLowerCase()
+            documents = documents.filter(doc => doc.content?.toLowerCase().includes(query))
+          }
+
+          const totalPages = Math.ceil(documents.length / 10)
+          const currentPage = documents.length === 0 ? 1 : Math.min(page, totalPages)
+          const startIndex = (currentPage - 1) * 10
+          const pageInfo = {
+            records: documents.slice(startIndex, startIndex + 10),
+            total: documents.length,
+            size: 10,
+            current: currentPage,
+            pages: totalPages
+          }
+          setPageData(pageInfo)
+          setDocumentUnits(pageInfo.records)
+        } else {
+          setError(documentsResponse.message || '获取文档单元失败')
+        }
+        return
+      }
+
+      const response = await getDocumentUnitsWithToast({
+        fileId: selectedFileId,
+        page,
+        pageSize: 10,
+        keyword: keyword?.trim() || undefined
+      })
+      if (requestId !== latestContentRequestRef.current) return
+
+      if (response.code === 200) {
+        setPageData(response.data)
+        setDocumentUnits(response.data.records || [])
+      } else {
+        setError(response.message || '获取文档单元失败')
+      }
+    } catch (error) {
+      if (requestId === latestContentRequestRef.current) {
+        setError(error instanceof Error ? error.message : '获取文档单元失败')
+      }
+    } finally {
+      if (requestId === latestContentRequestRef.current) {
+        setLoading(false)
+      }
+    }
+  }, [isInstalledRagFile, selectedFileId, selectedFileUserRagId])
+
+  const loadSegmentInfo = useCallback(async () => {
+    if (!selectedSegmentDocumentId) return
+
+    const requestId = ++latestContentRequestRef.current
+    try {
+      setLoading(true)
+      setError(null)
+      const response = await getDocumentUnitWithToast(selectedSegmentDocumentId)
+      if (requestId !== latestContentRequestRef.current) return
+
+      if (response.code === 200 && response.data) {
+        const documentUnit = response.data
         const segmentFileInfo: FileDetailInfoDTO = {
           id: documentUnit.fileId,
-          originalFilename: selectedSegment.fileName,
-          filename: selectedSegment.fileName,
+          originalFilename: selectedSegmentFileName,
+          filename: selectedSegmentFileName,
           url: '',
           size: 0,
           ext: '',
@@ -272,29 +241,67 @@ export function FileDetailPanel({ selectedFile, selectedSegment, onDataLoad }: F
           userId: '',
           createdAt: documentUnit.createdAt,
           updatedAt: documentUnit.updatedAt
-        };
-        
-        setFileInfo(segmentFileInfo);
-        setDocumentUnits([documentUnit]);
-        setPageData({
-          records: [documentUnit],
-          total: 1,
-          size: 1,
-          current: 1,
-          pages: 1
-        });
-        
-        onDataLoad?.(documentUnit);
+        }
+        setFileInfo(segmentFileInfo)
+        setDocumentUnits([documentUnit])
+        setPageData({ records: [documentUnit], total: 1, size: 1, current: 1, pages: 1 })
+        onDataLoadRef.current?.(documentUnit)
       } else {
-        setError(response.message || '获取文档片段失败');
+        setError(response.message || '获取文档片段失败')
       }
-    } catch (error) {
- 
-      setError('加载文档片段失败');
+    } catch {
+      if (requestId === latestContentRequestRef.current) {
+        setError('加载文档片段失败')
+      }
     } finally {
-      setLoading(false);
+      if (requestId === latestContentRequestRef.current) {
+        setLoading(false)
+      }
     }
-  };
+  }, [selectedSegmentDocumentId, selectedSegmentFileName])
+
+  // 防抖处理搜索
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedQuery(searchQuery);
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
+
+  useEffect(() => {
+    if (!selectedFileId && !selectedSegmentDocumentId) {
+      latestFileInfoRequestRef.current += 1
+      latestContentRequestRef.current += 1
+      setFileInfo(null);
+      setDocumentUnits([]);
+      setError(null);
+      setLoading(false)
+    }
+  }, [selectedFileId, selectedSegmentDocumentId])
+
+  useEffect(() => {
+    if (!selectedFileId) return
+    void loadFileInfo()
+    return () => {
+      latestFileInfoRequestRef.current += 1
+    }
+  }, [loadFileInfo, selectedFileId])
+
+  useEffect(() => {
+    if (!selectedFileId) return
+    void loadDocumentUnits(1, debouncedQuery)
+    return () => {
+      latestContentRequestRef.current += 1
+    }
+  }, [debouncedQuery, loadDocumentUnits, selectedFileId])
+
+  useEffect(() => {
+    if (selectedFileId || !selectedSegmentDocumentId) return
+    void loadSegmentInfo()
+    return () => {
+      latestContentRequestRef.current += 1
+    }
+  }, [loadSegmentInfo, selectedFileId, selectedSegmentDocumentId])
 
   // 分页处理
   const handlePageChange = (page: number) => {

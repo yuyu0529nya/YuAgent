@@ -12,19 +12,17 @@ import org.yu.domain.rag.constant.MetadataConstant;
 import org.yu.domain.rag.model.ProcessedSegment;
 import org.yu.domain.rag.model.enums.SegmentType;
 
-/**
- * Structure-aware chunker for plain text style documents such as TXT and Word exports.
- */
+/** Structure-aware chunker for plain text style documents such as TXT and Word exports. */
 @Component
 public class StructuredPlainTextProcessor {
 
     private static final Logger log = LoggerFactory.getLogger(StructuredPlainTextProcessor.class);
 
     private static final Pattern MARKDOWN_HEADING = Pattern.compile("^(#{1,6})\\s+(.+)$");
-    private static final Pattern DECIMAL_HEADING = Pattern.compile(
-            "^(\\d+(?:\\.\\d+){0,4}|\\d+[\\)\\.]|[A-Z][\\)\\.])\\s+(.+)$");
-    private static final Pattern CN_HEADING = Pattern.compile(
-            "^(第[一二三四五六七八九十百千万0-9]+[章节部分篇]|[一二三四五六七八九十]+[、.)])\\s*(.+)$");
+    private static final Pattern DECIMAL_HEADING = Pattern
+            .compile("^(\\d+(?:\\.\\d+){0,4}|\\d+[\\)\\.]|[A-Z][\\)\\.])\\s+(.+)$");
+    private static final Pattern CN_HEADING = Pattern
+            .compile("^(第[一二三四五六七八九十百千万0-9]+[章节部分篇]|[一二三四五六七八九十]+[、.)])\\s*(.+)$");
 
     private final MarkdownContentSplitter contentSplitter;
 
@@ -173,8 +171,8 @@ public class StructuredPlainTextProcessor {
         if (line.length() < 4 || line.length() > 30) {
             return false;
         }
-        if (line.endsWith("。") || line.endsWith(".") || line.endsWith("？") || line.endsWith("?")
-                || line.endsWith("；") || line.endsWith(";")) {
+        if (line.endsWith("。") || line.endsWith(".") || line.endsWith("？") || line.endsWith("?") || line.endsWith("；")
+                || line.endsWith(";")) {
             return false;
         }
         long punctuationCount = line.chars().filter(ch -> ch == ':' || ch == '：').count();

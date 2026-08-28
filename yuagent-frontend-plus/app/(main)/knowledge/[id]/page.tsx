@@ -1,6 +1,7 @@
 ﻿"use client"
 
-import { useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
+import dynamic from "next/dynamic"
 import { useParams, useRouter } from "next/navigation"
 import Link from "next/link"
 import { 
@@ -8,7 +9,7 @@ import {
   Upload, 
   File, 
   FileText, 
-  Image, 
+  Image as ImageIcon, 
   Video, 
   Trash, 
   Search, 
@@ -77,23 +78,29 @@ import type {
   FileDetail, 
   PageResponse,
   FileProcessProgressDTO,
-  ProcessType,
   DocumentUnitDTO 
 } from "@/types/rag-dataset"
-import { FileInitializeStatus, FileEmbeddingStatus } from "@/types/rag-dataset"
+import { FileInitializeStatus, FileEmbeddingStatus, ProcessType } from "@/types/rag-dataset"
 import { getFileStatusConfig as getFileStatusInfo } from "@/lib/file-status-utils"
-import { RagChatDialog } from "@/components/knowledge/RagChatDialog"
-import { DocumentUnitsDialog } from "@/components/knowledge/DocumentUnitsDialog"
+import {
+  getFileFingerprint,
+  inferRemoteFilename,
+  KNOWLEDGE_UPLOAD_MAX_SIZE,
+  normalizeUploadError,
+  shouldKeepPendingFile,
+} from "@/lib/knowledge-file-utils"
 
-const KNOWLEDGE_UPLOAD_MAX_SIZE = 100 * 1024 * 1024
+const RagChatDialog = dynamic(() => import("@/components/knowledge/RagChatDialog").then(module => module.RagChatDialog), {
+  ssr: false,
+})
+const DocumentUnitsDialog = dynamic(
+  () => import("@/components/knowledge/DocumentUnitsDialog").then(module => module.DocumentUnitsDialog),
+  { ssr: false },
+)
+
 const PROGRESS_SYNC_INTERVAL = 2000
 const UPLOAD_FORCE_SYNC_DURATION = 60000
 const FILE_LIST_SYNC_INTERVAL = 6000
-
-function getFileFingerprint(file: Pick<FileDetail, "id" | "originalFilename" | "filename" | "size">) {
-  const name = file.originalFilename || file.filename || file.id
-  return `${name}::${file.size}`
-}
 
 export default function DatasetDetailPage() {
   const params = useParams()
@@ -124,6 +131,12 @@ export default function DatasetDetailPage() {
   const forceSyncUntilRef = useRef<number>(0)
   const pollInFlightRef = useRef(false)
   const lastFileListSyncAtRef = useRef(0)
+  const activeDatasetIdRef = useRef(datasetId)
+  const latestDatasetRequestRef = useRef(0)
+  const latestFilesRequestRef = useRef(0)
+  const latestProgressRequestRef = useRef(0)
+
+  activeDatasetIdRef.current = datasetId
   
   // 鏂板鐘舵€侊細RAG鎼滅储
   const [searchDocuments, setSearchDocuments] = useState<DocumentUnitDTO[]>([])
@@ -145,6 +158,88 @@ export default function DatasetDetailPage() {
     current: 1,
     pages: 0
   })
+  const pageDataRef = useRef(pageData)
+
+  const loadDatasetDetail = useCallback(async () => {
+    const requestId = ++latestDatasetRequestRef.current
+    try {
+      setLoading(true)
+      setError(null)
+
+      const response = await getDatasetDetail(datasetId)
+      if (requestId !== latestDatasetRequestRef.current || activeDatasetIdRef.current !== datasetId) {
+        return
+      }
+
+      if (response.code === 200) {
+        setDataset(response.data)
+      } else {
+        setError(response.message)
+      }
+    } catch (error) {
+      if (requestId === latestDatasetRequestRef.current && activeDatasetIdRef.current === datasetId) {
+        const errorMessage = error instanceof Error ? error.message : "未知错误"
+        setError(errorMessage)
+      }
+    } finally {
+      if (requestId === latestDatasetRequestRef.current && activeDatasetIdRef.current === datasetId) {
+        setLoading(false)
+      }
+    }
+  }, [datasetId])
+
+  const loadFiles = useCallback(async (page: number = 1, keyword?: string, silent: boolean = false) => {
+    const requestId = ++latestFilesRequestRef.current
+    try {
+      if (!silent) {
+        setFilesLoading(true)
+      }
+
+      const response = await getDatasetFiles(datasetId, {
+        page,
+        pageSize: 15,
+        keyword: keyword?.trim() || undefined
+      })
+
+      if (requestId !== latestFilesRequestRef.current || activeDatasetIdRef.current !== datasetId) {
+        return
+      }
+
+      if (response.code === 200) {
+        const serverFingerprints = new Set((response.data.records || []).map(file => getFileFingerprint(file)))
+        setPageData(response.data)
+        setFiles(response.data.records || [])
+        setPendingFiles(prev => prev.filter(file => !serverFingerprints.has(getFileFingerprint(file))))
+        setOptimisticFiles(prev => prev.filter(file => !serverFingerprints.has(getFileFingerprint(file))))
+      }
+    } catch {
+      // The shared HTTP client already returns a normalized response for request failures.
+    } finally {
+      if (!silent && requestId === latestFilesRequestRef.current && activeDatasetIdRef.current === datasetId) {
+        setFilesLoading(false)
+      }
+    }
+  }, [datasetId])
+
+  const loadFilesProgress = useCallback(async () => {
+    const requestId = ++latestProgressRequestRef.current
+    try {
+      const response = await getDatasetFilesProgressWithToast(datasetId)
+      if (requestId !== latestProgressRequestRef.current || activeDatasetIdRef.current !== datasetId) {
+        return
+      }
+      if (response.code === 200) {
+        const newProgress = response.data
+        const hasChanged = JSON.stringify(newProgress) !== JSON.stringify(filesProgressRef.current)
+
+        if (hasChanged) {
+          setFilesProgress(newProgress)
+        }
+      }
+    } catch {
+      // Polling failures are retried on the next interval.
+    }
+  }, [datasetId])
 
   const displayedFiles = [...pendingFiles, ...optimisticFiles, ...files].filter(
     (file, index, list) => list.findIndex(item => getFileFingerprint(item) === getFileFingerprint(file)) === index
@@ -165,7 +260,10 @@ export default function DatasetDetailPage() {
     if (datasetId) {
       loadDatasetDetail()
     }
-  }, [datasetId])
+    return () => {
+      latestDatasetRequestRef.current += 1
+    }
+  }, [datasetId, loadDatasetDetail])
 
   // 鑾峰彇鏂囦欢鍒楄〃
   useEffect(() => {
@@ -173,7 +271,11 @@ export default function DatasetDetailPage() {
       loadFiles(1, debouncedQuery)
       loadFilesProgress() // 鍚屾椂鍔犺浇鏂囦欢澶勭悊杩涘害
     }
-  }, [datasetId, debouncedQuery])
+    return () => {
+      latestFilesRequestRef.current += 1
+      latestProgressRequestRef.current += 1
+    }
+  }, [datasetId, debouncedQuery, loadFiles, loadFilesProgress])
 
   useEffect(() => {
     filesProgressRef.current = filesProgress
@@ -182,6 +284,10 @@ export default function DatasetDetailPage() {
   useEffect(() => {
     isProcessingRef.current = isProcessing
   }, [isProcessing])
+
+  useEffect(() => {
+    pageDataRef.current = pageData
+  }, [pageData])
 
   // 瀹氭湡鍒锋柊鏂囦欢澶勭悊杩涘害锛堟櫤鑳藉埛鏂帮級
   useEffect(() => {
@@ -201,7 +307,7 @@ export default function DatasetDetailPage() {
         const shouldSyncFileList = now - lastFileListSyncAtRef.current >= FILE_LIST_SYNC_INTERVAL
         Promise.all([
           loadFilesProgress(),
-          shouldSyncFileList ? loadFiles(pageData.current, debouncedQuery, true) : Promise.resolve(),
+          shouldSyncFileList ? loadFiles(pageDataRef.current.current, debouncedQuery, true) : Promise.resolve(),
         ]).finally(() => {
           if (shouldSyncFileList) {
             lastFileListSyncAtRef.current = now
@@ -212,7 +318,7 @@ export default function DatasetDetailPage() {
     }, PROGRESS_SYNC_INTERVAL)
 
     return () => clearInterval(interval)
-  }, [datasetId, pageData.current, debouncedQuery, isUploading])
+  }, [datasetId, debouncedQuery, isUploading, loadFiles, loadFilesProgress])
 
   // 鐩戞帶杩涘害鍙樺寲锛屾櫤鑳藉埛鏂版枃浠跺垪琛?
   useEffect(() => {
@@ -224,62 +330,12 @@ export default function DatasetDetailPage() {
     if (hasNewCompletedFile) {
       // 寤惰繜鍒锋柊鏂囦欢鍒楄〃锛岄伩鍏嶉绻佸埛鏂?
       const timeoutId = setTimeout(() => {
-        loadFiles(pageData.current, debouncedQuery)
+        loadFiles(pageDataRef.current.current, debouncedQuery)
       }, 1000)
       
       return () => clearTimeout(timeoutId)
     }
-  }, [filesProgress, pageData.current, debouncedQuery])
-
-  // 鍔犺浇鏁版嵁闆嗚鎯?
-  const loadDatasetDetail = async () => {
-    try {
-      setLoading(true)
-      setError(null)
-
-      const response = await getDatasetDetail(datasetId)
-
-      if (response.code === 200) {
-        setDataset(response.data)
-      } else {
-        setError(response.message)
-      }
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : "鏈煡閿欒"
-      setError(errorMessage)
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  // 鍔犺浇鏂囦欢鍒楄〃
-  const loadFiles = async (page: number = 1, keyword?: string, silent: boolean = false) => {
-    try {
-      if (!silent) {
-        setFilesLoading(true)
-      }
-
-      const response = await getDatasetFiles(datasetId, {
-        page,
-        pageSize: 15,
-        keyword: keyword?.trim() || undefined
-      })
-
-      if (response.code === 200) {
-        const serverFingerprints = new Set((response.data.records || []).map(file => getFileFingerprint(file)))
-        setPageData(response.data)
-        setFiles(response.data.records || [])
-        setPendingFiles(prev => prev.filter(file => !serverFingerprints.has(getFileFingerprint(file))))
-        setOptimisticFiles(prev => prev.filter(file => !serverFingerprints.has(getFileFingerprint(file))))
-      }
-    } catch (error) {
- 
-    } finally {
-      if (!silent) {
-        setFilesLoading(false)
-      }
-    }
-  }
+  }, [filesProgress, debouncedQuery, loadFiles])
 
   // 澶勭悊鏂囦欢涓婁紶
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -416,7 +472,7 @@ export default function DatasetDetailPage() {
   // 鑾峰彇鏂囦欢鍥炬爣
   const getFileIcon = (contentType: string, ext: string) => {
     if (contentType.startsWith('image/')) {
-      return <Image className="h-4 w-4" />
+      return <ImageIcon className="h-4 w-4" />
     } else if (contentType.startsWith('video/')) {
       return <Video className="h-4 w-4" />
     } else if (ext === 'pdf' || contentType === 'application/pdf') {
@@ -452,23 +508,6 @@ export default function DatasetDetailPage() {
   }
 
   // ========== 鏂板鏂规硶锛氭枃浠跺鐞嗚繘搴︾浉鍏?==========
-
-  // 鍔犺浇鏂囦欢澶勭悊杩涘害
-  const loadFilesProgress = async () => {
-    try {
-      const response = await getDatasetFilesProgressWithToast(datasetId)
-      if (response.code === 200) {
-        const newProgress = response.data
-        const hasChanged = JSON.stringify(newProgress) !== JSON.stringify(filesProgressRef.current)
-        
-        if (hasChanged) {
-          setFilesProgress(newProgress)
-        }
-      }
-    } catch (error) {
- 
-    }
-  }
 
   // 鍚姩鏂囦欢棰勫鐞?
   const handleProcessFile = async (fileId: string, processType: ProcessType) => {
@@ -612,36 +651,6 @@ export default function DatasetDetailPage() {
     return progress.processProgress < 100
   }
 
-  const normalizeUploadError = (message?: string, filename?: string) => {
-    if (!message) {
-      return filename ? `${filename} 上传失败，请重试` : "上传失败，请重试"
-    }
-
-    const lower = message.toLowerCase()
-    if (lower.includes("aborted") || lower.includes("aborterror")) {
-      return filename
-        ? `${filename} 上传请求超时，请稍后重试`
-        : "上传请求超时，请稍后重试"
-    }
-
-    if (lower.includes("timeout")) {
-      return filename
-        ? `${filename} 上传超时，请稍后重试`
-        : "上传超时，请稍后重试"
-    }
-
-    return message
-  }
-
-  const shouldKeepPendingFile = (message?: string) => {
-    if (!message) {
-      return false
-    }
-
-    const lower = message.toLowerCase()
-    return lower.includes("aborted") || lower.includes("aborterror") || lower.includes("timeout")
-  }
-
   const createPendingFile = (file: File): FileDetail => {
     const now = new Date().toISOString()
     const ext = file.name.includes(".") ? file.name.split(".").pop() || "" : ""
@@ -683,19 +692,6 @@ export default function DatasetDetailPage() {
       userId: dataset?.userId || "",
       createdAt: now,
       updatedAt: now,
-    }
-  }
-
-  const inferRemoteFilename = (url: string) => {
-    try {
-      const pathname = new URL(url).pathname
-      const rawName = pathname.split("/").filter(Boolean).pop()
-      if (!rawName) {
-        return "remote-import"
-      }
-      return decodeURIComponent(rawName)
-    } catch {
-      return "remote-import"
     }
   }
 
@@ -1265,7 +1261,7 @@ export default function DatasetDetailPage() {
               搜索结果
             </DialogTitle>
             <DialogDescription>
-              针对问题 "{ragSearchQuery}" 的文档搜索结果
+              针对问题 &quot;{ragSearchQuery}&quot; 的文档搜索结果
             </DialogDescription>
           </DialogHeader>
           
@@ -1366,7 +1362,7 @@ export default function DatasetDetailPage() {
           <DialogHeader>
             <DialogTitle>确认删除</DialogTitle>
             <DialogDescription>
-              您确定要删除文件 "{fileToDelete?.originalFilename}" 吗？此操作无法撤销。
+              您确定要删除文件 &quot;{fileToDelete?.originalFilename}&quot; 吗？此操作无法撤销。
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -1381,11 +1377,13 @@ export default function DatasetDetailPage() {
       </Dialog>
 
       {/* RAG聊天对话框 */}
-      <RagChatDialog 
-        open={showRagChat}
-        onOpenChange={setShowRagChat}
-        dataset={dataset}
-      />
+      {showRagChat && (
+        <RagChatDialog
+          open
+          onOpenChange={setShowRagChat}
+          dataset={dataset}
+        />
+      )}
 
       {/* 文档单元对话框 */}
       {selectedFileForUnits && (

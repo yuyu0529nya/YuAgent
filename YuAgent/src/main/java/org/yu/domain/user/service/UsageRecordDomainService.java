@@ -4,6 +4,11 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.StringUtils;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import java.math.BigDecimal;
+import java.util.Collection;
+import java.util.LinkedHashSet;
+import java.util.Set;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.yu.domain.user.model.UsageRecordEntity;
 import org.yu.domain.user.repository.UsageRecordRepository;
@@ -33,15 +38,14 @@ public class UsageRecordDomainService {
      * @param record 用量记录实体
      * @return 保存后的用量记录实体 */
     public UsageRecordEntity recordUsage(UsageRecordEntity record) {
-        // 验证记录信息
-        record.validate();
+        validateRecord(record);
 
         // 检查幂等性
         if (checkDuplicateRequest(record.getRequestId())) {
             throw new BusinessException("重复的请求ID: " + record.getRequestId());
         }
 
-        usageRecordRepository.insert(record);
+        insertRecord(record);
         return record;
     }
 
@@ -64,6 +68,14 @@ public class UsageRecordDomainService {
      * @return 是否存在 */
     public boolean existsByRequestId(String requestId) {
         return checkDuplicateRequest(requestId);
+    }
+
+    /** 统计用户全部有效使用记录的消费金额。 */
+    public BigDecimal getUserTotalCost(String userId) {
+        if (userId == null || userId.trim().isEmpty()) {
+            throw new BusinessException("用户ID不能为空");
+        }
+        return usageRecordRepository.sumCostByUserId(userId);
     }
 
     /** 创建用量记录
@@ -175,25 +187,67 @@ public class UsageRecordDomainService {
         usageRecordRepository.deleteById(recordId);
     }
 
-    /** 批量记录用量
+    /** 批量记录用量。
+     *
+     * <p>
+     * 在写入前一次性检查批内和数据库中的重复请求 ID，避免 N 次幂等查询；写入使用 MyBatis 的批处理 API。
+     *
      * @param records 用量记录列表 */
     public void batchRecordUsage(List<UsageRecordEntity> records) {
         if (records == null || records.isEmpty()) {
             return;
         }
 
-        // 验证所有记录
+        Set<String> requestIds = new LinkedHashSet<>();
         for (UsageRecordEntity record : records) {
-            record.validate();
-            if (checkDuplicateRequest(record.getRequestId())) {
-                throw new BusinessException("重复的请求ID: " + record.getRequestId());
+            validateRecord(record);
+            if (!requestIds.add(record.getRequestId())) {
+                throw duplicateRequest(record.getRequestId());
             }
         }
 
-        // 批量插入
-        for (UsageRecordEntity record : records) {
-            usageRecordRepository.insert(record);
+        Set<String> existingRequestIds = findExistingRequestIds(requestIds);
+        if (!existingRequestIds.isEmpty()) {
+            for (UsageRecordEntity record : records) {
+                if (existingRequestIds.contains(record.getRequestId())) {
+                    throw duplicateRequest(record.getRequestId());
+                }
+            }
         }
+
+        try {
+            usageRecordRepository.insert(records);
+        } catch (DuplicateKeyException e) {
+            throw new BusinessException("重复的请求ID", e);
+        }
+    }
+
+    private void validateRecord(UsageRecordEntity record) {
+        if (record == null) {
+            throw new BusinessException("用量记录不能为空");
+        }
+        record.validate();
+    }
+
+    private Set<String> findExistingRequestIds(Collection<String> requestIds) {
+        return new LinkedHashSet<>(usageRecordRepository.<String>selectObjs(
+                Wrappers.<UsageRecordEntity>query().select("request_id").in("request_id", requestIds)));
+    }
+
+    private void insertRecord(UsageRecordEntity record) {
+        try {
+            usageRecordRepository.insert(record);
+        } catch (DuplicateKeyException e) {
+            throw duplicateRequest(record.getRequestId(), e);
+        }
+    }
+
+    private BusinessException duplicateRequest(String requestId) {
+        return new BusinessException("重复的请求ID: " + requestId);
+    }
+
+    private BusinessException duplicateRequest(String requestId, Throwable cause) {
+        return new BusinessException("重复的请求ID: " + requestId, cause);
     }
 
     public Page<UsageRecordEntity> queryUsageRecords(QueryUsageRecordRequest request) {

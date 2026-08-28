@@ -3,8 +3,8 @@ package org.yu.application.conversation.service;
 import cn.hutool.core.bean.BeanUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.BeanUtils;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import org.yu.application.conversation.assembler.MessageAssembler;
 import org.yu.application.conversation.dto.AgentPreviewRequest;
@@ -148,13 +148,9 @@ public class ConversationAppService {
         // 3. 根据请求类型获取适合的消息处理器
         AbstractMessageHandler handler = messageHandlerFactory.getHandler(chatRequest);
 
-        // 4. 处理对话
-        SseEmitter emitter = handler.chat(environment, transport);
-
-        // 5. 注册会话到会话管理器（支持中断功能）
-        chatSessionManager.registerSession(chatRequest.getSessionId(), emitter);
-
-        return emitter;
+        // 4. 在启动流处理前登记会话，避免极快响应结束时遗漏中断管理
+        return handler.chat(environment, transport,
+                emitter -> chatSessionManager.registerSession(chatRequest.getSessionId(), emitter));
     }
 
     /** 对话处理（支持指定模型）- 用于外部API
@@ -174,13 +170,9 @@ public class ConversationAppService {
         // 3. 获取适合的消息处理器 (根据agent类型)
         AbstractMessageHandler handler = messageHandlerFactory.getHandler(environment.getAgent());
 
-        // 4. 处理对话
-        SseEmitter emitter = handler.chat(environment, transport);
-
-        // 5. 注册会话到会话管理器（支持中断功能）
-        chatSessionManager.registerSession(chatRequest.getSessionId(), emitter);
-
-        return emitter;
+        // 4. 在启动流处理前登记会话，避免极快响应结束时遗漏中断管理
+        return handler.chat(environment, transport,
+                emitter -> chatSessionManager.registerSession(chatRequest.getSessionId(), emitter));
     }
 
     /** 同步对话处理（支持指定模型）- 用于外部API
@@ -263,7 +255,7 @@ public class ConversationAppService {
         // 处理安装的助理版本
         if (!agent.getUserId().equals(userId)) {
             AgentVersionEntity latestAgentVersion = agentDomainService.getLatestAgentVersion(agentId);
-            BeanUtils.copyProperties(latestAgentVersion, agent);
+            agent.applyPublishedVersion(latestAgentVersion);
         }
 
         return agent;
@@ -287,12 +279,15 @@ public class ConversationAppService {
             finalModelId = llmModelConfig.getModelId();
         }
 
-        ModelEntity model = llmDomainService.findModelById(finalModelId);
-        if (finalModelId == null) {
+        ModelEntity model;
+        if (!StringUtils.hasText(finalModelId)) {
             String userDefaultModelId = userSettingsDomainService.getUserDefaultModelId(userId);
             model = llmDomainService.getModelById(userDefaultModelId);
-        } else if (model == null) {
-            model = llmDomainService.getModelById(finalModelId);
+        } else {
+            model = llmDomainService.findModelById(finalModelId);
+            if (model == null) {
+                model = llmDomainService.getModelById(finalModelId);
+            }
         }
         model.isActive();
         return model;

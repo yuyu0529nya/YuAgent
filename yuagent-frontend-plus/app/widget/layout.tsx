@@ -1,22 +1,6 @@
 import type React from "react"
-import { ThemeProvider } from "@/components/theme-provider"
-import { Toaster } from "@/components/ui/toaster"
-import "@/styles/globals.css"
 
-/** Widget页面专用布局 - 不包含认证相关的Provider */
+/** Widget 页面由根布局提供主题与通知，避免嵌套全局 Provider。 */
 export default function WidgetLayout({ children }: { children: React.ReactNode }) {
-  return (
-    <html lang="zh-CN" suppressHydrationWarning>
-      <head>
-        <title>YuAgent Widget</title>
-        <meta name="description" content="YuAgent 智能助理组件" />
-      </head>
-      <body>
-        <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false}>
-          {children}
-          <Toaster />
-        </ThemeProvider>
-      </body>
-    </html>
-  )
+  return children
 }

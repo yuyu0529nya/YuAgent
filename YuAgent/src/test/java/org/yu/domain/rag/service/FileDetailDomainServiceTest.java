@@ -11,6 +11,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.io.File;
+import java.util.List;
 import java.util.Map;
 import org.dromara.x.file.storage.core.FileInfo;
 import org.dromara.x.file.storage.core.FileStorageService;
@@ -50,7 +51,7 @@ class FileDetailDomainServiceTest {
         entity.setDataSetId("dataset-1");
         entity.setUserId("user-1");
 
-        FileDetailEntity result = service.uploadRemoteFileToDataset(entity, new byte[] {1, 2, 3}, "paper.pdf",
+        FileDetailEntity result = service.uploadRemoteFileToDataset(entity, new byte[]{1, 2, 3}, "paper.pdf",
                 "application/pdf");
 
         ArgumentCaptor<Object> objectCaptor = ArgumentCaptor.forClass(Object.class);
@@ -64,5 +65,19 @@ class FileDetailDomainServiceTest {
         assertEquals("file-1", result.getId());
         assertEquals("paper.pdf", result.getOriginalFilename());
         assertEquals("application/pdf", result.getContentType());
+    }
+
+    @Test
+    void countFilesByDatasets_shouldAggregateCountsInOneQuery() {
+        FileDetailRepository repository = mock(FileDetailRepository.class);
+        when(repository.selectMaps(any())).thenReturn(List.of(Map.of("data_set_id", "dataset-1", "file_count", 2L),
+                Map.of("data_set_id", "dataset-2", "file_count", 5L)));
+        FileDetailDomainService service = new FileDetailDomainService(mock(FileStorageService.class), repository,
+                mock(FileProcessingStateMachineService.class));
+
+        Map<String, Long> counts = service.countFilesByDatasets(List.of("dataset-1", "dataset-2"), "user-1");
+
+        assertEquals(Map.of("dataset-1", 2L, "dataset-2", 5L), counts);
+        verify(repository).selectMaps(any());
     }
 }

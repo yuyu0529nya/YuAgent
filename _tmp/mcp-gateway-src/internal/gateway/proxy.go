@@ -1,0 +1,174 @@
+package gateway
+
+import (
+	"bufio"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
+
+	"github.com/labstack/echo/v4"
+	"github.com/lucky-aeon/agentx/plugin-helper/internal/platform/httpx"
+	"github.com/lucky-aeon/agentx/plugin-helper/internal/platform/xlog"
+	"github.com/lucky-aeon/agentx/plugin-helper/internal/workspaces"
+)
+
+// proxyHTTPClient keeps downstream connections reusable across proxied requests. Streaming
+// responses intentionally have no global timeout and are cancelled through the request context.
+var proxyHTTPClient = &http.Client{
+	Transport: &http.Transport{ForceAttemptHTTP2: false},
+}
+
+// proxyHandler 返回代理处理函数
+func (h *Handler) proxyHandler() echo.HandlerFunc {
+	return func(c echo.Context) error {
+		xl := xlog.NewLogger("PROXY")
+		path := c.Request().URL.Path
+
+		// 从路径中提取服务名和路由
+		parts := strings.Split(strings.TrimPrefix(path, "/"), "/")
+		if len(parts) < 2 {
+			return c.String(http.StatusNotFound, "Invalid path")
+		}
+
+		serviceName := parts[0]
+		lastRoute := parts[len(parts)-1] // 获取最后一个路由部分
+		remainingPath := "/" + strings.Join(parts[1:], "/")
+
+		// 获取workspace信息
+		workspace := httpx.GetWorkspace(c, workspaces.DefaultWorkspace)
+
+		if err := h.ensureWorkspaceServicesRunning(c.Request().Context(), workspace, xl); err != nil {
+			xl.Errorf("restore workspace services failed: %v", err)
+			return c.String(http.StatusInternalServerError, err.Error())
+		}
+
+		// 获取服务配置
+		instance, err := h.services.GetMcpService(xl, workspaces.NameArg{
+			Server:    serviceName,
+			Workspace: workspace,
+		})
+
+		if err != nil {
+			return c.String(http.StatusNotFound, "Service not found")
+		}
+
+		// 获取原始请求的查询参数
+		originalQuery := c.Request().URL.RawQuery
+
+		// 根据最后一个路由进行不同处理
+		var baseURL string
+		switch lastRoute {
+		case "sse":
+			// 对于SSE，使用完整的SSE URL
+			baseURL = instance.GetSSEUrl()
+		case "message":
+			// 对于message，使用完整的Message URL
+			baseURL = instance.GetMessageUrl()
+		default:
+			// 对于其他路由，使用基础URL加上完整路径
+			if url := instance.GetUrl(); url != "" {
+				// 移除URL末尾的斜杠，避免双斜杠
+				baseURL = strings.TrimRight(url, "/")
+				if remainingPath != "/" {
+					baseURL += remainingPath
+				}
+			} else {
+				return c.String(http.StatusNotFound, "Service not available")
+			}
+		}
+
+		// 构建目标URL，保留原始查询参数
+		targetURL := baseURL
+		if originalQuery != "" {
+			// 检查baseURL是否已经包含查询参数
+			if strings.Contains(baseURL, "?") {
+				targetURL = baseURL + "&" + originalQuery
+			} else {
+				targetURL = baseURL + "?" + originalQuery
+			}
+		}
+
+		// URLs and query strings can contain API keys or OAuth parameters. Keep
+		// request observability without persisting credentials in application logs.
+		c.Logger().Infof("Proxy request: method=%s, service=%s, route=%s",
+			c.Request().Method, serviceName, lastRoute)
+
+		// 创建新的请求
+		req, err := http.NewRequestWithContext(c.Request().Context(), c.Request().Method, targetURL, c.Request().Body)
+		if err != nil {
+			return err
+		}
+
+		// 复制原始请求的 header
+		for k, v := range c.Request().Header {
+			req.Header[k] = v
+		}
+		if token := downstreamOAuthToken(instance); token != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
+
+		// 发送请求
+		resp, err := proxyHTTPClient.Do(req)
+		if err != nil {
+			return err
+		}
+		defer resp.Body.Close()
+
+		// 复制响应 header
+		for k, v := range resp.Header {
+			c.Response().Header()[k] = v
+		}
+
+		// 对于 SSE 请求的特殊处理
+		if httpx.IsSSE(resp.Header) {
+			c.Response().Header().Set("Content-Type", "text/event-stream")
+			c.Response().Header().Set("Cache-Control", "no-cache")
+			c.Response().Header().Set("Connection", "keep-alive")
+			c.Response().WriteHeader(resp.StatusCode)
+			c.Response().Flush()
+
+			reader := bufio.NewReader(resp.Body)
+			var currentEvent string
+
+			for {
+				line, err := reader.ReadString('\n')
+				if err != nil {
+					if err == io.EOF {
+						break
+					}
+					return err
+				}
+
+				line = strings.TrimSpace(line)
+				if line == "" {
+					continue
+				}
+
+				// 处理事件行
+				if strings.HasPrefix(line, "event: ") {
+					currentEvent = strings.TrimPrefix(line, "event: ")
+					fmt.Fprintf(c.Response(), "event: %s\n", currentEvent)
+				} else if strings.HasPrefix(line, "data: ") {
+					data := strings.TrimPrefix(line, "data: ")
+
+					// 如果是endpoint事件，添加服务名前缀
+					if currentEvent == "endpoint" && strings.HasPrefix(data, "/message") {
+						data = fmt.Sprintf("/%s%s", serviceName, data)
+					}
+
+					fmt.Fprintf(c.Response(), "data: %s\n\n", data)
+				} else {
+					fmt.Fprintf(c.Response(), "%s\n", line)
+				}
+				c.Response().Flush()
+			}
+			return nil
+		}
+
+		// 非 SSE 请求的普通处理
+		c.Response().WriteHeader(resp.StatusCode)
+		_, err = io.Copy(c.Response().Writer, resp.Body)
+		return err
+	}
+}

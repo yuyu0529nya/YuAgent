@@ -10,8 +10,9 @@ public class MCPGatewayProperties {
 
     private String baseUrl; // 网关基础URL
     private String apiKey = "123456"; // API密钥
-    private int connectTimeout = 60000; // 连接超时(毫秒)，默认30秒
+    private int connectTimeout = 60000; // 连接超时(毫秒)
     private int readTimeout = 60000; // 读取超时(毫秒)，默认60秒
+    private int connectionRequestTimeout = 10000; // 从连接池获取连接的最大等待时间(毫秒)
 
     public String getBaseUrl() {
         return baseUrl;
@@ -43,5 +44,13 @@ public class MCPGatewayProperties {
 
     public void setReadTimeout(int readTimeout) {
         this.readTimeout = readTimeout;
+    }
+
+    public int getConnectionRequestTimeout() {
+        return connectionRequestTimeout;
+    }
+
+    public void setConnectionRequestTimeout(int connectionRequestTimeout) {
+        this.connectionRequestTimeout = connectionRequestTimeout;
     }
 }

@@ -1,6 +1,7 @@
 "use client"
 
-import React, { useEffect } from "react"
+import React from "react"
+import dynamic from "next/dynamic"
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -14,10 +15,26 @@ import ModelSelector from "@/components/model-selector"
 import AgentBasicInfoForm from "@/app/(main)/studio/edit/[id]/components/AgentBasicInfoForm"
 import AgentPromptForm from "@/app/(main)/studio/edit/[id]/components/AgentPromptForm"
 import AgentToolsForm from "@/app/(main)/studio/edit/[id]/components/AgentToolsForm"
-import ToolDetailSidebar from "@/app/(main)/studio/edit/[id]/components/ToolDetailSidebar"
-import KnowledgeBaseDetailSidebar from "@/app/(main)/studio/edit/[id]/components/KnowledgeBaseDetailSidebar"
-import AgentPreviewChat from "@/components/agent-preview-chat"
-import { AgentWidgetTab } from "@/app/(main)/studio/edit/[id]/components/AgentWidgetTab"
+
+const AgentPreviewChat = dynamic(() => import("@/components/agent-preview-chat"), {
+  ssr: false,
+  loading: () => <div className="h-[500px] animate-pulse rounded-md bg-muted" />,
+})
+
+const ToolDetailSidebar = dynamic(
+  () => import("@/app/(main)/studio/edit/[id]/components/ToolDetailSidebar"),
+  { ssr: false },
+)
+
+const KnowledgeBaseDetailSidebar = dynamic(
+  () => import("@/app/(main)/studio/edit/[id]/components/KnowledgeBaseDetailSidebar"),
+  { ssr: false },
+)
+
+const AgentWidgetTab = dynamic(
+  () => import("@/app/(main)/studio/edit/[id]/components/AgentWidgetTab").then(module => module.AgentWidgetTab),
+  { ssr: false },
+)
 
 interface AgentFormModalProps {
   // 模式控制
@@ -34,6 +51,7 @@ interface AgentFormModalProps {
   // 操作回调
   onSubmit: (formData: AgentFormData) => Promise<void>
   onCancel: () => void
+  onFormDataChange?: (formData: AgentFormData) => void
   
   // 编辑模式特有的操作
   onDelete?: () => void
@@ -55,6 +73,7 @@ export default function AgentFormModal({
   description,
   onSubmit,
   onCancel,
+  onFormDataChange,
   onDelete,
   onPublish,
   onShowVersions,
@@ -65,7 +84,6 @@ export default function AgentFormModal({
     // 基础状态
     activeTab,
     setActiveTab,
-    isSubmitting: internalIsSubmitting,
     
     // 工具相关状态
     selectedToolForSidebar,
@@ -96,9 +114,13 @@ export default function AgentFormModal({
     isEditMode: mode === "edit" 
   })
 
+  React.useEffect(() => {
+    onFormDataChange?.(formData)
+  }, [formData, onFormDataChange])
+
   const { toast } = useToast()
 
-  const isSubmitting = externalIsSubmitting || internalIsSubmitting
+  const isSubmitting = externalIsSubmitting
   
   // 编辑模式下，如果没有initialData，说明还在加载
   const isLoading = mode === "edit" && !initialData
@@ -124,14 +146,6 @@ export default function AgentFormModal({
     
     return validToolIds;
   }
-
-  // 监控预览传递的工具ID变化
-  useEffect(() => {
-    const validToolIds = getValidToolIds();
-    if (validToolIds.length > 0) {
- 
-    }
-  }, [formData.tools, installedTools])
 
   // 处理提交
   const handleSubmit = async () => {
@@ -282,7 +296,7 @@ export default function AgentFormModal({
             {/* 小组件标签页 - 仅编辑模式 */}
             {mode === "edit" && agentId && (
               <TabsContent value="widget" className="space-y-6">
-                <AgentWidgetTab agentId={agentId} />
+                {activeTab === "widget" && <AgentWidgetTab agentId={agentId} />}
               </TabsContent>
             )}
           </Tabs>
@@ -363,22 +377,26 @@ export default function AgentFormModal({
       </div>
 
       {/* 工具详情侧边栏 */}
-      <ToolDetailSidebar
-        tool={selectedToolForSidebar}
-        isOpen={isToolSidebarOpen}
-        onClose={() => setIsToolSidebarOpen(false)}
-        presetParameters={selectedToolForSidebar && selectedToolForSidebar.mcpServerName && formData.toolPresetParams[selectedToolForSidebar.mcpServerName] ? 
-          formData.toolPresetParams[selectedToolForSidebar.mcpServerName] : 
-          {}}
-        onSavePresetParameters={updateToolPresetParameters}
-      />
+      {isToolSidebarOpen && (
+        <ToolDetailSidebar
+          tool={selectedToolForSidebar}
+          isOpen={isToolSidebarOpen}
+          onClose={() => setIsToolSidebarOpen(false)}
+          presetParameters={selectedToolForSidebar && selectedToolForSidebar.mcpServerName && formData.toolPresetParams[selectedToolForSidebar.mcpServerName] ?
+            formData.toolPresetParams[selectedToolForSidebar.mcpServerName] :
+            {}}
+          onSavePresetParameters={updateToolPresetParameters}
+        />
+      )}
 
       {/* 知识库详情侧边栏 */}
-      <KnowledgeBaseDetailSidebar
-        knowledgeBase={selectedKnowledgeBaseForSidebar}
-        isOpen={isKnowledgeBaseSidebarOpen}
-        onClose={() => setIsKnowledgeBaseSidebarOpen(false)}
-      />
+      {isKnowledgeBaseSidebarOpen && (
+        <KnowledgeBaseDetailSidebar
+          knowledgeBase={selectedKnowledgeBaseForSidebar}
+          isOpen={isKnowledgeBaseSidebarOpen}
+          onClose={() => setIsKnowledgeBaseSidebarOpen(false)}
+        />
+      )}
 
       {/* 编辑模式的额外组件（如版本历史对话框等） */}
       {children}

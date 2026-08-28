@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
+import dynamic from "next/dynamic"
 import Link from "next/link"
 import { ArrowLeft, Wrench, Download, User, Clock, Settings, Command } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -14,11 +15,17 @@ import { Separator } from "@/components/ui/separator"
 import React from "react"
 import { Card, CardContent } from "@/components/ui/card"
 
-import { Tool, ToolStatus } from "@/types/tool"
-import { getMarketToolVersionDetail, getMarketToolVersions, getMarketToolVersionDetailWithToast, getMarketToolVersionsWithToast, getUserToolsWithToast } from "@/lib/tool-service"
-import { InstallToolDialog } from "@/components/tool/install-tool-dialog"
+import { Tool } from "@/types/tool"
+import { toMarketTool } from "@/lib/market-tool-mapper"
+import { getMarketToolVersionDetail, getMarketToolVersions, isToolVersionInstalled } from "@/lib/tool-service"
+import { getSchemaPropertyDescription } from "../../utils/schema"
 
-export default function ToolDetailPage({ params }: { params: { id: string, version: string } & Promise<{ id: string, version: string }> }) {
+const InstallToolDialog = dynamic(
+  () => import("@/components/tool/install-tool-dialog").then(module => module.InstallToolDialog),
+  { ssr: false },
+)
+
+export default function ToolDetailPage({ params }: { params: Promise<{ id: string; version: string }> }) {
   // 使用React.use()解包params对象
   const { id, version } = React.use(params);
   
@@ -34,90 +41,61 @@ export default function ToolDetailPage({ params }: { params: { id: string, versi
   const [selectedVersionDetail, setSelectedVersionDetail] = useState<any>(null);
   const [isVersionDetailOpen, setIsVersionDetailOpen] = useState(false);
   const [versionDetailLoading, setVersionDetailLoading] = useState(false);
+  const [refreshToken, setRefreshToken] = useState(0)
   
   // 获取工具详情
   useEffect(() => {
+    let active = true
+
     async function fetchToolDetail() {
       try {
         setLoading(true)
         setError(null)
 
-        // 获取工具版本详情，使用不带Toast的API
-        const detailResponse = await getMarketToolVersionDetail(id, version)
+        // Detail and installation state are independent. Fetch them together so the page does
+        // not wait for a full installed-tools list after the detail request completes.
+        const [detailResponse, installedResponse] = await Promise.all([
+          getMarketToolVersionDetail(id, version),
+          isToolVersionInstalled(id, version),
+        ])
         
+        if (!active) {
+          return
+        }
+
         if (detailResponse.code === 200) {
-          // 使用any类型进行安全转换
-          const apiData = detailResponse.data as any;
-          
-          // 转换API返回的数据到前端需要的格式
-          const toolData: Tool = {
-            id: apiData.id,
-            toolId: apiData.toolId || id,
-            name: apiData.name,
-            icon: apiData.icon,
-            subtitle: apiData.subtitle,
-            description: apiData.description,
-            user_id: apiData.userId || "unknown",
-            author: apiData.userName || "未知作者",
-            labels: apiData.labels || [],
-            tool_type: apiData.toolType || "",
-            upload_type: apiData.uploadType || "",
-            upload_url: apiData.uploadUrl || "",
-            install_command: {
-              type: 'sse',
-              url: `https://api.example.com/tools/${apiData.toolId || id}`
-            },
-            tool_list: apiData.toolList || [],
-            status: ToolStatus.APPROVED,
-            is_office: Boolean(apiData.isOffice || apiData.office),
-            installCount: apiData.installCount || 0,
-            current_version: apiData.version || version,
-            createdAt: apiData.createdAt,
-            updatedAt: apiData.updatedAt
-          };
+          const apiData = detailResponse.data;
+          if (!apiData) {
+            setError("工具详情为空");
+            return;
+          }
+
+          const toolData = toMarketTool(apiData);
           
           setTool(toolData);
           
-          // 获取版本历史，使用不带Toast的API
-          try {
-            const versionsResponse = await getMarketToolVersions(apiData.toolId || id);
-            if (versionsResponse.code === 200 && versionsResponse.data.length > 0) {
-              // 转换版本历史数据
-              const versions = versionsResponse.data.map((v: any) => ({
-              version: v.version,
-              date: new Date(v.createdAt).toLocaleDateString(),
-              author: v.userName || toolData.author,
-                notes: v.changeLog || "无更新说明",
-              changes: []
-            }));
-            setVersionHistory(versions);
-            }
-          } catch (versionError) {
- 
-            // 版本历史获取失败不影响主要功能，继续使用默认数据
-          }
-          
-          // 暂时设置为未安装状态，让安装按钮始终显示
-          setIsUserInstalledTool(false);
+          setIsUserInstalledTool(installedResponse.code === 200 && installedResponse.data === true);
         } else {
           setError(detailResponse.message);
         }
       } catch (error) {
+        if (!active) {
+          return
+        }
         const errorMessage = error instanceof Error ? error.message : "未知错误";
         setError(errorMessage);
       } finally {
-        setLoading(false);
+        if (active) {
+          setLoading(false);
+        }
       }
     }
 
     fetchToolDetail();
-  }, [id, version]);
-
-  // 检查工具是否已安装 - 暂时不使用此逻辑
-  const checkIfToolInstalled = async (toolId: string) => {
-    // 暂时直接返回，不进行实际检查
-    return false;
-  };
+    return () => {
+      active = false
+    }
+  }, [id, version, refreshToken]);
 
   // 处理安装特定版本
   const handleInstallVersion = (version: string) => {
@@ -261,7 +239,7 @@ export default function ToolDetailPage({ params }: { params: { id: string, versi
         // 错误状态
         <div className="text-center py-10">
           <div className="text-red-500 mb-4">{error}</div>
-          <Button variant="outline" onClick={() => window.location.reload()}>
+          <Button variant="outline" onClick={() => setRefreshToken((token) => token + 1)}>
             重试
           </Button>
         </div>
@@ -295,10 +273,9 @@ export default function ToolDetailPage({ params }: { params: { id: string, versi
                 </div>
               </div>
               
-              {/* 始终显示安装按钮 */}
-              <Button onClick={() => setIsInstallDialogOpen(true)}>
+              <Button onClick={() => setIsInstallDialogOpen(true)} disabled={isUserInstalledTool}>
                 <Download className="mr-2 h-4 w-4" />
-                安装
+                {isUserInstalledTool ? "已安装" : "安装"}
               </Button>
             </div>
             
@@ -358,9 +335,7 @@ export default function ToolDetailPage({ params }: { params: { id: string, versi
                                     .filter(([key]) => !['additionalProperties', 'definitions', 'required'].includes(key))
                                     .map(([key, value]) => {
                                       const cleanKey = key.replace(/^\{/, '');
-                                      const description = typeof value === 'object' && value && 'description' in value 
-                                        ? (value as any).description 
-                                        : null;
+                                      const description = getSchemaPropertyDescription(value);
                                       return (
                                         <div key={key} className="flex items-center gap-2">
                                           <code className="text-xs text-primary bg-primary/5 px-1.5 py-0.5 rounded">{cleanKey}</code>
@@ -388,19 +363,17 @@ export default function ToolDetailPage({ params }: { params: { id: string, versi
         </div>
       ) : null}
       
-      {/* 安装对话框 - 始终可用 */}
-      <InstallToolDialog 
-        open={isInstallDialogOpen}
-        onOpenChange={setIsInstallDialogOpen}
-        tool={tool}
-        version={tool?.current_version}
-        onSuccess={() => {
-          toast({
-            title: "安装成功",
-            description: `${tool?.name} 工具已成功安装`
-          });
-        }}
-      />
+      {isInstallDialogOpen && tool && (
+        <InstallToolDialog
+          open
+          onOpenChange={setIsInstallDialogOpen}
+          tool={tool}
+          version={tool.current_version}
+          onSuccess={() => {
+            setIsUserInstalledTool(true)
+          }}
+        />
+      )}
           
       {/* 版本历史对话框 - 始终可用 */}
           <Dialog open={isVersionHistoryOpen} onOpenChange={setIsVersionHistoryOpen}>
@@ -476,18 +449,12 @@ export default function ToolDetailPage({ params }: { params: { id: string, versi
           </Dialog>
           
       {/* 版本安装对话框 - 始终可用 */}
-          {selectedVersionToInstall && (
+          {isVersionInstallDialogOpen && selectedVersionToInstall && tool && (
             <InstallToolDialog
-              open={isVersionInstallDialogOpen}
+              open
               onOpenChange={setIsVersionInstallDialogOpen}
               tool={tool}
               version={selectedVersionToInstall}
-          onSuccess={() => {
-            toast({
-              title: "安装成功",
-              description: `${tool?.name} (v${selectedVersionToInstall}) 已成功安装`
-            });
-          }}
             />
           )}
       
@@ -577,9 +544,7 @@ export default function ToolDetailPage({ params }: { params: { id: string, versi
                                     .filter(([key]) => !['additionalProperties', 'definitions', 'required'].includes(key))
                                     .map(([key, value]) => {
                                       const cleanKey = key.replace(/^\{/, '');
-                                      const description = typeof value === 'object' && value && 'description' in value 
-                                        ? (value as any).description 
-                                        : null;
+                                      const description = getSchemaPropertyDescription(value);
                                       return (
                                         <div key={key} className="flex items-center gap-2">
                                           <code className="text-xs text-primary bg-primary/5 px-1.5 py-0.5 rounded">{cleanKey}</code>

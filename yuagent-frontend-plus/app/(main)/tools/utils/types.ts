@@ -79,12 +79,12 @@ export interface ToolFunction {
   description: string
   parameters?: {
     type?: string
-    properties: Record<string, any>
+    properties: Record<string, unknown>
     required?: string[]
   }
   inputSchema?: {
     type: string
-    properties: Record<string, any>
+    properties: Record<string, unknown>
     required?: string[]
   }
 }

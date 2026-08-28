@@ -16,6 +16,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.CollectionUtils;
 import org.springframework.util.StringUtils;
 import org.yu.domain.memory.model.CandidateMemory;
@@ -40,6 +41,7 @@ public class MemoryDomainService {
     private static final Logger log = LoggerFactory.getLogger(MemoryDomainService.class);
 
     private static final int ACTIVE = 1;
+    private static final int MAX_PAGE_SIZE = 100;
 
     private final MemoryItemRepository memoryItemRepository;
     private final EmbeddingModelFactory embeddingModelFactory;
@@ -59,10 +61,33 @@ public class MemoryDomainService {
     /** 保存记忆（去重/合并 + 向量入库）
      *
      * @return 写入/更新后的 itemId 列表 */
+    @Transactional(rollbackFor = Exception.class)
     public List<String> saveMemories(String userId, String sessionId, List<CandidateMemory> candidates) {
         if (CollectionUtils.isEmpty(candidates)) {
             return Collections.emptyList();
         }
+
+        List<PreparedMemory> preparedMemories = new ArrayList<>();
+        for (CandidateMemory candidate : candidates) {
+            if (candidate == null || !StringUtils.hasText(candidate.getText())) {
+                continue;
+            }
+
+            MemoryType type = candidate.getType() != null ? candidate.getType() : MemoryType.FACT;
+            String hash = sha256(normalizeText(candidate.getText()));
+            preparedMemories.add(new PreparedMemory(candidate, type, hash));
+        }
+
+        if (preparedMemories.isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        Set<String> hashes = preparedMemories.stream().map(PreparedMemory::hash).collect(Collectors.toSet());
+        Map<String, MemoryItemEntity> existingByHash = new HashMap<>();
+        memoryItemRepository
+                .selectList(Wrappers.<MemoryItemEntity>lambdaQuery().eq(MemoryItemEntity::getUserId, userId)
+                        .in(MemoryItemEntity::getDedupeHash, hashes))
+                .forEach(item -> existingByHash.putIfAbsent(item.getDedupeHash(), item));
 
         // 构造嵌入模型
         var embeddingCfg = userModelConfigResolver.getUserEmbeddingModelConfig(userId);
@@ -70,18 +95,11 @@ public class MemoryDomainService {
                 embeddingCfg.getApiKey(), embeddingCfg.getBaseUrl(), embeddingCfg.getModelEndpoint()));
 
         List<String> itemIds = new ArrayList<>();
-        for (CandidateMemory c : candidates) {
-            if (c == null || !StringUtils.hasText(c.getText())) {
-                continue;
-            }
-
-            MemoryType type = (c.getType() != null) ? c.getType() : MemoryType.FACT;
-            String normalized = normalizeText(c.getText());
-            String hash = sha256(normalized);
-
-            // 查重（同用户，同hash）
-            MemoryItemEntity existed = memoryItemRepository.selectOne(Wrappers.<MemoryItemEntity>lambdaQuery()
-                    .eq(MemoryItemEntity::getUserId, userId).eq(MemoryItemEntity::getDedupeHash, hash));
+        for (PreparedMemory prepared : preparedMemories) {
+            CandidateMemory c = prepared.candidate();
+            MemoryType type = prepared.type();
+            String hash = prepared.hash();
+            MemoryItemEntity existed = existingByHash.get(hash);
 
             MemoryItemEntity toSave;
             if (existed == null) {
@@ -96,11 +114,10 @@ public class MemoryDomainService {
                 toSave.setSourceSessionId(sessionId);
                 toSave.setDedupeHash(hash);
                 toSave.setStatus(ACTIVE);
-                try {
-                    memoryItemRepository.insert(toSave);
-                } catch (Exception e) {
-                    e.printStackTrace();
+                if (memoryItemRepository.insert(toSave) != 1) {
+                    throw new BusinessException("保存记忆失败");
                 }
+                existingByHash.put(hash, toSave);
             } else {
                 // 合并（简单策略：importance 取 max，tags 合并去重，text 以更长者为准）
                 toSave = existed;
@@ -109,7 +126,9 @@ public class MemoryDomainService {
                 toSave.setTags(mergeTags(existed.getTags(), c.getTags()));
                 toSave.setData(mergeData(existed.getData(), c.getData()));
                 toSave.setText(pickRichText(existed.getText(), c.getText()));
-                memoryItemRepository.updateById(toSave);
+                if (memoryItemRepository.updateById(toSave) != 1) {
+                    throw new BusinessException("更新记忆失败");
+                }
             }
 
             itemIds.add(toSave.getId());
@@ -160,28 +179,37 @@ public class MemoryDomainService {
                 return Collections.emptyList();
             }
 
-            // 批量获取 itemIds 并过滤 status=1
-            List<String> itemIds = matches.stream().map(m -> (String) m.embedded().metadata().toMap().get(ITEM_ID))
-                    .filter(Objects::nonNull).collect(Collectors.toList());
+            // 同一记忆可能因更新或重复写入拥有多个向量，只保留最高相似度的匹配，
+            // 避免重复上下文挤占 topK，并使后续数据库查询保持去重。
+            Map<String, EmbeddingMatch<TextSegment>> bestMatchesByItemId = new LinkedHashMap<>();
+            for (EmbeddingMatch<TextSegment> match : matches) {
+                String itemId = itemIdOf(match);
+                if (itemId == null) {
+                    continue;
+                }
+                bestMatchesByItemId.merge(itemId, match,
+                        (current, candidate) -> scoreOf(candidate) > scoreOf(current) ? candidate : current);
+            }
 
-            if (itemIds.isEmpty()) {
+            if (bestMatchesByItemId.isEmpty()) {
                 return Collections.emptyList();
             }
 
-            List<MemoryItemEntity> items = memoryItemRepository
-                    .selectList(Wrappers.<MemoryItemEntity>lambdaQuery().in(MemoryItemEntity::getId, itemIds));
+            List<MemoryItemEntity> items = memoryItemRepository.selectList(Wrappers.<MemoryItemEntity>lambdaQuery()
+                    .in(MemoryItemEntity::getId, bestMatchesByItemId.keySet()).eq(MemoryItemEntity::getStatus, ACTIVE));
             Map<String, MemoryItemEntity> itemMap = items.stream()
                     .collect(Collectors.toMap(MemoryItemEntity::getId, it -> it, (a, b) -> a));
 
             // 生成结果，按加权分排序：sim*w1 + importance*w2
             List<MemoryResult> results = new ArrayList<>();
-            for (EmbeddingMatch<TextSegment> m : matches) {
-                String itemId = (String) m.embedded().metadata().toMap().get(ITEM_ID);
+            for (Map.Entry<String, EmbeddingMatch<TextSegment>> entry : bestMatchesByItemId.entrySet()) {
+                String itemId = entry.getKey();
+                EmbeddingMatch<TextSegment> m = entry.getValue();
                 if (!itemMap.containsKey(itemId)) {
                     continue;
                 }
                 MemoryItemEntity it = itemMap.get(itemId);
-                double sim = m.score();
+                double sim = scoreOf(m);
                 double weight = 0.7 * sim + 0.3 * (it.getImportance() == null ? 0.5 : it.getImportance());
 
                 MemoryResult mr = new MemoryResult();
@@ -206,7 +234,7 @@ public class MemoryDomainService {
 
     /** 分页列出用户记忆（可按类型过滤） */
     public Page<MemoryItemEntity> pageMemories(String userId, String type, int page, int pageSize) {
-        Page<MemoryItemEntity> mpPage = new Page<>(Math.max(1, page), Math.max(1, pageSize));
+        Page<MemoryItemEntity> mpPage = new Page<>(Math.max(1, page), Math.min(Math.max(1, pageSize), MAX_PAGE_SIZE));
         var qw = Wrappers.<MemoryItemEntity>lambdaQuery().eq(MemoryItemEntity::getUserId, userId);
         if (type != null && !type.isBlank()) {
             qw.eq(MemoryItemEntity::getType, type.trim().toUpperCase());
@@ -223,11 +251,10 @@ public class MemoryDomainService {
             qw.eq(MemoryItemEntity::getType, type.trim().toUpperCase());
         }
         qw.orderByDesc(MemoryItemEntity::getUpdatedAt);
-        List<MemoryItemEntity> list = memoryItemRepository.selectList(qw);
-        if (limit != null && limit > 0 && list.size() > limit) {
-            return list.subList(0, limit);
+        if (limit != null && limit > 0) {
+            qw.last("LIMIT " + limit);
         }
-        return list;
+        return memoryItemRepository.selectList(qw);
     }
 
     /** 归档（软删除）记忆条目 */
@@ -239,7 +266,22 @@ public class MemoryDomainService {
     }
 
     private static String normalizeText(String s) {
-        return s == null ? "" : s.replaceAll("\n+", "\n").replaceAll("\s+", " ").trim().toLowerCase();
+        return s == null ? "" : s.replaceAll("\\s+", " ").trim().toLowerCase();
+    }
+
+    private record PreparedMemory(CandidateMemory candidate, MemoryType type, String hash) {
+    }
+
+    private static String itemIdOf(EmbeddingMatch<TextSegment> match) {
+        if (match == null || match.embedded() == null || match.embedded().metadata() == null) {
+            return null;
+        }
+        Object itemId = match.embedded().metadata().toMap().get(ITEM_ID);
+        return itemId instanceof String value && StringUtils.hasText(value) ? value : null;
+    }
+
+    private static double scoreOf(EmbeddingMatch<TextSegment> match) {
+        return match == null || match.score() == null ? 0.0 : match.score();
     }
 
     private static String sha256(String s) {
@@ -266,11 +308,7 @@ public class MemoryDomainService {
     }
 
     private static Float max(Float a, Float b) {
-        if (a == null)
-            return b == null ? 0.5f : b;
-        if (b == null)
-            return a;
-        return Math.max(a, b);
+        return Math.max(safeImportance(a), safeImportance(b));
     }
 
     private static List<String> mergeTags(List<String> a, List<String> b) {

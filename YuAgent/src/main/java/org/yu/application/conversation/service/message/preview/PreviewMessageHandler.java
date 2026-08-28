@@ -23,6 +23,7 @@ import org.yu.application.billing.service.BillingService;
 import org.yu.domain.user.service.AccountDomainService;
 
 import java.util.Collections;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 /** 预览消息处理器 专门用于Agent预览功能，不会保存消息到数据库 */
@@ -51,19 +52,30 @@ public class PreviewMessageHandler extends AbstractMessageHandler {
     /** 预览专用的聊天处理逻辑 与正常流程的区别是不保存消息到数据库 */
     @Override
     protected <T> void processChat(Agent agent, T connection, MessageTransport<T> transport, ChatContext chatContext,
-            MessageEntity userEntity, MessageEntity llmEntity) {
+            MessageEntity userEntity, MessageEntity llmEntity, ToolProvider toolProvider) {
 
         AtomicReference<StringBuilder> messageBuilder = new AtomicReference<>(new StringBuilder());
+        AtomicBoolean streamStopped = new AtomicBoolean(false);
 
         TokenStream tokenStream = agent.chat(chatContext.getUserMessage());
 
         tokenStream.onError(throwable -> {
-            transport.sendMessage(connection,
+            if (shouldStopStreaming(chatContext, streamStopped)) {
+                closeToolProvider(toolProvider);
+                return;
+            }
+            streamStopped.set(true);
+            transport.sendEndMessage(connection,
                     AgentChatResponse.buildEndMessage(throwable.getMessage(), MessageType.TEXT));
+            closeToolProvider(toolProvider);
         });
 
         // 部分响应处理
         tokenStream.onPartialResponse(reply -> {
+            if (shouldStopStreaming(chatContext, streamStopped)) {
+                closeToolProvider(toolProvider);
+                return;
+            }
             messageBuilder.get().append(reply);
             // 删除换行后消息为空字符串
             if (messageBuilder.get().toString().trim().isEmpty()) {
@@ -74,16 +86,25 @@ public class PreviewMessageHandler extends AbstractMessageHandler {
 
         // 完整响应处理
         tokenStream.onCompleteResponse(chatResponse -> {
+            if (shouldStopStreaming(chatContext, streamStopped)) {
+                closeToolProvider(toolProvider);
+                return;
+            }
             // 发送结束消息
             transport.sendEndMessage(connection, AgentChatResponse.buildEndMessage(MessageType.TEXT));
 
             // 执行模型调用计费
             performBillingWithErrorHandling(chatContext, userEntity, chatResponse.tokenUsage().inputTokenCount(),
                     chatResponse.tokenUsage().outputTokenCount(), transport, connection);
+            closeToolProvider(toolProvider);
         });
 
         // 工具执行处理
         tokenStream.onToolExecuted(toolExecution -> {
+            if (shouldStopStreaming(chatContext, streamStopped)) {
+                closeToolProvider(toolProvider);
+                return;
+            }
             if (messageBuilder.get().length() > 0) {
                 transport.sendMessage(connection, AgentChatResponse.buildEndMessage(MessageType.TEXT));
                 llmEntity.setContent(messageBuilder.toString());
@@ -91,9 +112,6 @@ public class PreviewMessageHandler extends AbstractMessageHandler {
                 messageBuilder.set(new StringBuilder());
             }
             String message = "执行工具：" + toolExecution.request().name();
-            MessageEntity toolMessage = createLlmMessage(chatContext);
-            toolMessage.setMessageType(MessageType.TOOL_CALL);
-            toolMessage.setContent(message);
             transport.sendMessage(connection, AgentChatResponse.buildEndMessage(message, MessageType.TOOL_CALL));
         });
 

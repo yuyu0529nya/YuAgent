@@ -8,7 +8,9 @@ import org.yu.domain.rag.model.*;
 import org.yu.domain.rag.repository.*;
 import org.yu.infrastructure.exception.BusinessException;
 
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /** RAG数据访问服务 - 支持动态引用和快照数据获取
  * @author yu
@@ -43,7 +45,7 @@ public class RagDataAccessDomainService {
 
         if (userRag.isReferenceType()) {
             // REFERENCE类型：从原始数据集获取最新文件
-            return getRealTimeFiles(userRag.getOriginalRagId(), userId);
+            return getRealTimeFiles(userRag.getOriginalRagId());
         } else {
             // SNAPSHOT类型：从用户快照获取固定文件
             return getUserSnapshotFiles(userRagId);
@@ -60,7 +62,7 @@ public class RagDataAccessDomainService {
 
         if (userRag.isReferenceType()) {
             // REFERENCE类型：从原始数据集获取最新文档
-            return getRealTimeDocuments(userRag.getOriginalRagId(), userId);
+            return getRealTimeDocuments(userRag.getOriginalRagId());
         } else {
             // SNAPSHOT类型：从用户快照获取固定文档
             return getUserSnapshotDocuments(userRagId);
@@ -78,7 +80,7 @@ public class RagDataAccessDomainService {
 
         if (userRag.isReferenceType()) {
             // REFERENCE类型：从原始数据集获取最新文件信息
-            return getRealTimeFileInfo(fileId, userId);
+            return getRealTimeFileInfo(fileId, userRag.getOriginalRagId());
         } else {
             // SNAPSHOT类型：从用户快照获取文件信息
             return getUserSnapshotFileInfo(userRagId, fileId);
@@ -96,7 +98,7 @@ public class RagDataAccessDomainService {
 
         if (userRag.isReferenceType()) {
             // REFERENCE类型：从原始数据集获取最新文档
-            return getRealTimeDocumentsByFile(fileId, userId);
+            return getRealTimeDocumentsByFile(fileId, userRag.getOriginalRagId());
         } else {
             // SNAPSHOT类型：从用户快照获取固定文档（fileId就是用户快照文件ID）
             return getUserSnapshotDocumentsByUserFileId(userRagId, fileId);
@@ -126,6 +128,28 @@ public class RagDataAccessDomainService {
                 .eq(UserRagFileEntity::getUserRagId, userRagId);
 
         return userRagFileRepository.selectCount(wrapper);
+    }
+
+    /** 批量统计用户 RAG 快照文件数量，避免列表展示时逐条查询。
+     *
+     * @param userRagIds 用户RAG安装记录ID列表
+     * @return 以用户RAG安装记录ID为键的文件数量 */
+    public Map<String, Long> countUserRagFiles(List<String> userRagIds) {
+        if (userRagIds == null || userRagIds.isEmpty()) {
+            return Map.of();
+        }
+
+        List<Map<String, Object>> rows = userRagFileRepository.selectMaps(Wrappers.<UserRagFileEntity>query()
+                .select("user_rag_id", "COUNT(*) AS file_count").in("user_rag_id", userRagIds).groupBy("user_rag_id"));
+        Map<String, Long> counts = new HashMap<>();
+        for (Map<String, Object> row : rows) {
+            Object userRagId = row.get("user_rag_id");
+            Object fileCount = row.get("file_count");
+            if (userRagId != null && fileCount instanceof Number number) {
+                counts.put(userRagId.toString(), number.longValue());
+            }
+        }
+        return counts;
     }
 
     /** 获取RAG的实际数据来源信息
@@ -162,8 +186,7 @@ public class RagDataAccessDomainService {
     }
 
     /** 获取实时文件（从原始数据集） */
-    private List<FileDetailEntity> getRealTimeFiles(String originalRagId, String userId) {
-        // 修复：对于已安装的知识库，用户应该能看到该知识库的所有文件，而不仅仅是自己上传的文件
+    private List<FileDetailEntity> getRealTimeFiles(String originalRagId) {
         LambdaQueryWrapper<FileDetailEntity> wrapper = Wrappers.<FileDetailEntity>lambdaQuery()
                 .eq(FileDetailEntity::getDataSetId, originalRagId).orderByDesc(FileDetailEntity::getCreatedAt);
 
@@ -182,11 +205,16 @@ public class RagDataAccessDomainService {
     }
 
     /** 获取实时文档（从原始数据集） */
-    private List<DocumentUnitEntity> getRealTimeDocuments(String originalRagId, String userId) {
-        // DocumentUnitEntity 可能没有直接的ragId和userId字段
-        // 需要通过fileId关联查询，这里先返回空列表
-        // TODO: 实现正确的文档查询逻辑
-        return List.of();
+    private List<DocumentUnitEntity> getRealTimeDocuments(String originalRagId) {
+        List<FileDetailEntity> files = getRealTimeFiles(originalRagId);
+        if (files.isEmpty()) {
+            return List.of();
+        }
+
+        List<String> fileIds = files.stream().map(FileDetailEntity::getId).toList();
+        LambdaQueryWrapper<DocumentUnitEntity> wrapper = Wrappers.<DocumentUnitEntity>lambdaQuery()
+                .in(DocumentUnitEntity::getFileId, fileIds).orderByDesc(DocumentUnitEntity::getCreatedAt);
+        return documentUnitRepository.selectList(wrapper);
     }
 
     /** 获取用户快照文档（从用户快照表） */
@@ -201,10 +229,9 @@ public class RagDataAccessDomainService {
     }
 
     /** 获取实时文件信息 */
-    private FileDetailEntity getRealTimeFileInfo(String fileId, String userId) {
-        // 修复：对于已安装的知识库，用户应该能访问该知识库的所有文件信息
+    private FileDetailEntity getRealTimeFileInfo(String fileId, String originalRagId) {
         LambdaQueryWrapper<FileDetailEntity> wrapper = Wrappers.<FileDetailEntity>lambdaQuery()
-                .eq(FileDetailEntity::getId, fileId);
+                .eq(FileDetailEntity::getId, fileId).eq(FileDetailEntity::getDataSetId, originalRagId);
 
         FileDetailEntity file = fileDetailRepository.selectOne(wrapper);
         if (file == null) {
@@ -239,7 +266,8 @@ public class RagDataAccessDomainService {
     }
 
     /** 获取实时文档（按文件ID过滤） */
-    private List<DocumentUnitEntity> getRealTimeDocumentsByFile(String fileId, String userId) {
+    private List<DocumentUnitEntity> getRealTimeDocumentsByFile(String fileId, String originalRagId) {
+        getRealTimeFileInfo(fileId, originalRagId);
         LambdaQueryWrapper<DocumentUnitEntity> wrapper = Wrappers.<DocumentUnitEntity>lambdaQuery()
                 .eq(DocumentUnitEntity::getFileId, fileId).orderByDesc(DocumentUnitEntity::getCreatedAt);
 

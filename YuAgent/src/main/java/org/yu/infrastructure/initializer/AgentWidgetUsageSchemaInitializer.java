@@ -16,8 +16,7 @@ public class AgentWidgetUsageSchemaInitializer implements ApplicationRunner {
 
     private static final Logger log = LoggerFactory.getLogger(AgentWidgetUsageSchemaInitializer.class);
 
-    private static final List<String> SCHEMA_PATCHES = List.of(
-            """
+    private static final List<String> SCHEMA_PATCHES = List.of("""
             CREATE TABLE IF NOT EXISTS public.agent_widget_daily_usage (
                 widget_id character varying(32) NOT NULL,
                 usage_date date NOT NULL,

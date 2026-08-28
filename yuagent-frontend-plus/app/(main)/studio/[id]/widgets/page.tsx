@@ -1,7 +1,7 @@
 ﻿"use client";
 
 import { useParams } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "@/hooks/use-toast";
+import { useCopy } from "@/hooks/use-copy";
 import { Plus, Copy, ExternalLink, Settings, Trash2, Eye, EyeOff } from "lucide-react";
 import {
   Dialog,
@@ -28,13 +29,12 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
-  getAgentWidgetsWithToast,
+  getWidgetsWithToast,
   createWidgetWithToast,
   toggleWidgetStatusWithToast,
   deleteWidgetWithToast,
-  type Widget,
-  type CreateWidgetRequest,
-} from "@/lib/widget-service";
+} from "@/lib/agent-widget-service";
+import type { AgentWidget as Widget, CreateWidgetRequest } from "@/types/widget";
 import { getAgentDetailWithToast } from "@/lib/agent-service";
 import { getAllModelsWithToast, type Model } from "@/lib/user-settings-service";
 
@@ -64,6 +64,8 @@ export default function AgentWidgetsPage() {
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [createLoading, setCreateLoading] = useState(false);
   const [models, setModels] = useState<Model[]>([]);
+  const latestLoadRequestRef = useRef(0);
+  const { copyToClipboard } = useCopy();
 
   const [createForm, setCreateForm] = useState<CreateWidgetData>({
     name: "",
@@ -74,19 +76,20 @@ export default function AgentWidgetsPage() {
     providerId: "",
   });
 
-  useEffect(() => {
-    loadData();
-  }, [agentId]);
-
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
+    const requestId = ++latestLoadRequestRef.current;
     try {
       setLoading(true);
 
       const [agentResponse, widgetsResponse, modelsResponse] = await Promise.all([
         getAgentDetailWithToast(agentId),
-        getAgentWidgetsWithToast(agentId),
+        getWidgetsWithToast(agentId),
         getAllModelsWithToast(),
       ]);
+
+      if (requestId !== latestLoadRequestRef.current) {
+        return;
+      }
 
       if (agentResponse.code === 200) {
         setAgent(agentResponse.data);
@@ -112,9 +115,15 @@ export default function AgentWidgetsPage() {
         });
       }
     } finally {
-      setLoading(false);
+      if (requestId === latestLoadRequestRef.current) {
+        setLoading(false);
+      }
     }
-  };
+  }, [agentId]);
+
+  useEffect(() => {
+    void loadData();
+  }, [loadData]);
 
   const handleCreateWidget = async () => {
     if (!createForm.name.trim()) {
@@ -144,6 +153,7 @@ export default function AgentWidgetsPage() {
         allowedDomains: createForm.allowedDomains,
         modelId: createForm.modelId,
         providerId: selectedModel?.providerId || createForm.providerId,
+        widgetType: "AGENT",
       };
 
       const response = await createWidgetWithToast(agentId, request);
@@ -161,14 +171,6 @@ export default function AgentWidgetsPage() {
     } finally {
       setCreateLoading(false);
     }
-  };
-
-  const copyToClipboard = (text: string) => {
-    navigator.clipboard.writeText(text);
-    toast({
-      title: "已复制",
-      description: "内容已复制到剪贴板",
-    });
   };
 
   const toggleWidgetStatus = async (widget: Widget) => {

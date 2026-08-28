@@ -1,6 +1,7 @@
 package org.yu.application.scheduledtask.service;
 
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.annotation.Rollback;
@@ -23,6 +24,7 @@ import static org.junit.jupiter.api.Assertions.*;
 @SpringBootTest
 @Transactional
 @Rollback(value = false)
+@Disabled("依赖真实用户和 Agent 数据；保留为手工集成验证")
 public class ScheduledTaskAppServiceTest {
 
     @Resource

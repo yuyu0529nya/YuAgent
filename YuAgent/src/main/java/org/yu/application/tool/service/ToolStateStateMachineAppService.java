@@ -1,6 +1,7 @@
 package org.yu.application.tool.service;
 
 import jakarta.annotation.PostConstruct;
+import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
@@ -28,16 +29,18 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
-/**
- * Application-level tool state machine.
+/** Application-level tool state machine.
  *
- * <p>This layer coordinates processors that depend on infrastructure services and drives the
- * end-to-end review/deploy/fetch workflow for uploaded MCP tools.
- */
+ * <p>
+ * This layer coordinates processors that depend on infrastructure services and drives the end-to-end
+ * review/deploy/fetch workflow for uploaded MCP tools. */
 @Service
 public class ToolStateStateMachineAppService {
 
     private static final Logger logger = LoggerFactory.getLogger(ToolStateStateMachineAppService.class);
+    private static final int CORE_POOL_SIZE = 5;
+    private static final int MAX_POOL_SIZE = 10;
+    private static final int QUEUE_CAPACITY = 100;
 
     private final ToolDomainService toolDomainService;
     private final MCPGatewayService mcpGatewayService;
@@ -59,8 +62,8 @@ public class ToolStateStateMachineAppService {
         this.gitHubService = gitHubService;
         this.reviewContainerService = reviewContainerService;
         this.toolAppServiceProvider = toolAppServiceProvider;
-        this.executorService = new ThreadPoolExecutor(5, 10, 60L, TimeUnit.SECONDS, new LinkedBlockingQueue<>(),
-                runnable -> {
+        this.executorService = new ThreadPoolExecutor(CORE_POOL_SIZE, MAX_POOL_SIZE, 60L, TimeUnit.SECONDS,
+                new LinkedBlockingQueue<>(QUEUE_CAPACITY), runnable -> {
                     Thread thread = new Thread(runnable, "app-tool-state-processor-thread");
                     thread.setDaemon(true);
                     return thread;
@@ -77,6 +80,19 @@ public class ToolStateStateMachineAppService {
         registerAppProcessor(new AppPublishingProcessor(gitHubService));
 
         logger.info("Initialized {} app-level tool state processors", appProcessorMap.size());
+    }
+
+    @PreDestroy
+    public void destroy() {
+        executorService.shutdown();
+        try {
+            if (!executorService.awaitTermination(30, TimeUnit.SECONDS)) {
+                executorService.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            executorService.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
     }
 
     private void registerAppProcessor(AppToolStateProcessor processor) {

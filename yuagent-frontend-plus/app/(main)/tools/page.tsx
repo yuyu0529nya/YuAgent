@@ -1,13 +1,13 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState } from "react"
+import dynamic from "next/dynamic"
 import Link from "next/link"
+import { useRouter } from "next/navigation"
 import { Plus } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { toast } from "@/hooks/use-toast"
 
 // 自定义Hooks
-import { useMarketTools } from "./hooks/useMarketTools"
 import { useUserTools } from "./hooks/useUserTools"
 import { useToolDialogs } from "./hooks/useToolDialogs"
 import { useRecommendTools } from "./hooks/useRecommendTools"
@@ -17,22 +17,25 @@ import { CreatedToolsSection } from "./components/sections/CreatedToolsSection"
 import { InstalledToolsSection } from "./components/sections/InstalledToolsSection"
 import { RecommendedToolsSection } from "./components/sections/RecommendedToolsSection"
 
-// 对话框组件
-import { UserToolDetailDialog } from "./components/dialogs/UserToolDetailDialog"
-import { InstallToolDialog } from "./components/dialogs/InstallToolDialog"
-import { DeleteToolDialog } from "./components/dialogs/DeleteToolDialog"
-import { InstallToolDialog as GlobalInstallToolDialog } from "@/components/tool/install-tool-dialog"
-import { PublishToolDialog } from "./components/dialogs/PublishToolDialog"
 import { UserTool } from "./utils/types"
-import { Tool as GlobalToolType, ToolItem } from "@/types/tool"
-import { MarketTool, ToolFunction } from "./utils/types"
+
+const UserToolDetailDialog = dynamic(() => import("./components/dialogs/UserToolDetailDialog")
+  .then(module => module.UserToolDetailDialog))
+const DeleteToolDialog = dynamic(() => import("./components/dialogs/DeleteToolDialog")
+  .then(module => module.DeleteToolDialog))
+const GlobalInstallToolDialog = dynamic(() => import("@/components/tool/install-tool-dialog")
+  .then(module => module.InstallToolDialog))
+const PublishToolDialog = dynamic(() => import("./components/dialogs/PublishToolDialog")
+  .then(module => module.PublishToolDialog))
 
 export default function ToolsPage() {
+  const router = useRouter()
   // 获取推荐工具数据
   const {
     tools,
     loading: marketToolsLoading,
-    error: marketToolsError
+    error: marketToolsError,
+    fetchRecommendTools,
   } = useRecommendTools(10);
   
   // 获取用户工具数据
@@ -47,18 +50,11 @@ export default function ToolsPage() {
   
   // 对话框状态管理
   const {
-    // 市场工具详情
-    isDetailOpen,
     selectedTool,
-    openToolDetail,
-    closeToolDetail,
-    
     // 安装确认
     isInstallDialogOpen,
-    installingToolId,
     openInstallDialog,
     closeInstallDialog,
-    handleInstallTool,
     
     // 用户工具详情
     isUserToolDetailOpen,
@@ -78,12 +74,11 @@ export default function ToolsPage() {
   const [toolToPublish, setToolToPublish] = useState<UserTool | null>(null);
 
   // 处理编辑工具
-  const handleEditTool = (tool: any, event?: React.MouseEvent) => {
+  const handleEditTool = (tool: UserTool, event?: React.MouseEvent) => {
     if (event) {
       event.stopPropagation();
     }
-    // 直接跳转到编辑工具页面
-    window.location.href = `/tools/edit/${tool.id}`;
+    router.push(`/tools/edit/${tool.id}`)
   };
   
   // 处理删除工具确认
@@ -108,39 +103,10 @@ export default function ToolsPage() {
     setIsPublishDialogOpen(true);
   };
 
-  // Helper function to adapt MarketTool to GlobalToolType
-  const adaptMarketToolToGlobalTool = (marketTool: MarketTool | null): GlobalToolType | null => {
-    if (!marketTool) return null;
-
-    // Assuming ToolFunction and ToolItem are structurally compatible
-    const adaptedToolList: ToolItem[] = (marketTool.tool_list || []).map(tf => tf as ToolItem);
-
-    return {
-      ...marketTool,
-      tool_list: adaptedToolList, // Ensure tool_list is present and correctly typed
-      // Ensure all required fields for GlobalToolType are present
-      // Add default or mapped values for any fields that differ significantly
-      // For example, if GlobalToolType has fields not in MarketTool:
-      // some_required_field_in_GlobalToolType: marketTool.some_equivalent_field || defaultValue,
-      user_id: marketTool.user_id || "", // Ensure user_id is a string
-      tool_type: marketTool.tool_type || "",
-      upload_type: marketTool.upload_type || "",
-      upload_url: marketTool.upload_url || "",
-      status: marketTool.status as any, // Assuming ToolStatus enums are compatible enough or map them
-      is_office: marketTool.is_office || false,
-      install_command: marketTool.install_command || { type: 'sse', url: '' }, // Provide a default if necessary
-    };
-  };
-
   // 处理工具安装成功
   const handleToolInstallSuccess = () => {
     // 刷新用户工具列表，确保新安装的工具会显示在"我安装的工具"中
     fetchUserTools();
-    // 可以添加一个安装成功的提示
-    toast({
-      title: "安装成功",
-      description: "工具已成功安装，您可以在我安装的工具中查看。"
-    });
   };
 
   return (
@@ -185,6 +151,7 @@ export default function ToolsPage() {
           loading={marketToolsLoading}
           error={marketToolsError}
           onInstallClick={openInstallDialog}
+          onRetry={fetchRecommendTools}
         />
         
         {/* 用户工具详情对话框 */}
@@ -199,7 +166,7 @@ export default function ToolsPage() {
         <GlobalInstallToolDialog 
           open={isInstallDialogOpen}
           onOpenChange={closeInstallDialog}
-          tool={adaptMarketToolToGlobalTool(selectedTool)}
+          tool={selectedTool}
           version={selectedTool?.current_version}
           onSuccess={handleToolInstallSuccess}
         />
@@ -220,9 +187,8 @@ export default function ToolsPage() {
             onOpenChange={setIsPublishDialogOpen}
             tool={toolToPublish}
             onPublishSuccess={() => {
-              // 可选：刷新列表或显示提示
-              setIsPublishDialogOpen(false); // 关闭对话框
-              // 刷新用户工具列表等操作可以在这里触发
+              setIsPublishDialogOpen(false);
+              fetchUserTools(true);
             }}
           />
         )}

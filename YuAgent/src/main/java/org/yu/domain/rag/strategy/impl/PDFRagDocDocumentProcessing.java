@@ -15,12 +15,13 @@ import java.io.IOException;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CompletionException;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.text.PDFTextStripper;
@@ -30,6 +31,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.yu.domain.rag.message.RagDocMessage;
 import org.yu.domain.rag.model.DocumentUnitEntity;
 import org.yu.domain.rag.model.FileDetailEntity;
@@ -66,6 +68,7 @@ public class PDFRagDocDocumentProcessing extends AbstractDocumentProcessingStrat
     private final DocumentUnitRepository documentUnitRepository;
     private final FileDetailRepository fileDetailRepository;
     private final StructuredPlainTextProcessor structuredPlainTextProcessor;
+    private final ThreadPoolTaskExecutor ocrTaskExecutor;
 
     @Resource
     private FileStorageService fileStorageService;
@@ -80,10 +83,12 @@ public class PDFRagDocDocumentProcessing extends AbstractDocumentProcessingStrat
     private final ThreadLocal<Map<String, Object>> currentAttrCache = ThreadLocal.withInitial(HashMap::new);
 
     public PDFRagDocDocumentProcessing(DocumentUnitRepository documentUnitRepository,
-            FileDetailRepository fileDetailRepository, StructuredPlainTextProcessor structuredPlainTextProcessor) {
+            FileDetailRepository fileDetailRepository, StructuredPlainTextProcessor structuredPlainTextProcessor,
+            @Qualifier("ocrTaskExecutor") ThreadPoolTaskExecutor ocrTaskExecutor) {
         this.documentUnitRepository = documentUnitRepository;
         this.fileDetailRepository = fileDetailRepository;
         this.structuredPlainTextProcessor = structuredPlainTextProcessor;
+        this.ocrTaskExecutor = ocrTaskExecutor;
     }
 
     @Override
@@ -107,8 +112,7 @@ public class PDFRagDocDocumentProcessing extends AbstractDocumentProcessingStrat
             String fileId = getCurrentProcessingFileId();
             if (fileId != null) {
                 LambdaUpdateWrapper<FileDetailEntity> wrapper = Wrappers.<FileDetailEntity>lambdaUpdate()
-                        .eq(FileDetailEntity::getId, fileId)
-                        .set(FileDetailEntity::getFilePageSize, pdfPageCount);
+                        .eq(FileDetailEntity::getId, fileId).set(FileDetailEntity::getFilePageSize, pdfPageCount);
                 fileDetailRepository.update(wrapper);
                 log.info("Updated total page count for file {}: {}", fileId, pdfPageCount);
             }
@@ -266,9 +270,8 @@ public class PDFRagDocDocumentProcessing extends AbstractDocumentProcessingStrat
             segment.setOrder(order);
         }
         if (!StringUtils.hasText(DocumentUnitMetadataSupport.inferTitlePath(segment.getContent()))
-                && !StringUtils.hasText(segment.getMetadata() != null
-                        ? String.valueOf(segment.getMetadata().get("TITLE_PATH"))
-                        : null)
+                && !StringUtils.hasText(
+                        segment.getMetadata() != null ? String.valueOf(segment.getMetadata().get("TITLE_PATH")) : null)
                 && segment.getType() == null) {
             segment.setType(SegmentType.TEXT);
         }
@@ -299,8 +302,7 @@ public class PDFRagDocDocumentProcessing extends AbstractDocumentProcessingStrat
         try {
             double progress = (double) currentPage / totalPages * 100.0;
             LambdaUpdateWrapper<FileDetailEntity> wrapper = Wrappers.<FileDetailEntity>lambdaUpdate()
-                    .eq(FileDetailEntity::getId, fileId)
-                    .set(FileDetailEntity::getCurrentOcrPageNumber, currentPage)
+                    .eq(FileDetailEntity::getId, fileId).set(FileDetailEntity::getCurrentOcrPageNumber, currentPage)
                     .set(FileDetailEntity::getOcrProcessProgress, progress);
             fileDetailRepository.update(wrapper);
         } catch (Exception e) {
@@ -318,8 +320,8 @@ public class PDFRagDocDocumentProcessing extends AbstractDocumentProcessingStrat
             Map<String, Object> attrMap = currentAttrCache.get();
             if (attrMap.isEmpty()) {
                 FileDetailEntity fileDetailEntity = fileDetailRepository.selectById(fileId);
-                Map<String, Object> persistedAttrMap =
-                        JsonUtils.parseMap(fileDetailEntity != null ? fileDetailEntity.getAttr() : null);
+                Map<String, Object> persistedAttrMap = JsonUtils
+                        .parseMap(fileDetailEntity != null ? fileDetailEntity.getAttr() : null);
                 if (persistedAttrMap != null) {
                     attrMap.putAll(persistedAttrMap);
                 }
@@ -360,18 +362,22 @@ public class PDFRagDocDocumentProcessing extends AbstractDocumentProcessingStrat
     }
 
     private ChatResponse executeOcrWithTimeout(ChatModel ocrModel, UserMessage userMessage) throws TimeoutException {
+        Future<ChatResponse> task = ocrTaskExecutor.submit(() -> ocrModel.chat(userMessage));
         try {
-            return CompletableFuture.supplyAsync(() -> ocrModel.chat(userMessage))
-                    .orTimeout(OCR_PAGE_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-                    .join();
-        } catch (CompletionException e) {
-            if (e.getCause() instanceof TimeoutException timeoutException) {
-                throw timeoutException;
-            }
-            if (e.getCause() instanceof RuntimeException runtimeException) {
+            return task.get(OCR_PAGE_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        } catch (TimeoutException e) {
+            task.cancel(true);
+            throw e;
+        } catch (InterruptedException e) {
+            task.cancel(true);
+            Thread.currentThread().interrupt();
+            throw new BusinessException("OCR task was interrupted", e);
+        } catch (ExecutionException e) {
+            Throwable cause = e.getCause();
+            if (cause instanceof RuntimeException runtimeException) {
                 throw runtimeException;
             }
-            throw e;
+            throw new BusinessException("OCR task failed", cause);
         }
     }
 

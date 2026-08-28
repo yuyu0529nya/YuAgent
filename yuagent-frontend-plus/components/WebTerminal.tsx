@@ -1,10 +1,11 @@
 "use client";
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import '@xterm/xterm/css/xterm.css';
+import { buildApiUrl } from '@/lib/api-config';
 
 interface WebTerminalProps {
   containerId: string;
@@ -17,8 +18,72 @@ export default function WebTerminal({ containerId, containerName, onClose }: Web
   const terminal = useRef<Terminal | null>(null);
   const websocket = useRef<WebSocket | null>(null);
   const fitAddon = useRef<FitAddon | null>(null);
+  const inputListener = useRef<{ dispose: () => void } | null>(null);
+  const initializationTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const fitTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [isConnected, setIsConnected] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState('正在连接...');
+
+  const connectWebSocket = useCallback(() => {
+    const hasAuthCookie = window.document.cookie
+      .split(';')
+      .some((cookie) => cookie.trim().startsWith('token='));
+    if (!hasAuthCookie) {
+      setConnectionStatus('未登录，无法连接终端');
+      return;
+    }
+
+    const query = new URLSearchParams({ containerId }).toString();
+    const terminalUrl = new URL(buildApiUrl('/ws/terminal'), window.location.origin);
+    terminalUrl.protocol = terminalUrl.protocol === 'https:' ? 'wss:' : 'ws:';
+    terminalUrl.search = query;
+
+    websocket.current?.close();
+    const socket = new WebSocket(terminalUrl.toString());
+    websocket.current = socket;
+
+    socket.onopen = () => {
+      if (websocket.current !== socket) return;
+      setIsConnected(true);
+      setConnectionStatus('已连接');
+      if (!terminal.current) return;
+
+      terminal.current.clear();
+      terminal.current.writeln('\x1b[32m✓ 终端连接成功\x1b[0m');
+      terminal.current.writeln(`容器: ${containerName} (${containerId})`);
+      terminal.current.writeln('');
+      inputListener.current?.dispose();
+      inputListener.current = terminal.current.onData((data) => {
+        if (socket.readyState === WebSocket.OPEN) {
+          socket.send(JSON.stringify({ type: 'input', data }));
+        }
+      });
+    };
+
+    socket.onmessage = (event) => {
+      if (websocket.current === socket) terminal.current?.write(event.data);
+    };
+    socket.onclose = (event) => {
+      if (websocket.current !== socket) return;
+      websocket.current = null;
+      inputListener.current?.dispose();
+      inputListener.current = null;
+      setIsConnected(false);
+      setConnectionStatus('连接已断开');
+      terminal.current?.writeln('\r\n\x1b[31m✗ 终端连接已断开\x1b[0m');
+      if (event.code !== 1000) {
+        terminal.current?.writeln(`错误代码: ${event.code}, 原因: ${event.reason || '未知'}`);
+      }
+    };
+    socket.onerror = () => {
+      if (websocket.current !== socket) return;
+      setIsConnected(false);
+      setConnectionStatus('连接失败');
+      terminal.current?.writeln('\r\n\x1b[31m✗ 终端连接失败\x1b[0m');
+      terminal.current?.writeln('请检查容器是否正在运行');
+    };
+  }, [containerId, containerName]);
 
   useEffect(() => {
     if (!terminalRef.current) return;
@@ -28,7 +93,7 @@ export default function WebTerminal({ containerId, containerName, onClose }: Web
       const container = terminalRef.current;
       if (!container || container.offsetWidth === 0 || container.offsetHeight === 0) {
         // 如果容器还没有尺寸，稍后重试
-        setTimeout(initializeTerminal, 50);
+        initializationTimer.current = setTimeout(initializeTerminal, 50);
         return;
       }
 
@@ -41,7 +106,6 @@ export default function WebTerminal({ containerId, containerName, onClose }: Web
           background: '#1e1e1e',
           foreground: '#d4d4d4',
           cursor: '#ffffff',
-          selection: '#264f78',
           black: '#000000',
           red: '#cd3131',
           green: '#0dbc79',
@@ -72,7 +136,7 @@ export default function WebTerminal({ containerId, containerName, onClose }: Web
       terminal.current.open(container);
       
       // 延迟执行fit以确保DOM已完全渲染
-      setTimeout(() => {
+      fitTimer.current = setTimeout(() => {
         if (fitAddon.current && terminal.current) {
           try {
             fitAddon.current.fit();
@@ -82,7 +146,6 @@ export default function WebTerminal({ containerId, containerName, onClose }: Web
         }
       }, 200);
 
-      // 连接WebSocket
       connectWebSocket();
     };
 
@@ -103,93 +166,25 @@ export default function WebTerminal({ containerId, containerName, onClose }: Web
 
     return () => {
       window.removeEventListener('resize', handleResize);
-      if (websocket.current) {
-        websocket.current.close();
-      }
+      if (initializationTimer.current) clearTimeout(initializationTimer.current);
+      if (fitTimer.current) clearTimeout(fitTimer.current);
+      if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
+      inputListener.current?.dispose();
+      inputListener.current = null;
+      websocket.current?.close();
+      websocket.current = null;
       if (terminal.current) {
         terminal.current.dispose();
+        terminal.current = null;
       }
     };
-  }, [containerId]);
-
-  const connectWebSocket = () => {
-    // 构建正确的WebSocket URL
-    const getWebSocketUrl = () => {
-      const hostname = window.location.hostname;
-      
-      // 本地环境：连接到后端WebSocket服务端口（注意加上/api前缀）
-      if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname.startsWith('192.168.')) {
-        return `ws://localhost:8088/api/ws/terminal?containerId=${containerId}`;
-      }
-      
-      // 生产环境：使用相对路径通过nginx代理
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      return `${protocol}//${window.location.host}/api/ws/terminal?containerId=${containerId}`;
-    };
-    
-    const wsUrl = getWebSocketUrl();
- 
-    
-    websocket.current = new WebSocket(wsUrl);
-
-    websocket.current.onopen = () => {
-      setIsConnected(true);
-      setConnectionStatus('已连接');
-      
-      if (terminal.current) {
-        terminal.current.clear();
-        terminal.current.writeln('\x1b[32m✓ 终端连接成功\x1b[0m');
-        terminal.current.writeln(`容器: ${containerName} (${containerId})`);
-        terminal.current.writeln('');
-        
-        // 监听终端输入
-        terminal.current.onData((data) => {
-          if (websocket.current && websocket.current.readyState === WebSocket.OPEN) {
-            websocket.current.send(JSON.stringify({
-              type: 'input',
-              data: data
-            }));
-          }
-        });
-      }
-    };
-
-    websocket.current.onmessage = (event) => {
-      if (terminal.current) {
-        terminal.current.write(event.data);
-      }
-    };
-
-    websocket.current.onclose = (event) => {
-      setIsConnected(false);
-      setConnectionStatus('连接已断开');
-      
-      if (terminal.current) {
-        terminal.current.writeln('\r\n\x1b[31m✗ 终端连接已断开\x1b[0m');
-        
-        if (event.code !== 1000) {
-          terminal.current.writeln(`错误代码: ${event.code}, 原因: ${event.reason || '未知'}`);
-        }
-      }
-    };
-
-    websocket.current.onerror = (error) => {
-      setIsConnected(false);
-      setConnectionStatus('连接失败');
-      
-      if (terminal.current) {
-        terminal.current.writeln('\r\n\x1b[31m✗ 终端连接失败\x1b[0m');
-        terminal.current.writeln('请检查容器是否正在运行');
-      }
-    };
-  };
+  }, [connectWebSocket]);
 
   const handleReconnect = () => {
-    if (websocket.current) {
-      websocket.current.close();
-    }
+    websocket.current?.close();
     setConnectionStatus('正在重连...');
-    setTimeout(connectWebSocket, 1000);
+    if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
+    reconnectTimer.current = setTimeout(connectWebSocket, 1000);
   };
 
   const handleFullscreen = () => {

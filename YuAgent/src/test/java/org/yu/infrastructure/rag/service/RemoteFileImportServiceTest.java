@@ -53,7 +53,8 @@ class RemoteFileImportServiceTest {
                 """.getBytes();
 
         InvocationTargetException error = assertThrows(InvocationTargetException.class,
-                () -> method.invoke(service, URI.create("https://ieeexplore.ieee.org/stampPDF/getPDF.jsp?tp=&arnumber=10379000"),
+                () -> method.invoke(service,
+                        URI.create("https://ieeexplore.ieee.org/stampPDF/getPDF.jsp?tp=&arnumber=10379000"),
                         "text/html", html));
 
         assertTrue(error.getCause() instanceof BusinessException);
@@ -62,7 +63,8 @@ class RemoteFileImportServiceTest {
     @Test
     void normalizeFilename_shouldPreferDetectedPdfExtension() throws Exception {
         RemoteFileImportService service = new RemoteFileImportService();
-        Method method = RemoteFileImportService.class.getDeclaredMethod("normalizeFilename", String.class, String.class);
+        Method method = RemoteFileImportService.class.getDeclaredMethod("normalizeFilename", String.class,
+                String.class);
         method.setAccessible(true);
 
         String normalized = (String) method.invoke(service, "最新论文.html", "application/pdf");

@@ -45,7 +45,7 @@ export default function TemplatesPage() {
     return type === "mcp-gateway" ? "MCP网关" : type;
   };
 
-  const getTypeBadgeVariant = (type: string) => {
+  const getTypeBadgeVariant = (_type: string): "default" => {
     return "default";
   };
 

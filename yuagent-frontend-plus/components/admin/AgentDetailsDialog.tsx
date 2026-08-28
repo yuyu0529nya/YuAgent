@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -25,22 +25,21 @@ export function AgentDetailsDialog({ open, onOpenChange, agent }: AgentDetailsDi
   const [selectedTool, setSelectedTool] = useState<Tool | null>(null);
   const [toolDetailsOpen, setToolDetailsOpen] = useState(false);
   const { toast } = useToast();
+  const latestToolsRequestRef = useRef(0);
+  const toolIdsKey = useMemo(() => agent?.toolIds?.join(",") ?? "", [agent?.toolIds]);
 
-  // 获取Agent使用的工具详情
-  useEffect(() => {
-    if (agent?.toolIds && agent.toolIds.length > 0) {
-      fetchToolDetails(agent.toolIds);
-    } else {
-      setTools([]);
-    }
-  }, [agent]);
-
-  const fetchToolDetails = async (toolIds: string[]) => {
+  // 获取 Agent 使用的工具详情
+  const fetchToolDetails = useCallback(async (toolIds: string[]) => {
+    const requestId = ++latestToolsRequestRef.current;
     setLoadingTools(true);
     try {
       // 批量获取工具信息
       const response = await AdminToolService.getTools({ pageSize: 1000 }); // 获取所有工具
       
+      if (requestId !== latestToolsRequestRef.current) {
+        return;
+      }
+
       if (response.code === 200) {
         // 筛选出Agent使用的工具
         const agentTools = response.data.records.filter(tool => 
@@ -51,16 +50,32 @@ export function AgentDetailsDialog({ open, onOpenChange, agent }: AgentDetailsDi
         throw new Error(response.message);
       }
     } catch (error) {
- 
+      if (requestId !== latestToolsRequestRef.current) {
+        return;
+      }
       toast({
         variant: "destructive",
         title: "获取工具信息失败",
         description: "无法加载Agent使用的工具详情"
       });
     } finally {
-      setLoadingTools(false);
+      if (requestId === latestToolsRequestRef.current) {
+        setLoadingTools(false);
+      }
     }
-  };
+  }, [toast]);
+
+  useEffect(() => {
+    if (!open || !toolIdsKey) {
+      setTools([]);
+      return;
+    }
+
+    void fetchToolDetails(toolIdsKey.split(","));
+    return () => {
+      latestToolsRequestRef.current += 1;
+    };
+  }, [fetchToolDetails, open, toolIdsKey]);
 
   // 处理查看工具详情
   const handleViewToolDetails = (tool: Tool) => {

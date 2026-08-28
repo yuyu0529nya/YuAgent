@@ -1,5 +1,6 @@
 package org.yu.application.scheduledtask.service;
 
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.annotation.Rollback;
@@ -19,6 +20,7 @@ import static org.junit.jupiter.api.Assertions.*;
 @SpringBootTest
 @Transactional
 @Rollback(value = false)
+@Disabled("依赖真实用户、Agent 和延迟队列；保留为手工集成验证")
 public class DelayedTaskExecutionTest {
 
     @Resource

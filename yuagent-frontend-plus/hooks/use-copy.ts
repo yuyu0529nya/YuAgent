@@ -24,8 +24,11 @@ export function useCopy() {
         document.body.appendChild(textArea);
         textArea.focus();
         textArea.select();
-        document.execCommand("copy");
+        const copied = document.execCommand("copy");
         textArea.remove();
+        if (!copied) {
+          throw new Error("浏览器拒绝复制操作");
+        }
         
         toast({
           title: successMessage,

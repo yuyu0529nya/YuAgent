@@ -84,8 +84,7 @@ public class UserModelConfigResolver {
             log.info("Resolved OCR model config for user {}, modelId={}", userId, modelId);
             return getModelConfigFromDatabase(modelId, userId);
         } catch (BusinessException e) {
-            log.warn("Failed to resolve OCR model for user {}, falling back to chat model: {}", userId,
-                    e.getMessage());
+            log.warn("Failed to resolve OCR model for user {}, falling back to chat model: {}", userId, e.getMessage());
             return getUserChatModelConfig(userId);
         } catch (Exception e) {
             log.warn("Unexpected OCR model lookup failure for user {}, falling back to chat model: {}", userId,
@@ -128,8 +127,7 @@ public class UserModelConfigResolver {
         } catch (BusinessException e) {
             throw e;
         } catch (Exception e) {
-            String errorMsg = String.format("Failed to load model %s for user %s: %s", modelId, userId,
-                    e.getMessage());
+            String errorMsg = String.format("Failed to load model %s for user %s: %s", modelId, userId, e.getMessage());
             log.error(errorMsg, e);
             throw new BusinessException(errorMsg, e);
         }

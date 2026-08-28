@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
 import Link from "next/link"
 import Image from "next/image"
 import { useRouter } from "next/navigation"
@@ -37,6 +37,7 @@ export default function RegisterPage() {
   const [sendingCode, setSendingCode] = useState(false)
   const [authConfig, setAuthConfig] = useState<AuthConfig | null>(null)
   const [configLoading, setConfigLoading] = useState(true)
+  const [configError, setConfigError] = useState<string | null>(null)
 
   // 加载认证配置
   useEffect(() => {
@@ -45,9 +46,11 @@ export default function RegisterPage() {
         const response = await getAuthConfigWithToast()
         if (response.code === 200) {
           setAuthConfig(response.data)
+        } else {
+          setConfigError(response.message || "无法加载注册配置")
         }
       } catch (error) {
- 
+        setConfigError(error instanceof Error ? error.message : "无法加载注册配置")
       } finally {
         setConfigLoading(false)
       }
@@ -56,14 +59,6 @@ export default function RegisterPage() {
     fetchAuthConfig()
   }, [])
 
-  // 页面初始化时获取验证码
-  useEffect(() => {
-    if (!configLoading && authConfig?.registerEnabled) {
-      fetchCaptcha()
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [configLoading, authConfig?.registerEnabled])
-  
   // 倒计时逻辑
   useEffect(() => {
     if (countdown > 0) {
@@ -82,7 +77,7 @@ export default function RegisterPage() {
     }
   }
 
-  const fetchCaptcha = async () => {
+  const fetchCaptcha = useCallback(async () => {
     setLoadingCaptcha(true)
     try {
       const res = await getCaptchaApi()
@@ -92,13 +87,30 @@ export default function RegisterPage() {
           imageBase64: res.data.imageBase64
         })
         setFormData(prev => ({ ...prev, captchaCode: "" }))
+      } else {
+        toast({
+          variant: "destructive",
+          title: "验证码加载失败",
+          description: res.message || "请稍后重试",
+        })
       }
     } catch (error) {
- 
+      toast({
+        variant: "destructive",
+        title: "验证码加载失败",
+        description: error instanceof Error ? error.message : "请稍后重试",
+      })
     } finally {
       setLoadingCaptcha(false)
     }
-  }
+  }, [])
+
+  // 页面初始化时获取验证码
+  useEffect(() => {
+    if (!configLoading && authConfig?.registerEnabled) {
+      fetchCaptcha()
+    }
+  }, [authConfig?.registerEnabled, configLoading, fetchCaptcha])
 
   const handleSendCode = async () => {
     if (!formData.email) {
@@ -144,9 +156,19 @@ export default function RegisterPage() {
           title: "成功",
           description: "验证码已发送，请查收邮件"
         })
+      } else {
+        toast({
+          variant: "destructive",
+          title: "发送失败",
+          description: res.message || "验证码发送失败，请稍后重试",
+        })
       }
     } catch (error) {
- 
+      toast({
+        variant: "destructive",
+        title: "发送失败",
+        description: error instanceof Error ? error.message : "验证码发送失败，请稍后重试",
+      })
     } finally {
       setSendingCode(false)
     }
@@ -179,7 +201,11 @@ export default function RegisterPage() {
         })
       }
     } catch (error) {
- 
+      toast({
+        variant: "destructive",
+        title: "验证失败",
+        description: error instanceof Error ? error.message : "验证码验证失败，请稍后重试",
+      })
     } finally {
       setVerifying(false)
     }
@@ -259,9 +285,19 @@ export default function RegisterPage() {
           description: "注册成功，请登录"
         })
         router.push("/login")
+      } else {
+        toast({
+          variant: "destructive",
+          title: "注册失败",
+          description: res.message || "注册失败，请稍后重试",
+        })
       }
-    } catch (error: any) {
- 
+    } catch (error) {
+      toast({
+        variant: "destructive",
+        title: "注册失败",
+        description: error instanceof Error ? error.message : "注册失败，请稍后重试",
+      })
     } finally {
       setLoading(false)
     }
@@ -279,6 +315,24 @@ export default function RegisterPage() {
           <div className="h-20 bg-gray-200 rounded animate-pulse"></div>
           <div className="h-20 bg-gray-200 rounded animate-pulse"></div>
           <div className="h-10 bg-gray-200 rounded animate-pulse"></div>
+        </div>
+      </div>
+    )
+  }
+
+  if (configError) {
+    return (
+      <div className="container max-w-[400px] py-10 h-screen flex flex-col justify-center">
+        <div className="text-center space-y-4">
+          <h1 className="text-2xl font-semibold tracking-tight">注册服务暂不可用</h1>
+          <p className="text-sm text-muted-foreground">{configError}</p>
+          <div className="pt-4">
+            <Link href="/login">
+              <Button variant="outline" className="w-full">
+                返回登录
+              </Button>
+            </Link>
+          </div>
         </div>
       </div>
     )

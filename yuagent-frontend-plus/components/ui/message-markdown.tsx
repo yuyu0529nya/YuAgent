@@ -49,7 +49,7 @@ const preprocessContent = (content: string): string => {
   return processedContent;
 };
 
-export function MessageMarkdown({ 
+export const MessageMarkdown = React.memo(function MessageMarkdown({ 
   content, 
   showCopyButton = true,
   isStreaming = false, 
@@ -114,7 +114,7 @@ export function MessageMarkdown({
               },
               pre: ({ children, ...props }) => {
                 // 提取代码内容
-                const codeElement = children as React.ReactElement;
+                const codeElement = children as React.ReactElement<{ children?: React.ReactNode }>;
                 const code = typeof codeElement?.props?.children === 'string' 
                   ? codeElement.props.children 
                   : '';
@@ -187,4 +187,4 @@ export function MessageMarkdown({
       )}
     </div>
   );
-}
+})

@@ -10,18 +10,15 @@ import org.springframework.core.annotation.Order;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
-/**
- * Ensures the agent_widgets schema exists for environments that reuse an older
- * database volume and skipped later schema changes.
- */
+/** Ensures the agent_widgets schema exists for environments that reuse an older database volume and skipped later
+ * schema changes. */
 @Component
 @Order(25)
 public class AgentWidgetSchemaInitializer implements ApplicationRunner {
 
     private static final Logger log = LoggerFactory.getLogger(AgentWidgetSchemaInitializer.class);
 
-    private static final List<String> SCHEMA_PATCHES = List.of(
-            """
+    private static final List<String> SCHEMA_PATCHES = List.of("""
             CREATE TABLE IF NOT EXISTS public.agent_widgets (
                 id character varying(32) NOT NULL,
                 agent_id character varying(32) NOT NULL,
@@ -40,8 +37,7 @@ public class AgentWidgetSchemaInitializer implements ApplicationRunner {
                 widget_type character varying(20) NOT NULL DEFAULT 'AGENT',
                 knowledge_base_ids jsonb
             )
-            """,
-            "ALTER TABLE public.agent_widgets ADD COLUMN IF NOT EXISTS provider_id character varying(32)",
+            """, "ALTER TABLE public.agent_widgets ADD COLUMN IF NOT EXISTS provider_id character varying(32)",
             "ALTER TABLE public.agent_widgets ADD COLUMN IF NOT EXISTS allowed_domains text",
             "ALTER TABLE public.agent_widgets ADD COLUMN IF NOT EXISTS daily_limit integer DEFAULT -1",
             "ALTER TABLE public.agent_widgets ADD COLUMN IF NOT EXISTS enabled boolean DEFAULT true",
@@ -49,21 +45,20 @@ public class AgentWidgetSchemaInitializer implements ApplicationRunner {
             "ALTER TABLE public.agent_widgets ADD COLUMN IF NOT EXISTS updated_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP",
             "ALTER TABLE public.agent_widgets ADD COLUMN IF NOT EXISTS deleted_at timestamp without time zone",
             "ALTER TABLE public.agent_widgets ADD COLUMN IF NOT EXISTS widget_type character varying(20) NOT NULL DEFAULT 'AGENT'",
-            "ALTER TABLE public.agent_widgets ADD COLUMN IF NOT EXISTS knowledge_base_ids jsonb",
-            """
-            DO $$
-            BEGIN
-                IF NOT EXISTS (
-                    SELECT 1
-                    FROM pg_constraint
-                    WHERE conname = 'agent_widgets_pkey'
-                      AND conrelid = 'public.agent_widgets'::regclass
-                ) THEN
-                    ALTER TABLE public.agent_widgets ADD CONSTRAINT agent_widgets_pkey PRIMARY KEY (id);
-                END IF;
-            END
-            $$;
-            """,
+            "ALTER TABLE public.agent_widgets ADD COLUMN IF NOT EXISTS knowledge_base_ids jsonb", """
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1
+                            FROM pg_constraint
+                            WHERE conname = 'agent_widgets_pkey'
+                              AND conrelid = 'public.agent_widgets'::regclass
+                        ) THEN
+                            ALTER TABLE public.agent_widgets ADD CONSTRAINT agent_widgets_pkey PRIMARY KEY (id);
+                        END IF;
+                    END
+                    $$;
+                    """,
             "CREATE UNIQUE INDEX IF NOT EXISTS agent_embeds_public_id_key ON public.agent_widgets USING btree (public_id)",
             "CREATE INDEX IF NOT EXISTS idx_agent_embeds_agent_id ON public.agent_widgets USING btree (agent_id)",
             "CREATE INDEX IF NOT EXISTS idx_agent_embeds_user_id ON public.agent_widgets USING btree (user_id)",

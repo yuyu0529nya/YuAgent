@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -11,7 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { CheckCircle, XCircle, Clock, Download } from "lucide-react";
-import { httpClient } from "@/lib/http-client";
+import { httpClient, type ApiResponse } from "@/lib/http-client";
 import { useToast } from "@/hooks/use-toast";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -52,6 +52,7 @@ export function AgentVersionsDialog({ open, onOpenChange, agentId, agentName }: 
   const [isRejectDialogOpen, setIsRejectDialogOpen] = useState(false);
   const [selectedVersionId, setSelectedVersionId] = useState<string | null>(null);
   const { toast } = useToast();
+  const latestVersionsRequestRef = useRef(0);
 
   // 获取版本状态标签
   const getStatusBadge = (status: number) => {
@@ -70,27 +71,34 @@ export function AgentVersionsDialog({ open, onOpenChange, agentId, agentName }: 
   };
 
   // 获取版本列表
-  const loadVersions = async () => {
+  const loadVersions = useCallback(async () => {
     if (!agentId) return;
-    
+
+    const requestId = ++latestVersionsRequestRef.current;
     try {
       setLoading(true);
-      const response = await httpClient.get(`/admin/agents/versions?agentId=${agentId}`);
+      const response = await httpClient.get<ApiResponse<AgentVersion[]>>(`/admin/agents/versions?agentId=${agentId}`);
+      if (requestId !== latestVersionsRequestRef.current) {
+        return;
+      }
+
       if (response.code === 200 && response.data) {
         setVersions(response.data);
       }
     } catch (error) {
  
     } finally {
-      setLoading(false);
+      if (requestId === latestVersionsRequestRef.current) {
+        setLoading(false);
+      }
     }
-  };
+  }, [agentId]);
 
   // 审核版本
   const handleReviewVersion = async (versionId: string, status: number, reason?: string) => {
     try {
       const url = `/admin/agents/versions/${versionId}/status?status=${status}${reason ? `&reason=${encodeURIComponent(reason)}` : ''}`;
-      const response = await httpClient.post(url);
+      const response = await httpClient.post<ApiResponse<null>>(url);
       if (response.code === 200) {
         toast({
           title: "操作成功",
@@ -139,10 +147,13 @@ export function AgentVersionsDialog({ open, onOpenChange, agentId, agentName }: 
   };
 
   useEffect(() => {
-    if (open && agentId) {
+    if (open) {
       loadVersions();
     }
-  }, [open, agentId]);
+    return () => {
+      latestVersionsRequestRef.current += 1;
+    };
+  }, [loadVersions, open]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>

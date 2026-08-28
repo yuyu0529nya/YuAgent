@@ -39,6 +39,16 @@ export interface UploadFileInfo {
   fileSize: number
 }
 
+function formatFileSize(bytes: number): string {
+  return `${Math.round(bytes / 1024 / 1024)}MB`
+}
+
+function assertWithinUploadLimit(file: Pick<UploadFileInfo, 'fileName' | 'fileSize'>, credential: OssUploadCredential) {
+  if (file.fileSize > credential.maxFileSize) {
+    throw new Error(`文件 ${file.fileName} 超过大小限制(${formatFileSize(credential.maxFileSize)})`)
+  }
+}
+
 /**
  * 获取OSS上传凭证
  */
@@ -66,11 +76,13 @@ export async function uploadFileToOss(
   onProgress?: (progress: number) => void
 ): Promise<UploadResult> {
   try {
+    assertWithinUploadLimit(fileInfo, credential)
+
     // 生成唯一文件名
     const timestamp = Date.now()
     const randomStr = Math.random().toString(36).substring(2, 8)
-    const fileExtension = fileInfo.fileName.split('.').pop() || ''
-    const uniqueFileName = `${timestamp}_${randomStr}.${fileExtension}`
+    const fileExtension = fileInfo.fileName.includes('.') ? fileInfo.fileName.split('.').pop() : undefined
+    const uniqueFileName = `${timestamp}_${randomStr}${fileExtension ? `.${fileExtension}` : ''}`
     const objectKey = `${credential.keyPrefix}${uniqueFileName}`
 
     // 构建FormData
@@ -150,10 +162,9 @@ export async function uploadMultipleFiles(
     // 获取上传凭证
     const credential = await getUploadCredential()
     
-    // 检查文件大小
-    const oversizedFiles = files.filter(file => file.fileSize > credential.maxFileSize * 1024)
+    const oversizedFiles = files.filter(file => file.fileSize > credential.maxFileSize)
     if (oversizedFiles.length > 0) {
-      throw new Error(`以下文件超过大小限制(${credential.maxFileSize}KB): ${oversizedFiles.map(f => f.fileName).join(', ')}`)
+      throw new Error(`以下文件超过大小限制(${formatFileSize(credential.maxFileSize)}): ${oversizedFiles.map(f => f.fileName).join(', ')}`)
     }
 
     const results: UploadResult[] = []
@@ -200,11 +211,6 @@ export async function uploadSingleFile(
   try {
     const credential = await getUploadCredential()
     
-    // 检查文件大小
-    if (file.size > credential.maxFileSize * 1024) {
-      throw new Error(`文件 ${file.name} 超过大小限制(${credential.maxFileSize}KB)`)
-    }
-
     return await uploadFileToOss(fileInfo, credential, onProgress)
   } catch (error) {
  

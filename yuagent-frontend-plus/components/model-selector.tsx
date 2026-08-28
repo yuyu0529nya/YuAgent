@@ -4,7 +4,7 @@ import React, { useEffect, useState } from "react"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
 import { getDefaultModel } from "@/lib/api-services"
-import { getAllModels, updateUserSettings, type Model } from "@/lib/user-settings-service"
+import { getAllModels, getUserSettings, updateUserSettings, type Model } from "@/lib/user-settings-service"
 import { useToast } from "@/hooks/use-toast"
 
 interface ModelSelectorProps {
@@ -34,52 +34,59 @@ export default function ModelSelector({
   disabled = false,
 }: ModelSelectorProps) {
   // 默认模型状态
-  const [defaultModel, setDefaultModel] = useState<any>(null)
-  const [isLoadingDefaultModel, setIsLoadingDefaultModel] = useState(true)
+  const [defaultModel, setDefaultModel] = useState<Model | null>(null)
   
   // 模型列表状态
   const [models, setModels] = useState<Model[]>([])
   const [isLoadingModels, setIsLoadingModels] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [isUpdatingModel, setIsUpdatingModel] = useState(false)
 
   const { toast } = useToast()
 
-  // 获取默认模型
   useEffect(() => {
-    const fetchDefaultModel = async () => {
+    let cancelled = false
+
+    async function loadModels() {
+      setIsLoadingModels(true)
+      setLoadError(null)
+
       try {
-        setIsLoadingDefaultModel(true)
-        const response = await getDefaultModel()
-        if (response.code === 200 && response.data) {
-          setDefaultModel(response.data)
+        const [defaultModelResponse, modelsResponse] = await Promise.all([getDefaultModel(), getAllModels()])
+        if (cancelled) {
+          return
+        }
+
+        if (defaultModelResponse.code === 200) {
+          setDefaultModel(defaultModelResponse.data)
+        }
+        if (modelsResponse.code === 200 && Array.isArray(modelsResponse.data)) {
+          setModels(modelsResponse.data)
+        }
+
+        const failedResponse = defaultModelResponse.code !== 200
+          ? defaultModelResponse
+          : modelsResponse.code !== 200
+            ? modelsResponse
+            : null
+        if (failedResponse) {
+          setLoadError(failedResponse.message || "模型信息加载失败")
         }
       } catch (error) {
- 
+        if (!cancelled) {
+          setLoadError(error instanceof Error ? error.message : "模型信息加载失败")
+        }
       } finally {
-        setIsLoadingDefaultModel(false)
+        if (!cancelled) {
+          setIsLoadingModels(false)
+        }
       }
     }
 
-    fetchDefaultModel()
-  }, [])
-
-  // 获取模型列表
-  useEffect(() => {
-    const fetchModels = async () => {
-      try {
-        setIsLoadingModels(true)
-        const response = await getAllModels()
-        if (response.code === 200 && response.data) {
-          setModels(response.data)
-        }
-      } catch (error) {
- 
-      } finally {
-        setIsLoadingModels(false)
-      }
+    void loadModels()
+    return () => {
+      cancelled = true
     }
-
-    fetchModels()
   }, [])
 
   // 切换默认模型
@@ -90,8 +97,13 @@ export default function ModelSelector({
       setIsUpdatingModel(true)
       
       // 更新用户设置
+      const settingsResponse = await getUserSettings()
+      const existingConfig = settingsResponse.code === 200 && settingsResponse.data?.settingConfig
+        ? settingsResponse.data.settingConfig
+        : { defaultModel: null, defaultOcrModel: null, defaultEmbeddingModel: null }
       const response = await updateUserSettings({
         settingConfig: {
+          ...existingConfig,
           defaultModel: modelId
         }
       })
@@ -141,7 +153,7 @@ export default function ModelSelector({
             </div>
           )}
           <div className="flex items-center gap-2">
-            {isLoadingDefaultModel || isLoadingModels ? (
+            {isLoadingModels ? (
               <Skeleton className="h-8 w-40" />
             ) : defaultModel ? (
               <Select 
@@ -169,7 +181,7 @@ export default function ModelSelector({
               </Select>
             ) : (
               <div className="flex items-center gap-2">
-                <span className="text-sm text-blue-700">未设置默认模型</span>
+                <span className="text-sm text-blue-700">{loadError ? "模型信息暂不可用" : "未设置默认模型"}</span>
                 {models.length > 0 && (
                   <Select 
                     onValueChange={handleChangeDefaultModel}
@@ -212,7 +224,7 @@ export default function ModelSelector({
         <span className="text-sm text-muted-foreground">{labelText}</span>
       )}
       <div className="flex items-center gap-2">
-        {isLoadingDefaultModel || isLoadingModels ? (
+        {isLoadingModels ? (
           <Skeleton className="h-4 w-20" />
         ) : defaultModel ? (
           <Select 
@@ -240,7 +252,7 @@ export default function ModelSelector({
           </Select>
         ) : (
           <div className="flex items-center gap-1">
-            <span className="text-sm text-muted-foreground">未设置</span>
+            <span className="text-sm text-muted-foreground">{loadError ? "暂不可用" : "未设置"}</span>
             {models.length > 0 && (
               <Select 
                 onValueChange={handleChangeDefaultModel}

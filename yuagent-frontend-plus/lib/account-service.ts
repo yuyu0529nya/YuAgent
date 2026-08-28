@@ -20,74 +20,15 @@ const API_ENDPOINTS = {
 } as const;
 
 export class AccountService {
-  // 获取当前用户账户信息（带重试机制）
+  // 认证与超时由 httpClient 统一处理；对 401 或业务错误重试只会增加延迟并掩盖真实状态。
   static async getCurrentUserAccount(): Promise<ApiResponse<Account>> {
-    const maxRetries = 2;
-    const retryDelay = 200; // 200ms 延迟
-    
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      try {
-        // 手动获取token并添加到请求头，解决SSO登录时机问题
-        const headers: Record<string, string> = {};
-        
-        if (typeof window !== "undefined") {
-          const token = localStorage.getItem("auth_token");
-          if (token) {
-            headers['Authorization'] = `Bearer ${token}`;
-          }
-        }
-        
-        const response = await httpClient.get(API_ENDPOINTS.CURRENT_ACCOUNT, { headers });
-        
-        // 如果成功或者不是401错误，直接返回
-        if (response.code === 200 || response.code !== 401) {
-          if (attempt > 0) {
-            console.log(`[AccountService] 重试成功，第${attempt + 1}次尝试`);
-          }
-          return response;
-        }
-        
-        // 如果是401且还有重试机会，等待后继续
-        if (response.code === 401 && attempt < maxRetries) {
-          console.log(`[AccountService] 第${attempt + 1}次尝试返回401，${retryDelay}ms后重试`);
-          await new Promise(resolve => setTimeout(resolve, retryDelay));
-          continue;
-        }
-        
-        // 最后一次重试仍然失败，返回结果
-        return response;
-        
-      } catch (error) {
-        // 网络错误等，如果还有重试机会就继续
-        if (attempt < maxRetries) {
-          console.log(`[AccountService] 第${attempt + 1}次尝试出现异常，${retryDelay}ms后重试:`, error);
-          await new Promise(resolve => setTimeout(resolve, retryDelay));
-          continue;
-        }
-        
-        // 最后一次重试仍然异常，返回错误
-        return {
-          code: 500,
-          message: '获取账户信息失败',
-          data: {} as Account,
-          timestamp: Date.now()
-        };
-      }
-    }
-    
-    // 兜底返回（理论上不会执行到这里）
-    return {
-      code: 500,
-      message: '获取账户信息失败',
-      data: {} as Account,
-      timestamp: Date.now()
-    };
+    return httpClient.get<ApiResponse<Account>>(API_ENDPOINTS.CURRENT_ACCOUNT);
   }
 
   // 账户充值
   static async recharge(data: RechargeRequest): Promise<ApiResponse<Account>> {
     try {
-      return await httpClient.post(API_ENDPOINTS.RECHARGE, data);
+      return await httpClient.post<ApiResponse<Account>>(API_ENDPOINTS.RECHARGE, data);
     } catch (error) {
       return {
         code: 500,
@@ -101,7 +42,7 @@ export class AccountService {
   // 添加信用额度
   static async addCredit(data: AddCreditRequest): Promise<ApiResponse<Account>> {
     try {
-      return await httpClient.post(API_ENDPOINTS.ADD_CREDIT, data);
+      return await httpClient.post<ApiResponse<Account>>(API_ENDPOINTS.ADD_CREDIT, data);
     } catch (error) {
       return {
         code: 500,
@@ -115,7 +56,7 @@ export class AccountService {
   // 获取账户统计信息
   static async getAccountStats(): Promise<ApiResponse<AccountStats>> {
     try {
-      return await httpClient.get(API_ENDPOINTS.ACCOUNT_STATS);
+      return await httpClient.get<ApiResponse<AccountStats>>(API_ENDPOINTS.ACCOUNT_STATS);
     } catch (error) {
       return {
         code: 500,
@@ -135,7 +76,7 @@ export class AccountService {
     pageSize?: number;
   }): Promise<ApiResponse<BalanceTransaction[]>> {
     try {
-      return await httpClient.get(API_ENDPOINTS.BALANCE_HISTORY, { params });
+      return await httpClient.get<ApiResponse<BalanceTransaction[]>>(API_ENDPOINTS.BALANCE_HISTORY, { params });
     } catch (error) {
       return {
         code: 500,
@@ -154,11 +95,11 @@ export const AccountServiceWithToast = {
   },
 
   async recharge(data: RechargeRequest) {
-    return httpClient.post(API_ENDPOINTS.RECHARGE, data, {}, { showToast: true });
+    return httpClient.post<ApiResponse<Account>>(API_ENDPOINTS.RECHARGE, data, {}, { showToast: true });
   },
 
   async addCredit(data: AddCreditRequest) {
-    return httpClient.post(API_ENDPOINTS.ADD_CREDIT, data, {}, { showToast: true });
+    return httpClient.post<ApiResponse<Account>>(API_ENDPOINTS.ADD_CREDIT, data, {}, { showToast: true });
   }
 };
 

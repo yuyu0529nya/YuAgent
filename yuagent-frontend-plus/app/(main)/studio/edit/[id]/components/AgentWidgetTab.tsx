@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -24,6 +24,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { toast } from "@/hooks/use-toast";
+import { useCopy } from "@/hooks/use-copy";
 import { AgentWidget } from "@/types/widget";
 import { Model } from "@/lib/user-settings-service";
 import { getWidgetsWithToast, toggleWidgetStatusWithToast, deleteWidgetWithToast } from "@/lib/agent-widget-service";
@@ -45,38 +46,45 @@ export function AgentWidgetTab({ agentId }: AgentWidgetTabProps) {
   const [widgetCodeDialogOpen, setWidgetCodeDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [selectedWidget, setSelectedWidget] = useState<AgentWidget | null>(null);
+  const latestWidgetRequestRef = useRef(0);
+  const latestModelRequestRef = useRef(0);
+  const { copyToClipboard } = useCopy();
 
   // 加载小组件配置列表
-  const loadWidgets = async () => {
+  const loadWidgets = useCallback(async () => {
+    const requestId = ++latestWidgetRequestRef.current;
     setLoading(true);
     try {
       const response = await getWidgetsWithToast(agentId);
-      if (response.code === 200) {
+      if (requestId === latestWidgetRequestRef.current && response.code === 200) {
         setWidgets(response.data || []);
       }
-    } catch (error) {
+    } catch {
  
     } finally {
-      setLoading(false);
+      if (requestId === latestWidgetRequestRef.current) {
+        setLoading(false);
+      }
     }
-  };
+  }, [agentId]);
 
   // 加载模型列表
-  const loadModels = async () => {
+  const loadModels = useCallback(async () => {
+    const requestId = ++latestModelRequestRef.current;
     try {
       const response = await getAllModelsWithToast();
-      if (response.code === 200) {
+      if (requestId === latestModelRequestRef.current && response.code === 200) {
         setModels(response.data || []);
       }
-    } catch (error) {
+    } catch {
  
     }
-  };
+  }, []);
 
   useEffect(() => {
-    loadWidgets();
-    loadModels();
-  }, [agentId]);
+    void loadWidgets();
+    void loadModels();
+  }, [loadModels, loadWidgets]);
 
   // 切换启用状态
   const handleToggleStatus = async (widget: AgentWidget) => {
@@ -113,21 +121,8 @@ export function AgentWidgetTab({ agentId }: AgentWidgetTabProps) {
   };
 
   // 复制嵌入代码
-  const handleCopyWidgetCode = async (widgetCode: string) => {
-    try {
-      await navigator.clipboard.writeText(widgetCode);
-      toast({
-        title: "复制成功",
-        description: "嵌入代码已复制到剪贴板",
-      });
-    } catch (error) {
-      toast({
-        title: "复制失败",
-        description: "无法复制到剪贴板",
-        variant: "destructive",
-      });
-    }
-  };
+  const handleCopyWidgetCode = (widgetCode: string) =>
+    copyToClipboard(widgetCode, "复制成功");
 
   if (loading) {
     return (
@@ -233,7 +228,7 @@ export function AgentWidgetTab({ agentId }: AgentWidgetTabProps) {
           <AlertDialogHeader>
             <AlertDialogTitle>确认删除</AlertDialogTitle>
             <AlertDialogDescription>
-              确定要删除小组件配置 "{selectedWidget?.name}" 吗？
+              确定要删除小组件配置 &quot;{selectedWidget?.name}&quot; 吗？
               <br />
               此操作不可撤销，删除后所有嵌入在网站中的组件将停止工作。
             </AlertDialogDescription>

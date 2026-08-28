@@ -1,5 +1,10 @@
 // API地址配置 - 环境适配，开发环境直连，生产环境使用nginx代理
 function getDefaultApiUrl(): string {
+  const configuredApiUrl = process.env.NEXT_PUBLIC_API_BASE_URL?.trim()
+  if (configuredApiUrl) {
+    return configuredApiUrl.replace(/\/+$/, '')
+  }
+
   // 客户端环境
   if (typeof window !== 'undefined') {
     const { protocol, hostname } = window.location;
@@ -19,7 +24,6 @@ function getDefaultApiUrl(): string {
 
 export const API_CONFIG = {
   BASE_URL: getDefaultApiUrl(),
-  CURRENT_USER_ID: "1", // 当前用户ID
 }
 
 // API 端点
@@ -27,18 +31,17 @@ export const API_ENDPOINTS = {
   // 会话相关
   SESSION: "/agents/sessions",
   SESSION_DETAIL: (id: string) => `/agents/sessions/${id}`,
+  SESSION_AGENT: (id: string) => `/agents/sessions/${id}/agent`,
   SESSION_MESSAGES: (id: string) => `/agents/sessions/${id}/messages`,
   DELETE_SESSION: (id: string) => `/agents/sessions/${id}`,
   CHAT: "/agents/sessions/chat",
   INTERRUPT_SESSION: (id: string) => `/agents/sessions/${id}/interrupt`, // 新增：中断会话
-  SEND_MESSAGE: (sessionId: string) => `/agents/sessions/${sessionId}/message`,
   
   // 任务相关
   SESSION_TASKS: (sessionId: string) => `/tasks/session/${sessionId}/latest`,
   SESSION_TASK_DETAIL: (taskId: string) => `/tasks/${taskId}`,
 
   // 助理相关
-  USER_AGENTS: (userId: string) => `/agents/user/${userId}`,
   AGENT_DETAIL: (id: string) => `/agents/${id}`,
   CREATE_AGENT: "/agents",
   UPDATE_AGENT: (id: string) => `/agents/${id}`,
@@ -63,8 +66,8 @@ export const API_ENDPOINTS = {
   WIDGET_DETAIL: (agentId: string, widgetId: string) => `/agents/${agentId}/widgets/${widgetId}`, // Widget详情
   UPDATE_WIDGET: (agentId: string, widgetId: string) => `/agents/${agentId}/widgets/${widgetId}`, // 更新Widget
   DELETE_WIDGET: (agentId: string, widgetId: string) => `/agents/${agentId}/widgets/${widgetId}`, // 删除Widget
-  TOGGLE_WIDGET_STATUS: (agentId: string, widgetId: string) => `/agents/${agentId}/widgets/${widgetId}/toggle-status`, // 切换Widget状态
-  USER_WIDGETS: "/widgets/user", // 获取用户的所有Widget
+  TOGGLE_WIDGET_STATUS: (agentId: string, widgetId: string) => `/agents/${agentId}/widgets/${widgetId}/status`, // 切换Widget状态
+  USER_WIDGETS: "/user/widgets", // 获取用户的所有Widget
   WIDGET_INFO: (publicId: string) => `/widget/${publicId}/info`, // 获取Widget公开信息
   WIDGET_CHAT: (publicId: string) => `/widget/${publicId}/chat`, // Widget聊天接口
   
@@ -97,6 +100,7 @@ export const API_ENDPOINTS = {
   INSTALL_TOOL: (toolId: string, version: string) => `/tools/install/${toolId}/${version}`,
   USER_TOOLS: "/tools/user",
   INSTALLED_TOOLS: "/tools/installed", // 已安装的工具列表
+  INSTALLED_TOOL_VERSION: (toolId: string, version: string) => `/tools/installed/${toolId}/${version}`,
   UNINSTALL_TOOL: (toolId: string) => `/tools/uninstall/${toolId}`, // 卸载工具
   DELETE_USER_TOOL: (id: string) => `/tools/user/${id}`,
   UPLOAD_TOOL: "/tools",

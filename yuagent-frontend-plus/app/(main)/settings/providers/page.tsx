@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { MoreHorizontal, Plus, Edit, Trash, Power, PowerOff, Loader2, RefreshCw, PlusCircle, Settings2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -89,10 +89,13 @@ export default function ProvidersPage() {
   const [deleteModelConfirmOpen, setDeleteModelConfirmOpen] = useState(false)
   const [isDeletingModel, setIsDeletingModel] = useState(false)
   const [isTogglingModelStatus, setIsTogglingModelStatus] = useState(false)
+  const latestProvidersRequest = useRef(0)
   
   // 加载服务商数据
-  const loadProviders = async () => {
+  const loadProviders = useCallback(async () => {
+    const requestId = ++latestProvidersRequest.current
     setLoading(true)
+    setError(null)
     try {
       let type: string | undefined;
       if (activeTab === "官方服务") {
@@ -102,24 +105,26 @@ export default function ProvidersPage() {
       }
       
       const response = await getProviders(type);
-      if (response.code === 200) {
- 
+      if (response.code === 200 && requestId === latestProvidersRequest.current) {
         setProviders(response.data)
-      } else {
+      } else if (requestId === latestProvidersRequest.current) {
         setError(response.message || "获取服务商列表失败")
       }
-    } catch (err) {
- 
-      setError("获取服务商数据失败")
+    } catch {
+      if (requestId === latestProvidersRequest.current) {
+        setError("获取服务商数据失败")
+      }
     } finally {
-      setLoading(false)
+      if (requestId === latestProvidersRequest.current) {
+        setLoading(false)
+      }
     }
-  }
+  }, [activeTab])
   
   // 当标签变化时重新加载数据
   useEffect(() => {
-    loadProviders()
-  }, [activeTab])
+    void loadProviders()
+  }, [loadProviders])
   
   // 根据标签筛选服务商（已通过API过滤，无需本地再次过滤）
   const filteredProviders = providers;
@@ -203,7 +208,7 @@ export default function ProvidersPage() {
       if (response.code === 200) {
         setDeleteConfirmOpen(false);
         setShowDetailDialog(false);
-        loadProviders();
+        void loadProviders();
       }
     } catch (error) {
  
@@ -362,7 +367,7 @@ export default function ProvidersPage() {
           <Button 
             variant="outline" 
             className="mt-2" 
-            onClick={() => window.location.reload()}
+            onClick={() => void loadProviders()}
           >
             重试
           </Button>

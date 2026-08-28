@@ -23,6 +23,7 @@ import {
 import { toast } from "@/hooks/use-toast"
 import { ApiKeyResponse } from "@/types/api-key"
 import type { Agent } from "@/types/agent"
+import { useCopy } from "@/hooks/use-copy"
 
 interface CreateApiKeyDialogProps {
   open: boolean
@@ -42,6 +43,7 @@ export function CreateApiKeyDialog({
   const [isLoading, setIsLoading] = useState(false)
   const [createdKey, setCreatedKey] = useState<ApiKeyResponse | null>(null)
   const [showKey, setShowKey] = useState(false)
+  const { copyToClipboard } = useCopy()
 
   // 重置表单
   const resetForm = () => {
@@ -90,13 +92,9 @@ export function CreateApiKeyDialog({
   }
 
   // 复制API密钥
-  const handleCopyKey = () => {
+  const handleCopyKey = async () => {
     if (createdKey) {
-      navigator.clipboard.writeText(createdKey.apiKey)
-      toast({
-        title: "已复制到剪贴板",
-        description: "API 密钥已复制到剪贴板。",
-      })
+      await copyToClipboard(createdKey.apiKey, "API 密钥已复制到剪贴板")
     }
   }
 

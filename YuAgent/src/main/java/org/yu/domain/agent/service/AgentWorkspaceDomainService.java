@@ -25,7 +25,7 @@ public class AgentWorkspaceDomainService {
     private final AgentRepository agentRepository;
 
     public AgentWorkspaceDomainService(AgentWorkspaceRepository agentWorkspaceRepository,
-            AgentDomainService agentServiceDomainService, AgentRepository agentRepository) {
+            AgentRepository agentRepository) {
         this.agentWorkspaceRepository = agentWorkspaceRepository;
         this.agentRepository = agentRepository;
     }
@@ -46,10 +46,7 @@ public class AgentWorkspaceDomainService {
     }
 
     public boolean exist(String agentId, String userId) {
-        Wrapper<AgentWorkspaceEntity> wrapper = Wrappers.<AgentWorkspaceEntity>lambdaQuery()
-                .eq(AgentWorkspaceEntity::getAgentId, agentId).eq(AgentWorkspaceEntity::getUserId, userId);
-
-        return agentWorkspaceRepository.selectCount(wrapper) > 0;
+        return agentWorkspaceRepository.exist(agentId, userId);
     }
 
     public boolean deleteAgent(String agentId, String userId) {
@@ -81,7 +78,7 @@ public class AgentWorkspaceDomainService {
     public void update(AgentWorkspaceEntity workspace) {
         LambdaUpdateWrapper<AgentWorkspaceEntity> wrapper = Wrappers.<AgentWorkspaceEntity>lambdaUpdate()
                 .eq(AgentWorkspaceEntity::getAgentId, workspace.getAgentId())
-                .eq(AgentWorkspaceEntity::getAgentId, workspace.getAgentId());
+                .eq(AgentWorkspaceEntity::getUserId, workspace.getUserId());
         agentWorkspaceRepository.checkedUpdate(workspace, wrapper);
     }
 

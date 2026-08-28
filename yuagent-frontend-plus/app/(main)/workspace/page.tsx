@@ -1,14 +1,14 @@
 "use client"
 
 import React, { useEffect, useState } from "react"
+import dynamic from "next/dynamic"
 import { useSearchParams } from "next/navigation"
 import { Sidebar } from "@/components/sidebar"
-import { ChatPanel } from "@/components/chat-panel"
 import { EmptyState } from "@/components/empty-state"
 import { ConversationList } from "@/components/conversation-list"
 import { useWorkspace } from "@/contexts/workspace-context"
 import { getWorkspaceAgents, deleteWorkspaceAgent, deleteWorkspaceAgentWithToast } from "@/lib/agent-service"
-import { getAgentSessions, createAgentSession, type SessionDTO, getAgentSessionsWithToast, createAgentSessionWithToast, updateAgentSessionWithToast } from "@/lib/agent-session-service"
+import { type SessionDTO, getAgentSessionsWithToast, createAgentSessionWithToast, updateAgentSessionWithToast } from "@/lib/agent-session-service"
 import type { Agent } from "@/types/agent"
 import { toast } from "@/hooks/use-toast"
 import { resolveAssetUrl } from "@/lib/asset-url"
@@ -29,12 +29,20 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 
-// 导入模型选择对话框组件
-import { ModelSelectDialog } from "@/components/model-select-dialog"
-import { ScheduledTaskPanel } from "@/components/scheduled-task-panel"
+const ChatPanel = dynamic(() => import("@/components/chat-panel").then(module => module.ChatPanel), {
+  ssr: false,
+  loading: () => <div className="flex-1" />,
+})
 
-import { Metadata } from "next"
-import { redirect } from "next/navigation"
+const ModelSelectDialog = dynamic(
+  () => import("@/components/model-select-dialog").then(module => module.ModelSelectDialog),
+  { ssr: false },
+)
+
+const ScheduledTaskPanel = dynamic(
+  () => import("@/components/scheduled-task-panel").then(module => module.ScheduledTaskPanel),
+  { ssr: false },
+)
 
 export default function WorkspacePage() {
   const { selectedWorkspaceId, selectedConversationId, setSelectedWorkspaceId, setSelectedConversationId } =
@@ -84,30 +92,39 @@ export default function WorkspacePage() {
 
   // Fetch agent sessions when workspace is selected
   useEffect(() => {
+    let cancelled = false
+
     async function fetchSessions() {
-      if (!selectedWorkspaceId) return
+      if (!selectedWorkspaceId) {
+        setSessions([])
+        setLoadingSessions(false)
+        return
+      }
 
       try {
         setLoadingSessions(true)
         const response = await getAgentSessionsWithToast(selectedWorkspaceId)
 
-        if (response.code === 200) {
+        if (!cancelled && response.code === 200) {
           setSessions(response.data)
-          
-          // 自动选择第一个会话（如果有且未选择任何会话）
-          if (response.data.length > 0 && !selectedConversationId) {
-            setSelectedConversationId(response.data[0].id)
-          }
+          setSelectedConversationId(currentConversationId =>
+            currentConversationId ?? response.data[0]?.id ?? null,
+          )
         }
       } catch (error) {
  
       } finally {
-        setLoadingSessions(false)
+        if (!cancelled) {
+          setLoadingSessions(false)
+        }
       }
     }
 
-    fetchSessions()
-  }, [selectedWorkspaceId, selectedConversationId])
+    void fetchSessions()
+    return () => {
+      cancelled = true
+    }
+  }, [selectedWorkspaceId, setSelectedConversationId])
 
   // Create a new session for the selected agent
   const handleCreateSession = async (agentId: string) => {
@@ -322,7 +339,7 @@ export default function WorkspacePage() {
           <DialogHeader>
             <DialogTitle>确认移除</DialogTitle>
             <DialogDescription>
-              您确定要将助理 "{agentToDelete?.name}" 从工作区移除吗？此操作不会删除助理，但会移除与此助理的关联。
+              您确定要将助理 &quot;{agentToDelete?.name}&quot; 从工作区移除吗？此操作不会删除助理，但会移除与此助理的关联。
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>

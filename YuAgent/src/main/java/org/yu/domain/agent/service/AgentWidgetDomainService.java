@@ -32,6 +32,8 @@ public class AgentWidgetDomainService {
         // 检查公开ID是否唯一
         while (exists) {
             widget.setPublicId(generateNewPublicId());
+            exists = agentWidgetRepository.exists(
+                    Wrappers.<AgentWidgetEntity>lambdaQuery().eq(AgentWidgetEntity::getPublicId, widget.getPublicId()));
         }
 
         agentWidgetRepository.insert(widget);

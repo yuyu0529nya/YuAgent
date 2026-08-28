@@ -86,8 +86,7 @@ public class WORDDocumentProcessing extends AbstractDocumentProcessingStrategy {
             String fileId = getCurrentProcessingFileId();
             if (fileId != null) {
                 LambdaUpdateWrapper<FileDetailEntity> wrapper = Wrappers.<FileDetailEntity>lambdaUpdate()
-                        .eq(FileDetailEntity::getId, fileId)
-                        .set(FileDetailEntity::getFilePageSize, segmentCount);
+                        .eq(FileDetailEntity::getId, fileId).set(FileDetailEntity::getFilePageSize, segmentCount);
                 fileDetailRepository.update(wrapper);
             }
             log.info("Word document chunked into {} structured segment(s)", segmentCount);
@@ -190,19 +189,11 @@ public class WORDDocumentProcessing extends AbstractDocumentProcessingStrategy {
                     continue;
                 }
                 String xml = new String(zipInputStream.readAllBytes(), StandardCharsets.UTF_8);
-                String normalized = xml.replaceAll("</w:p>", "\n")
-                        .replaceAll("<w:tab[^>]*/>", "\t")
-                        .replaceAll("<w:br[^>]*/>", "\n")
-                        .replaceAll("</w:tr>", "\n");
-                String text = normalized.replaceAll("<[^>]+>", " ")
-                        .replace("&lt;", "<")
-                        .replace("&gt;", ">")
-                        .replace("&amp;", "&")
-                        .replace("&quot;", "\"")
-                        .replace("&apos;", "'");
-                return text.replaceAll("[\\t\\x0B\\f\\r ]+", " ")
-                        .replaceAll("\\n{3,}", "\n\n")
-                        .trim();
+                String normalized = xml.replaceAll("</w:p>", "\n").replaceAll("<w:tab[^>]*/>", "\t")
+                        .replaceAll("<w:br[^>]*/>", "\n").replaceAll("</w:tr>", "\n");
+                String text = normalized.replaceAll("<[^>]+>", " ").replace("&lt;", "<").replace("&gt;", ">")
+                        .replace("&amp;", "&").replace("&quot;", "\"").replace("&apos;", "'");
+                return text.replaceAll("[\\t\\x0B\\f\\r ]+", " ").replaceAll("\\n{3,}", "\n\n").trim();
             }
         }
         return null;
@@ -266,8 +257,8 @@ public class WORDDocumentProcessing extends AbstractDocumentProcessingStrategy {
             Map<String, Object> attrMap = currentAttrCache.get();
             if (attrMap.isEmpty()) {
                 FileDetailEntity fileDetailEntity = fileDetailRepository.selectById(fileId);
-                Map<String, Object> persistedAttrMap =
-                        JsonUtils.parseMap(fileDetailEntity != null ? fileDetailEntity.getAttr() : null);
+                Map<String, Object> persistedAttrMap = JsonUtils
+                        .parseMap(fileDetailEntity != null ? fileDetailEntity.getAttr() : null);
                 if (persistedAttrMap != null) {
                     attrMap.putAll(persistedAttrMap);
                 }

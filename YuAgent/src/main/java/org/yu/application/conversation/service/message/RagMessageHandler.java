@@ -35,6 +35,8 @@ import org.slf4j.LoggerFactory;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Objects;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 /** RAG专用的消息处理器 继承AbstractMessageHandler，添加RAG检索和问答的特定逻辑 */
@@ -89,8 +91,16 @@ public class RagMessageHandler extends AbstractMessageHandler {
             // 第一阶段：RAG检索
             RagRetrievalResult retrievalResult = performRagRetrieval(ragContext, transport, connection);
 
+            if (!retrievalResult.isSuccess()) {
+                saveUserMessage(ragContext, userEntity);
+                return;
+            }
+
             if (!retrievalResult.hasDocuments()) {
-                transport.sendEndMessage(connection, AgentChatResponse.build("没有搜索到相关文档，可以换一个方式提问", MessageType.TEXT));
+                saveUserMessage(ragContext, userEntity);
+                transport.sendEndMessage(connection,
+                        AgentChatResponse.buildEndMessage("没有搜索到相关文档，可以换一个方式提问", MessageType.TEXT));
+                return;
             }
 
             // 第二阶段：基于检索结果生成回答
@@ -101,7 +111,7 @@ public class RagMessageHandler extends AbstractMessageHandler {
             logger.error("RAG流式处理失败", e);
             AgentChatResponse errorResponse = AgentChatResponse.buildEndMessage("处理过程中发生错误: " + e.getMessage(),
                     MessageType.TEXT);
-            transport.sendMessage(connection, errorResponse);
+            transport.sendEndMessage(connection, errorResponse);
         }
     }
 
@@ -115,7 +125,6 @@ public class RagMessageHandler extends AbstractMessageHandler {
         try {
             // 发送检索开始信号
             transport.sendMessage(connection, AgentChatResponse.build("开始检索相关文档...", MessageType.RAG_RETRIEVAL_START));
-            Thread.sleep(500);
 
             // 执行RAG检索 - 获取完整数据用于答案生成
             List<DocumentUnitDTO> fullRetrievedDocuments;
@@ -128,6 +137,9 @@ public class RagMessageHandler extends AbstractMessageHandler {
                 fullRetrievedDocuments = ragSearchAppService.ragSearch(ragContext.getRagSearchRequest(),
                         ragContext.getUserId());
             }
+            fullRetrievedDocuments = fullRetrievedDocuments == null
+                    ? Collections.emptyList()
+                    : fullRetrievedDocuments.stream().filter(Objects::nonNull).toList();
 
             // 转换为轻量级DTO用于前端展示
             List<RagRetrievalDocumentDTO> lightweightDocuments = convertToLightweightDTOs(fullRetrievedDocuments);
@@ -145,15 +157,15 @@ public class RagMessageHandler extends AbstractMessageHandler {
             }
 
             transport.sendMessage(connection, retrievalEndResponse);
-            Thread.sleep(500);
 
             // 返回包含完整数据的结果用于答案生成
             return new RagRetrievalResult(fullRetrievedDocuments, retrievalMessage);
 
         } catch (Exception e) {
             logger.error("RAG检索失败", e);
-            transport.sendMessage(connection, AgentChatResponse.build("文档检索失败: " + e.getMessage(), MessageType.TEXT));
-            return new RagRetrievalResult(Collections.emptyList(), "检索失败");
+            transport.sendEndMessage(connection,
+                    AgentChatResponse.buildEndMessage("文档检索失败: " + e.getMessage(), MessageType.TEXT));
+            return new RagRetrievalResult(Collections.emptyList(), "检索失败", false);
         }
     }
 
@@ -173,9 +185,7 @@ public class RagMessageHandler extends AbstractMessageHandler {
         // 发送回答生成开始信号
         transport.sendMessage(connection, AgentChatResponse.build("开始生成回答...", MessageType.RAG_ANSWER_START));
 
-        // 保存用户消息
-        messageDomainService.saveMessageAndUpdateContext(Collections.singletonList(userEntity),
-                ragContext.getContextEntity());
+        saveUserMessage(ragContext, userEntity);
 
         // 获取流式LLM客户端
         StreamingChatModel streamingClient = llmServiceFactory.getStreamingClient(ragContext.getProvider(),
@@ -189,11 +199,17 @@ public class RagMessageHandler extends AbstractMessageHandler {
         processRagChat(agent, connection, transport, ragContext, userEntity, llmEntity, ragContext.getUserMessage());
     }
 
+    private void saveUserMessage(RagChatContext ragContext, MessageEntity userEntity) {
+        messageDomainService.saveMessageAndUpdateContext(Collections.singletonList(userEntity),
+                ragContext.getContextEntity());
+    }
+
     /** RAG专用的聊天处理逻辑 */
     private <T> void processRagChat(Agent agent, T connection, MessageTransport<T> transport, RagChatContext ragContext,
             MessageEntity userEntity, MessageEntity llmEntity, String ragPrompt) {
 
         AtomicReference<StringBuilder> messageBuilder = new AtomicReference<>(new StringBuilder());
+        AtomicBoolean streamStopped = new AtomicBoolean(false);
         TokenStream tokenStream = agent.chat(ragPrompt);
 
         // 记录调用开始时间
@@ -206,7 +222,11 @@ public class RagMessageHandler extends AbstractMessageHandler {
 
         // 错误处理
         tokenStream.onError(throwable -> {
-            transport.sendMessage(connection,
+            if (shouldStopStreaming(ragContext, streamStopped)) {
+                return;
+            }
+            streamStopped.set(true);
+            transport.sendEndMessage(connection,
                     AgentChatResponse.buildEndMessage(throwable.getMessage(), MessageType.TEXT));
 
             // 上报调用失败结果
@@ -217,6 +237,9 @@ public class RagMessageHandler extends AbstractMessageHandler {
 
         // 部分回答处理
         tokenStream.onPartialResponse(fragment -> {
+            if (shouldStopStreaming(ragContext, streamStopped)) {
+                return;
+            }
             // 如果有思考过程但还没结束思考，先结束思考阶段
             if (hasThinkingProcess[0] && !thinkingEnded[0]) {
                 transport.sendMessage(connection, AgentChatResponse.build("思考完成", MessageType.RAG_THINKING_END));
@@ -237,6 +260,9 @@ public class RagMessageHandler extends AbstractMessageHandler {
 
         // 思维链处理
         tokenStream.onPartialReasoning(reasoning -> {
+            if (shouldStopStreaming(ragContext, streamStopped)) {
+                return;
+            }
             hasThinkingProcess[0] = true;
             if (!thinkingStarted[0]) {
                 transport.sendMessage(connection, AgentChatResponse.build("开始思考...", MessageType.RAG_THINKING_START));
@@ -247,6 +273,9 @@ public class RagMessageHandler extends AbstractMessageHandler {
 
         // 完整响应处理
         tokenStream.onCompleteResponse(chatResponse -> {
+            if (shouldStopStreaming(ragContext, streamStopped)) {
+                return;
+            }
             this.setMessageTokenCount(ragContext.getMessageHistory(), userEntity, llmEntity, chatResponse);
 
             messageDomainService.updateMessage(userEntity);
@@ -254,7 +283,8 @@ public class RagMessageHandler extends AbstractMessageHandler {
                     ragContext.getContextEntity());
 
             // 发送RAG回答结束信号
-            transport.sendMessage(connection, AgentChatResponse.buildEndMessage("回答生成完成", MessageType.RAG_ANSWER_END));
+            transport.sendEndMessage(connection,
+                    AgentChatResponse.buildEndMessage("回答生成完成", MessageType.RAG_ANSWER_END));
 
             // 上报调用成功结果
             long latency = System.currentTimeMillis() - startTime;
@@ -274,6 +304,9 @@ public class RagMessageHandler extends AbstractMessageHandler {
 
     /** 将DocumentUnitDTO转换为轻量级展示DTO */
     private List<RagRetrievalDocumentDTO> convertToLightweightDTOs(List<DocumentUnitDTO> documents) {
+        if (documents == null || documents.isEmpty()) {
+            return Collections.emptyList();
+        }
         List<RagRetrievalDocumentDTO> lightweightDTOs = new ArrayList<>();
 
         for (DocumentUnitDTO doc : documents) {

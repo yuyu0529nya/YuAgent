@@ -355,6 +355,7 @@ public class ContainerDomainService {
     public List<ContainerEntity> getContainersNeedingSuspension() {
         LocalDateTime oneDayAgo = LocalDateTime.now().minusDays(1);
         LambdaQueryWrapper<ContainerEntity> wrapper = Wrappers.<ContainerEntity>lambdaQuery()
+                .eq(ContainerEntity::getStatus, ContainerStatus.RUNNING)
                 .lt(ContainerEntity::getLastAccessedAt, oneDayAgo).orderByAsc(ContainerEntity::getLastAccessedAt);
         return containerRepository.selectList(wrapper);
     }
@@ -365,6 +366,7 @@ public class ContainerDomainService {
     public List<ContainerEntity> getContainersNeedingDeletion() {
         LocalDateTime fiveDaysAgo = LocalDateTime.now().minusDays(5);
         LambdaQueryWrapper<ContainerEntity> wrapper = Wrappers.<ContainerEntity>lambdaQuery()
+                .ne(ContainerEntity::getStatus, ContainerStatus.DELETED)
                 .lt(ContainerEntity::getLastAccessedAt, fiveDaysAgo).orderByAsc(ContainerEntity::getLastAccessedAt);
         return containerRepository.selectList(wrapper);
     }
@@ -412,7 +414,7 @@ public class ContainerDomainService {
             return runningContainers;
         }
     }
-    /** 鏍规嵁鏂版ā鏉块噸缃鍣ㄨ繍琛岄厤缃?*/
+    /** 鏍规嵁鏂版ā鏉块噸缃鍣ㄨ繍琛岄厤缃? */
     public void resetContainerRuntime(String containerId, String image, Integer internalPort, ContainerStatus status,
             String errorMessage) {
         ContainerEntity container = containerRepository.selectById(containerId);

@@ -4,7 +4,6 @@ import { useRouter } from "next/navigation"
 import { toast } from "@/hooks/use-toast"
 
 import { createAgentWithToast } from "@/lib/agent-service"
-import { API_CONFIG } from "@/lib/api-config"
 import AgentFormModal from "@/components/agent-form-modal"
 import type { AgentFormData } from "@/hooks/use-agent-form"
 
@@ -32,15 +31,9 @@ export default function CreateAgentPage() {
 
         systemPrompt: formData.systemPrompt,
         welcomeMessage: formData.welcomeMessage,
-        modelConfig: {
-          modelName: "gpt-4o", 
-          temperature: 0.7,
-          maxTokens: 2000
-        },
         toolIds: toolIds,
         knowledgeBaseIds: formData.knowledgeBaseIds,
         toolPresetParams: formData.toolPresetParams,
-        userId: API_CONFIG.CURRENT_USER_ID,
         multiModal: formData.multiModal,
       };
 

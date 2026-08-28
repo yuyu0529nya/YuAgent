@@ -146,8 +146,7 @@ public class DocumentVectorizationOrchestrator {
 
     /** 触发向量化处理 - 传递翻译后内容 */
     private void triggerVectorization(DocumentUnitEntity originalUnit, String vectorText, int segmentIndex,
-            String titleContext,
-            ProcessingContext context) {
+            String titleContext, ProcessingContext context) {
         try {
             // 获取文件详情来构建完整的向量化消息
             FileDetailEntity fileEntity = fileDetailDomainService.getFileByIdWithoutUserCheck(originalUnit.getFileId());

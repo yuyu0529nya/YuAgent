@@ -88,23 +88,10 @@ public class HybridSearchDomainService {
                     .supplyAsync(() -> keywordSearchDomainService.keywordSearch(config.getDataSetIds(),
                             config.getQuestion(), finalMaxResults * 2));
 
-            // 等待两个检索任务完成
-            List<VectorStoreResult> vectorResults = Collections.emptyList();
-            List<VectorStoreResult> keywordResults = Collections.emptyList();
-
-            try {
-                vectorResults = vectorSearchFuture.get(SEARCH_TIMEOUT_SECONDS, TimeUnit.SECONDS);
-                log.debug("向量搜索完成，找到{}个结果", vectorResults.size());
-            } catch (Exception e) {
-                log.warn("向量搜索失败或超时: {}", e.getMessage());
-            }
-
-            try {
-                keywordResults = keywordSearchFuture.get(SEARCH_TIMEOUT_SECONDS, TimeUnit.SECONDS);
-                log.debug("关键词搜索完成，找到{}个结果", keywordResults.size());
-            } catch (Exception e) {
-                log.warn("关键词搜索失败或超时: {}", e.getMessage());
-            }
+            // 两条检索路径共享同一个请求预算，避免顺序等待让总耗时翻倍。
+            long deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(SEARCH_TIMEOUT_SECONDS);
+            List<VectorStoreResult> vectorResults = awaitSearchResult(vectorSearchFuture, deadlineNanos, "向量搜索");
+            List<VectorStoreResult> keywordResults = awaitSearchResult(keywordSearchFuture, deadlineNanos, "关键词搜索");
 
             // 如果两个检索都失败，返回空结果
             if (vectorResults.isEmpty() && keywordResults.isEmpty()) {
@@ -128,6 +115,29 @@ public class HybridSearchDomainService {
             log.error("混合搜索过程中出现错误，查询: '{}', 耗时: {}ms", config.getQuestion(), totalTime, e);
             return Collections.emptyList();
         }
+    }
+
+    static List<VectorStoreResult> awaitSearchResult(CompletableFuture<List<VectorStoreResult>> future,
+            long deadlineNanos, String searchName) {
+        long remainingNanos = deadlineNanos - System.nanoTime();
+        try {
+            if (remainingNanos > 0) {
+                List<VectorStoreResult> result = future.get(remainingNanos, TimeUnit.NANOSECONDS);
+                log.debug("{}完成，找到{}个结果", searchName, result.size());
+                return result;
+            }
+            if (future.isDone()) {
+                List<VectorStoreResult> result = future.getNow(Collections.emptyList());
+                log.debug("{}在截止时间前完成，找到{}个结果", searchName, result.size());
+                return result;
+            }
+            future.cancel(true);
+            log.warn("{}超时", searchName);
+        } catch (Exception e) {
+            future.cancel(true);
+            log.warn("{}失败或超时: {}", searchName, e.getMessage());
+        }
+        return Collections.emptyList();
     }
 
     /** 执行混合检索（重载方法，保持向后兼容）
@@ -290,8 +300,7 @@ public class HybridSearchDomainService {
      * @param documents 原始文档列表
      * @param scoreMap 分数映射
      * @return 扩展后的文档列表 */
-    private List<DocumentUnitEntity> expandQueryResults(List<DocumentUnitEntity> documents,
-            Map<String, Double> scoreMap) {
+    List<DocumentUnitEntity> expandQueryResults(List<DocumentUnitEntity> documents, Map<String, Double> scoreMap) {
 
         Set<String> expandedIds = new LinkedHashSet<>();
         List<DocumentUnitEntity> expandedDocuments = new ArrayList<>(documents);
@@ -299,36 +308,52 @@ public class HybridSearchDomainService {
         // 为原始结果添加ID
         documents.forEach(doc -> expandedIds.add(doc.getId()));
 
-        for (DocumentUnitEntity doc : documents) {
-            try {
-                // 查询相邻页面片段（前一页、当前页、后一页）
-                List<DocumentUnitEntity> adjacentChunks = documentUnitRepository.selectList(
-                        Wrappers.<DocumentUnitEntity>lambdaQuery().eq(DocumentUnitEntity::getFileId, doc.getFileId())
-                                .between(DocumentUnitEntity::getPage, Math.max(1, doc.getPage() - 1), doc.getPage() + 1)
-                                .eq(DocumentUnitEntity::getIsVector, true));
+        List<DocumentUnitEntity> expansionSources = documents.stream()
+                .filter(doc -> doc.getFileId() != null && doc.getPage() != null).collect(Collectors.toList());
+        if (expansionSources.isEmpty()) {
+            return expandedDocuments;
+        }
 
-                for (DocumentUnitEntity chunk : adjacentChunks) {
-                    if (!expandedIds.contains(chunk.getId())) {
-                        // 为扩展片段设置较低的分数
-                        Double originalScore = scoreMap.get(doc.getId());
-                        if (originalScore != null) {
-                            chunk.setSimilarityScore(originalScore * 0.8);
-                        } else {
-                            chunk.setSimilarityScore(0.5);
-                        }
+        Set<String> fileIds = expansionSources.stream().map(DocumentUnitEntity::getFileId).collect(Collectors.toSet());
+        Set<Integer> candidatePages = expansionSources.stream()
+                .flatMap(doc -> java.util.stream.IntStream
+                        .rangeClosed(Math.max(1, doc.getPage() - 1), doc.getPage() + 1).boxed())
+                .collect(Collectors.toSet());
 
+        List<DocumentUnitEntity> adjacentChunks;
+        try {
+            adjacentChunks = documentUnitRepository
+                    .selectList(Wrappers.<DocumentUnitEntity>lambdaQuery().in(DocumentUnitEntity::getFileId, fileIds)
+                            .in(DocumentUnitEntity::getPage, candidatePages).eq(DocumentUnitEntity::getIsVector, true));
+        } catch (Exception e) {
+            log.warn("批量查询相邻文档片段失败", e);
+            return expandedDocuments;
+        }
+
+        Map<DocumentPage, List<DocumentUnitEntity>> chunksByPage = adjacentChunks.stream()
+                .filter(chunk -> chunk.getFileId() != null && chunk.getPage() != null)
+                .collect(Collectors.groupingBy(chunk -> new DocumentPage(chunk.getFileId(), chunk.getPage())));
+
+        for (DocumentUnitEntity doc : expansionSources) {
+            Double originalScore = scoreMap.get(doc.getId());
+            double expandedScore = originalScore != null ? originalScore * 0.8 : 0.5;
+            for (int page = Math.max(1, doc.getPage() - 1); page <= doc.getPage() + 1; page++) {
+                for (DocumentUnitEntity chunk : chunksByPage.getOrDefault(new DocumentPage(doc.getFileId(), page),
+                        Collections.emptyList())) {
+                    if (expandedIds.add(chunk.getId())) {
+                        chunk.setSimilarityScore(expandedScore);
                         expandedDocuments.add(chunk);
-                        expandedIds.add(chunk.getId());
                     }
                 }
-            } catch (Exception e) {
-                log.warn("为文档{}扩展查询失败", doc.getId(), e);
             }
         }
 
         log.info("查询扩展: {}个原始文档扩展为{}个总文档", documents.size(), expandedDocuments.size());
 
         return expandedDocuments;
+    }
+
+    private record DocumentPage(String fileId, int page) {
     }
 
     /** 对RRF融合后的结果进行重排序

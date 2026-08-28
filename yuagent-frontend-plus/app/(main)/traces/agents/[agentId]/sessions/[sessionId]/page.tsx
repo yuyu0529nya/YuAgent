@@ -326,7 +326,7 @@ export default function TraceDetailPage() {
                             <span className="font-medium">模型:</span>
                             <span>{detail.modelId}</span>
                             {detail.isFallbackUsed && (
-                              <RefreshCw className="h-3 w-3 text-orange-600" title="模型已切换" />
+                              <RefreshCw className="h-3 w-3 text-orange-600" aria-label="模型已切换" />
                             )}
                           </div>
                         )}

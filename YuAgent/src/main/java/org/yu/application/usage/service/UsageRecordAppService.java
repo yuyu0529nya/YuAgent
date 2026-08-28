@@ -129,10 +129,7 @@ public class UsageRecordAppService {
      * @param userId 用户ID
      * @return 总消费金额 */
     public BigDecimal getUserTotalCost(String userId) {
-        Page<UsageRecordEntity> entityPage = usageRecordDomainService.getUserUsageHistory(userId, 1, Integer.MAX_VALUE);
-
-        return entityPage.getRecords().stream().map(UsageRecordEntity::getCost).reduce(BigDecimal.ZERO,
-                BigDecimal::add);
+        return usageRecordDomainService.getUserTotalCost(userId);
     }
 
     /** 统计用户在指定时间范围内的消费金额

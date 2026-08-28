@@ -108,7 +108,7 @@ public class PaymentAppService {
         }
     }
 
-    /** 鍒涘缓鍏呭€艰鍗?*/
+    /** 鍒涘缓鍏呭€艰鍗? */
     private OrderEntity createRechargeOrder(String userId, RechargeRequest request, PaymentPlatform paymentPlatform,
             PaymentType paymentType) {
         OrderEntity order = new OrderEntity();
@@ -139,7 +139,7 @@ public class PaymentAppService {
         return orderDomainService.createOrder(order);
     }
 
-    /** 閫氳繃鏀粯鎻愪緵鍟嗗垱寤烘敮浠?*/
+    /** 閫氳繃鏀粯鎻愪緵鍟嗗垱寤烘敮浠? */
     private PaymentResult createPaymentWithProvider(OrderEntity order, RechargeRequest request,
             PaymentPlatform paymentPlatform) {
         PaymentProvider provider = paymentProviderFactory.getProvider(paymentPlatform);
@@ -147,7 +147,7 @@ public class PaymentAppService {
         return provider.createPayment(paymentRequest);
     }
 
-    /** 鏇存柊璁㈠崟鐨勬敮浠樺钩鍙颁俊鎭?*/
+    /** 鏇存柊璁㈠崟鐨勬敮浠樺钩鍙颁俊鎭? */
     private void updateOrderProviderInfo(OrderEntity order, PaymentResult paymentResult) {
         if (paymentResult.getProviderOrderId() == null && paymentResult.getProviderPaymentId() == null) {
             return;
@@ -196,12 +196,12 @@ public class PaymentAppService {
         return normalizedBaseUrl + path;
     }
 
-    /** 鏋勫缓鏀粯璇锋眰锛堜粎鐢ㄤ簬鏌ヨ锛?*/
+    /** 鏋勫缓鏀粯璇锋眰锛堜粎鐢ㄤ簬鏌ヨ锛? */
     private PaymentRequest buildPaymentRequest(OrderEntity order) {
         return buildPaymentRequest(order, null);
     }
 
-    /** 鐢熸垚璁㈠崟鍙?*/
+    /** 鐢熸垚璁㈠崟鍙? */
     private String generateOrderNo() {
         return "RCH" + System.currentTimeMillis() + String.format("%04d", (int) (Math.random() * 10000));
     }
@@ -210,7 +210,7 @@ public class PaymentAppService {
      *
      * @param paymentPlatform 鏀粯骞冲彴浠ｇ爜
      * @param request HTTP璇锋眰瀵硅薄
-     * @return 鍥炶皟鍝嶅簲瀛楃涓?*/
+     * @return 鍥炶皟鍝嶅簲瀛楃涓? */
     @Transactional
     public String handlePaymentCallback(PaymentPlatform paymentPlatform, HttpServletRequest request) {
         try {
@@ -276,8 +276,8 @@ public class PaymentAppService {
                 order.setProviderOrderId(callback.getProviderOrderId());
             }
             if (newStatus == OrderStatus.PAID) {
-                logger.info("璁㈠崟鏀粯鎴愬姛锛屽彂甯冭喘涔版垚鍔熶簨浠? orderNo={}, orderType={}, amount={}", orderNo, order.getOrderType(),
-                        order.getAmount());
+                logger.info("璁㈠崟鏀粯鎴愬姛锛屽彂甯冭喘涔版垚鍔熶簨浠? orderNo={}, orderType={}, amount={}", orderNo,
+                        order.getOrderType(), order.getAmount());
                 PurchaseSuccessEvent event = new PurchaseSuccessEvent(order);
                 eventPublisher.publishEvent(event);
             }
@@ -291,7 +291,7 @@ public class PaymentAppService {
     /** 鏌ヨ璁㈠崟鐘舵€侊紙鏍规嵁璁㈠崟鍙凤級
      *
      * @param orderNo 璁㈠崟鍙?
-     * @return 璁㈠崟鐘舵€佸搷搴?*/
+     * @return 璁㈠崟鐘舵€佸搷搴? */
     public OrderStatusResponseDTO queryOrderStatus(String orderNo) {
         logger.info("鏌ヨ璁㈠崟鐘舵€? orderNo={}", orderNo);
 
@@ -310,7 +310,7 @@ public class PaymentAppService {
         }
     }
 
-    /** 鑾峰彇璁㈠崟鎴栨姏鍑哄紓甯?*/
+    /** 鑾峰彇璁㈠崟鎴栨姏鍑哄紓甯? */
     private OrderEntity getOrderOrThrow(String orderNo) {
         OrderEntity order = orderDomainService.findOrderByOrderNo(orderNo);
         if (order == null) {
@@ -319,7 +319,7 @@ public class PaymentAppService {
         return order;
     }
 
-    /** 鍒ゆ柇鏄惁闇€瑕佸悓姝ユ敮浠樺钩鍙扮姸鎬?*/
+    /** 鍒ゆ柇鏄惁闇€瑕佸悓姝ユ敮浠樺钩鍙扮姸鎬? */
     private boolean shouldSyncWithProvider(OrderEntity order) {
         return order.getStatus() == OrderStatus.PENDING;
     }
@@ -329,7 +329,7 @@ public class PaymentAppService {
         return provider.getProviderOrderIdForQuery(order.getOrderNo(), order.getProviderOrderId());
     }
 
-    /** 鍚屾鏀粯骞冲彴鐘舵€?*/
+    /** 鍚屾鏀粯骞冲彴鐘舵€? */
     private void syncOrderStatusFromProvider(OrderEntity order) {
         try {
             PaymentProvider provider = paymentProviderFactory.getProvider(order.getPaymentPlatform());
@@ -337,7 +337,8 @@ public class PaymentAppService {
             PaymentResult platformResult = provider.queryPayment(providerOrderId);
 
             if (!platformResult.isSuccess() && platformResult.getStatus() == null) {
-                logger.warn("鏌ヨ鏀粯骞冲彴璁㈠崟鐘舵€佸け璐? orderNo={}, error={}", order.getOrderNo(), platformResult.getErrorMessage());
+                logger.warn("鏌ヨ鏀粯骞冲彴璁㈠崟鐘舵€佸け璐? orderNo={}, error={}", order.getOrderNo(),
+                        platformResult.getErrorMessage());
                 return;
             }
 
@@ -375,13 +376,14 @@ public class PaymentAppService {
         }
     }
 
-    /** 濡傛灉鏀粯鎴愬姛鍒欏彂甯冩敮浠樻垚鍔熶簨浠?*/
+    /** 濡傛灉鏀粯鎴愬姛鍒欏彂甯冩敮浠樻垚鍔熶簨浠? */
     private void publishPaymentSuccessEventIfNeeded(OrderEntity order, OrderStatus status) {
         if (status != OrderStatus.PAID) {
             return;
         }
 
-        logger.info("璁㈠崟鏀粯鎴愬姛锛屽彂甯冭喘涔版垚鍔熶簨浠? orderNo={}, orderType={}, amount={}, providerOrderId={}, providerPaymentId={}",
+        logger.info(
+                "璁㈠崟鏀粯鎴愬姛锛屽彂甯冭喘涔版垚鍔熶簨浠? orderNo={}, orderType={}, amount={}, providerOrderId={}, providerPaymentId={}",
                 order.getOrderNo(), order.getOrderType(), order.getAmount(), order.getProviderOrderId(),
                 order.getProviderOrderId());
 
@@ -389,7 +391,7 @@ public class PaymentAppService {
         eventPublisher.publishEvent(event);
     }
 
-    /** 鏋勫缓璁㈠崟鐘舵€佸搷搴?*/
+    /** 鏋勫缓璁㈠崟鐘舵€佸搷搴? */
     private OrderStatusResponseDTO buildOrderStatusResponse(OrderEntity order) {
         OrderStatusResponseDTO response = new OrderStatusResponseDTO();
         response.setOrderId(order.getId());

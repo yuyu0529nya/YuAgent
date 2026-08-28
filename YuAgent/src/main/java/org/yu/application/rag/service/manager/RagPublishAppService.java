@@ -3,6 +3,8 @@ package org.yu.application.rag.service.manager;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import org.apache.commons.lang3.StringUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.yu.application.rag.assembler.RagVersionAssembler;
@@ -22,7 +24,10 @@ import org.yu.domain.rag.service.management.UserRagDomainService;
 import org.yu.domain.user.service.UserDomainService;
 import org.yu.infrastructure.exception.BusinessException;
 
+import java.util.Collection;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 /** RAG发布应用服务
  * @author yu
@@ -30,6 +35,8 @@ import java.util.List;
  */
 @Service
 public class RagPublishAppService {
+
+    private static final Logger log = LoggerFactory.getLogger(RagPublishAppService.class);
 
     private final RagVersionDomainService ragVersionDomainService;
     private final UserRagDomainService userRagDomainService;
@@ -75,11 +82,8 @@ public class RagPublishAppService {
         // 转换为DTO
         List<RagVersionDTO> dtoList = RagVersionAssembler.toDTOs(entityPage.getRecords());
 
-        // 设置用户信息和安装次数
-        for (RagVersionDTO dto : dtoList) {
-            enrichWithUserInfo(dto);
-            dto.setInstallCount(userRagDomainService.getInstallCount(dto.getId()));
-        }
+        enrichWithUserInfo(dtoList);
+        applyInstallCounts(dtoList);
 
         // 创建DTO分页对象
         Page<RagVersionDTO> dtoPage = new Page<>(entityPage.getCurrent(), entityPage.getSize(), entityPage.getTotal());
@@ -99,10 +103,7 @@ public class RagPublishAppService {
         // 转换为DTO
         List<RagVersionDTO> dtoList = RagVersionAssembler.toDTOs(versions);
 
-        // 设置用户信息
-        for (RagVersionDTO dto : dtoList) {
-            enrichWithUserInfo(dto);
-        }
+        enrichWithUserInfo(dtoList);
 
         return dtoList;
     }
@@ -168,10 +169,7 @@ public class RagPublishAppService {
         // 转换为DTO
         List<RagVersionDTO> dtoList = RagVersionAssembler.toDTOs(entityPage.getRecords());
 
-        // 设置用户信息
-        for (RagVersionDTO dto : dtoList) {
-            enrichWithUserInfo(dto);
-        }
+        enrichWithUserInfo(dtoList);
 
         // 创建DTO分页对象
         Page<RagVersionDTO> dtoPage = new Page<>(entityPage.getCurrent(), entityPage.getSize(), entityPage.getTotal());
@@ -211,11 +209,8 @@ public class RagPublishAppService {
         // 转换为DTO
         List<RagVersionDTO> dtoList = RagVersionAssembler.toDTOs(entityPage.getRecords());
 
-        // 设置用户信息和安装次数
-        for (RagVersionDTO dto : dtoList) {
-            enrichWithUserInfo(dto);
-            dto.setInstallCount(userRagDomainService.getInstallCount(dto.getId()));
-        }
+        enrichWithUserInfo(dtoList);
+        applyInstallCounts(dtoList);
 
         // 创建DTO分页对象
         Page<RagVersionDTO> dtoPage = new Page<>(entityPage.getCurrent(), entityPage.getSize(), entityPage.getTotal());
@@ -287,5 +282,30 @@ public class RagPublishAppService {
         } catch (Exception e) {
             // 忽略用户查询异常
         }
+    }
+
+    private void enrichWithUserInfo(List<RagVersionDTO> dtos) {
+        if (dtos == null || dtos.isEmpty()) {
+            return;
+        }
+        Collection<String> userIds = dtos.stream().map(RagVersionDTO::getUserId).filter(StringUtils::isNotBlank)
+                .collect(Collectors.toSet());
+        if (userIds.isEmpty()) {
+            return;
+        }
+
+        try {
+            Map<String, String> nicknamesByUserId = userDomainService.getByIds(List.copyOf(userIds)).stream()
+                    .collect(Collectors.toMap(user -> user.getId(), user -> user.getNickname()));
+            dtos.forEach(dto -> dto.setUserNickname(nicknamesByUserId.get(dto.getUserId())));
+        } catch (Exception e) {
+            log.debug("批量加载 RAG 创建者信息失败", e);
+        }
+    }
+
+    private void applyInstallCounts(List<RagVersionDTO> dtos) {
+        Map<String, Long> installCounts = userRagDomainService
+                .getInstallCounts(dtos.stream().map(RagVersionDTO::getId).filter(StringUtils::isNotBlank).toList());
+        dtos.forEach(dto -> dto.setInstallCount(installCounts.getOrDefault(dto.getId(), 0L)));
     }
 }

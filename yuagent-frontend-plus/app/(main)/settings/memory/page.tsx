@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Plus } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -25,37 +25,43 @@ export default function MemorySettingsPage() {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [selected, setSelected] = useState<MemoryItem | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const latestRequestIdRef = useRef(0);
+  const { current: currentPage, size: pageSize } = pagination;
 
-  const fetchList = async () => {
+  const fetchList = useCallback(async () => {
+    const requestId = ++latestRequestIdRef.current;
     setLoading(true);
     try {
       const params = {
-        page: pagination.current,
-        pageSize: pagination.size,
+        page: currentPage,
+        pageSize,
         type: typeFilter !== "ALL" ? (typeFilter as string) : undefined,
       };
       const response = await getMemoriesWithToast(params);
-      if (response.code === 200) {
+      if (response.code === 200 && requestId === latestRequestIdRef.current) {
         const data = response.data as PageResponse<MemoryItem>;
         setRecords(data.records || []);
         setPagination({ total: data.total, size: data.size, current: data.current, pages: data.pages });
       }
     } finally {
-      setLoading(false);
+      if (requestId === latestRequestIdRef.current) {
+        setLoading(false);
+      }
     }
-  };
+  }, [currentPage, pageSize, typeFilter]);
 
   useEffect(() => {
     fetchList();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pagination.current, pagination.size, typeFilter]);
+  }, [fetchList]);
 
   const handleCreate = async (req: CreateMemoryRequest) => {
     const res = await createMemoryWithToast(req);
     if (res.code === 200) {
       // 回到第一页以便看到最新记录
       setPagination((p) => ({ ...p, current: 1 }));
-      await fetchList();
+      if (currentPage === 1) {
+        await fetchList();
+      }
       return true;
     }
     return false;

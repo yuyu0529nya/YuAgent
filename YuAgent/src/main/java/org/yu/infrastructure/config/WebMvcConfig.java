@@ -20,25 +20,10 @@ public class WebMvcConfig implements WebMvcConfigurer {
 
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
-        registry.addInterceptor(userAuthInterceptor)
-                .addPathPatterns("/**")
-                .excludePathPatterns(
-                        "/login",
-                        "/health",
-                        "/register",
-                        "/auth/config",
-                        "/files/image-proxy",
-                        "/send-email-code",
-                        "/verify-email-code",
-                        "/get-captcha",
-                        "/reset-password",
-                        "/send-reset-password-code",
-                        "/oauth/github/authorize",
-                        "/oauth/github/callback",
-                        "/sso/**",
-                        "/widget/**",
-                        "/v1/**",
-                        "/payments/callback/**");
+        registry.addInterceptor(userAuthInterceptor).addPathPatterns("/**").excludePathPatterns("/login", "/health",
+                "/register", "/auth/config", "/files/image-proxy", "/send-email-code", "/verify-email-code",
+                "/get-captcha", "/reset-password", "/send-reset-password-code", "/oauth/github/authorize",
+                "/oauth/github/callback", "/sso/**", "/widget/**", "/v1/**", "/payments/callback/**");
 
         registry.addInterceptor(adminAuthInterceptor).addPathPatterns("/admin/**");
     }

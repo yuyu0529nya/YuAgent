@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -13,7 +13,7 @@ import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { 
@@ -32,7 +32,6 @@ import {
   formatFileSize,
   AdminRagService
 } from "@/lib/admin-rag-service";
-import { useToast } from "@/hooks/use-toast";
 
 interface RagDetailsDialogProps {
   open: boolean;
@@ -47,30 +46,40 @@ export function RagDetailsDialog({
 }: RagDetailsDialogProps) {
   const [contentPreview, setContentPreview] = useState<RagContentPreviewDTO | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
-  const { toast } = useToast();
+  const latestPreviewRequestRef = useRef(0);
+
+  const loadContentPreview = useCallback(async () => {
+    const ragId = rag?.id;
+    if (!ragId) return;
+
+    const requestId = ++latestPreviewRequestRef.current;
+    try {
+      setPreviewLoading(true);
+      const response = await AdminRagService.getRagContentPreview(ragId);
+      if (requestId !== latestPreviewRequestRef.current) return;
+
+      setContentPreview(response.code === 200 ? response.data : null);
+    } catch {
+      if (requestId === latestPreviewRequestRef.current) {
+        setContentPreview(null);
+      }
+    } finally {
+      if (requestId === latestPreviewRequestRef.current) {
+        setPreviewLoading(false);
+      }
+    }
+  }, [rag?.id]);
 
   // 加载内容预览
   useEffect(() => {
-    if (open && rag) {
+    if (open) {
+      setContentPreview(null);
       loadContentPreview();
     }
-  }, [open, rag]);
-
-  const loadContentPreview = async () => {
-    if (!rag) return;
-    
-    try {
-      setPreviewLoading(true);
-      const response = await AdminRagService.getRagContentPreview(rag.id);
-      if (response.code === 200) {
-        setContentPreview(response.data);
-      }
-    } catch (error) {
- 
-    } finally {
-      setPreviewLoading(false);
-    }
-  };
+    return () => {
+      latestPreviewRequestRef.current += 1;
+    };
+  }, [loadContentPreview, open]);
 
   if (!rag) return null;
 

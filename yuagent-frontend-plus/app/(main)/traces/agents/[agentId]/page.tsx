@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { useParams, useRouter } from "next/navigation"
 import { AlertCircle, Archive, ArrowLeft, Clock, MessageSquare, TrendingUp, Zap } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
@@ -36,10 +36,14 @@ export default function AgentSessionsPage() {
   const [showArchived, setShowArchived] = useState(false)
   const [filteredSessions, setFilteredSessions] = useState<SessionTraceStatistics[]>([])
   const [agentName, setAgentName] = useState(DELETED_AGENT_NAME)
+  const [refreshToken, setRefreshToken] = useState(0)
+  const latestRequestIdRef = useRef(0)
 
   useEffect(() => {
     async function loadSessionTraceStatistics() {
       if (!agentId) return
+
+      const requestId = ++latestRequestIdRef.current
 
       try {
         setLoading(true)
@@ -48,6 +52,10 @@ export default function AgentSessionsPage() {
         const response = await getAgentSessionTraceStatisticsWithToast(agentId, {
           includeArchived: true,
         })
+
+        if (requestId !== latestRequestIdRef.current) {
+          return
+        }
 
         if (response.code !== 200) {
           setSessions([])
@@ -65,13 +73,26 @@ export default function AgentSessionsPage() {
         } else {
           setAgentName(DELETED_AGENT_NAME)
         }
+      } catch (error) {
+        if (requestId !== latestRequestIdRef.current) {
+          return
+        }
+
+        setSessions([])
+        setFilteredSessions([])
+        setErrorMessage(error instanceof Error ? error.message : "加载会话追踪失败")
       } finally {
-        setLoading(false)
+        if (requestId === latestRequestIdRef.current) {
+          setLoading(false)
+        }
       }
     }
 
-    loadSessionTraceStatistics()
-  }, [agentId])
+    void loadSessionTraceStatistics()
+    return () => {
+      latestRequestIdRef.current += 1
+    }
+  }, [agentId, refreshToken])
 
   useEffect(() => {
     let filtered = sessions
@@ -158,7 +179,7 @@ export default function AgentSessionsPage() {
               <Button variant="outline" onClick={() => router.back()}>
                 返回上一页
               </Button>
-              <Button onClick={() => window.location.reload()}>
+              <Button onClick={() => setRefreshToken((token) => token + 1)}>
                 重试
               </Button>
             </div>

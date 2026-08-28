@@ -140,7 +140,7 @@ export function UpdateWidgetDialog({ open, onClose, agentId, widget, models, onS
         <DialogHeader>
           <DialogTitle>编辑小组件配置</DialogTitle>
           <DialogDescription>
-            修改 "{widget?.name}" 的配置
+            修改 &quot;{widget?.name}&quot; 的配置
           </DialogDescription>
         </DialogHeader>
 

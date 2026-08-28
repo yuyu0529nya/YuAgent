@@ -1,4 +1,4 @@
-import { MarketTool } from "../../utils/types";
+import type { Tool } from "@/types/tool";
 import { Card, CardHeader, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Download, Info, User, Wrench } from "lucide-react";
@@ -7,8 +7,8 @@ import { Badge } from "@/components/ui/badge";
 import Link from "next/link";
 
 interface MarketToolCardProps {
-  tool: MarketTool;
-  onInstallClick: (tool: MarketTool) => void;
+  tool: Tool;
+  onInstallClick: (tool: Tool) => void;
 }
 
 export function MarketToolCard({ tool, onInstallClick }: MarketToolCardProps) {

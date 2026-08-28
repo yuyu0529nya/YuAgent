@@ -47,7 +47,7 @@ public class CaptchaUtils {
         }
 
         // 检查是否过期
-        if (System.currentTimeMillis() > captchaInfo.getExpirationTime()) {
+        if (System.currentTimeMillis() >= captchaInfo.getExpirationTime()) {
             captchaMap.remove(uuid);
             return false;
         }
@@ -62,9 +62,11 @@ public class CaptchaUtils {
     }
 
     /** 清理过期的验证码 可以通过定时任务调用此方法 */
-    public static void cleanExpiredCaptchas() {
+    public static int cleanExpiredCaptchas() {
         long currentTime = System.currentTimeMillis();
-        captchaMap.entrySet().removeIf(entry -> entry.getValue().getExpirationTime() < currentTime);
+        int sizeBeforeCleanup = captchaMap.size();
+        captchaMap.entrySet().removeIf(entry -> entry.getValue().getExpirationTime() <= currentTime);
+        return sizeBeforeCleanup - captchaMap.size();
     }
 
     // 内部类 - 验证码信息

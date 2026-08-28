@@ -11,6 +11,14 @@ import { Skeleton } from "@/components/ui/skeleton";
 
 import { QRCodeStatus } from "@/types/payment";
 
+function calculateTimeRemaining(expiresAt?: string): number {
+  if (!expiresAt) {
+    return 0;
+  }
+
+  return Math.max(0, Math.floor((new Date(expiresAt).getTime() - Date.now()) / 1000));
+}
+
 interface QRCodeDisplayProps {
   paymentUrl?: string;
   amount?: number;
@@ -40,7 +48,7 @@ export default function QRCodeDisplay({
   const [qrCodeGenerated, setQrCodeGenerated] = useState(false);
   
   // 生成二维码
-  const generateQRCode = async (url: string) => {
+  const generateQRCode = async (url: string, isActive: () => boolean) => {
     if (!canvasRef.current || !url) return;
     
     try {
@@ -56,22 +64,14 @@ export default function QRCodeDisplay({
         }
       });
       
-      setQrCodeGenerated(true);
-    } catch (error) {
- 
-      setQrCodeGenerated(false);
+      if (isActive()) {
+        setQrCodeGenerated(true);
+      }
+    } catch {
+      if (isActive()) {
+        setQrCodeGenerated(false);
+      }
     }
-  };
-  
-  // 计算剩余时间
-  const calculateTimeRemaining = () => {
-    if (!expiresAt) return 0;
-    
-    const expireTime = new Date(expiresAt).getTime();
-    const currentTime = Date.now();
-    const remaining = Math.max(0, expireTime - currentTime);
-    
-    return Math.floor(remaining / 1000); // 转换为秒
   };
   
   // 格式化时间显示
@@ -147,16 +147,21 @@ export default function QRCodeDisplay({
   
   // 生成二维码
   useEffect(() => {
-    if (paymentUrl && status === 'waiting') {
-      generateQRCode(paymentUrl);
+    let active = true;
+    setQrCodeGenerated(false);
+    if (paymentUrl && ['waiting', 'scanned'].includes(status)) {
+      void generateQRCode(paymentUrl, () => active);
     }
+    return () => {
+      active = false;
+    };
   }, [paymentUrl, status]);
   
   // 倒计时
   useEffect(() => {
     if (expiresAt) {
       const updateTimer = () => {
-        const remaining = calculateTimeRemaining();
+        const remaining = calculateTimeRemaining(expiresAt);
         setTimeRemaining(remaining);
         
         if (remaining <= 0 && status !== 'expired') {
@@ -211,16 +216,6 @@ export default function QRCodeDisplay({
               {!qrCodeGenerated && (
                 <div className="w-[200px] h-[200px] bg-gray-100 rounded-lg flex items-center justify-center">
                   <Skeleton className="w-full h-full" />
-                </div>
-              )}
-              
-              {/* 过期遮罩 */}
-              {status === 'expired' && (
-                <div className="absolute inset-0 bg-black/50 rounded-lg flex items-center justify-center">
-                  <div className="text-white text-center">
-                    <AlertTriangle className="h-8 w-8 mx-auto mb-2" />
-                    <div className="text-sm">已过期</div>
-                  </div>
                 </div>
               )}
             </div>

@@ -8,6 +8,8 @@ import org.springframework.context.annotation.Configuration;
 @ConfigurationProperties(prefix = "oss")
 public class OssProperties {
 
+    private static final long DEFAULT_IMAGE_PROXY_MAX_SIZE = 20L * 1024 * 1024;
+
     /** 访问端点 */
     private String endpoint;
 
@@ -31,6 +33,9 @@ public class OssProperties {
 
     /** 文件访问URL前缀 */
     private String urlPrefix;
+
+    /** 图片代理允许读取的最大对象大小，单位：字节 */
+    private long imageProxyMaxSize = DEFAULT_IMAGE_PROXY_MAX_SIZE;
 
     public String getEndpoint() {
         return endpoint;
@@ -94,5 +99,13 @@ public class OssProperties {
 
     public void setUrlPrefix(String urlPrefix) {
         this.urlPrefix = urlPrefix;
+    }
+
+    public long getImageProxyMaxSize() {
+        return imageProxyMaxSize;
+    }
+
+    public void setImageProxyMaxSize(long imageProxyMaxSize) {
+        this.imageProxyMaxSize = imageProxyMaxSize;
     }
 }

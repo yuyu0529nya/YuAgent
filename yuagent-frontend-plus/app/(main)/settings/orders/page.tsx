@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { Package, Calendar, DollarSign, RefreshCw, Search, Eye, FileText, ExternalLink } from "lucide-react";
 import Link from "next/link";
 
@@ -45,6 +45,8 @@ export default function OrdersPage() {
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [detailDialogOpen, setDetailDialogOpen] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
+  const latestOrdersRequest = useRef(0);
+  const hasInitializedSearch = useRef(false);
 
   // 格式化时间
   const formatDateTime = (dateTime?: string) => {
@@ -61,7 +63,8 @@ export default function OrdersPage() {
   };
 
   // 加载订单列表
-  const loadOrders = async (page: number = 1, keyword?: string) => {
+  const loadOrders = useCallback(async (page: number = 1, keyword?: string) => {
+    const requestId = ++latestOrdersRequest.current;
     setLoading(true);
     try {
       const params: GetUserOrdersParams = {
@@ -71,7 +74,7 @@ export default function OrdersPage() {
 
       const response = await getUserOrdersWithToast(params);
 
-      if (response.code === 200) {
+      if (response.code === 200 && requestId === latestOrdersRequest.current) {
         setPageData(response.data);
         
         // 如果有搜索关键词，在前端过滤
@@ -86,28 +89,26 @@ export default function OrdersPage() {
         }
         
         setOrders(filteredOrders);
-      } else {
+      } else if (requestId === latestOrdersRequest.current) {
         toast({
           title: "获取订单列表失败",
           description: response.message,
           variant: "destructive"
         });
       }
-    } catch (error) {
+    } catch {
+      if (requestId !== latestOrdersRequest.current) return;
       toast({
         title: "获取订单列表失败",
         description: "网络错误，请稍后重试",
         variant: "destructive"
       });
     } finally {
-      setLoading(false);
+      if (requestId === latestOrdersRequest.current) {
+        setLoading(false);
+      }
     }
-  };
-
-  // 搜索订单
-  const handleSearch = () => {
-    loadOrders(1, searchQuery);
-  };
+  }, []);
 
   // 分页处理
   const handlePageChange = (page: number) => {
@@ -183,21 +184,21 @@ export default function OrdersPage() {
 
   // 搜索防抖
   useEffect(() => {
+    if (!hasInitializedSearch.current) {
+      hasInitializedSearch.current = true;
+      return;
+    }
     const timeoutId = setTimeout(() => {
-      if (searchQuery) {
-        handleSearch();
-      } else {
-        loadOrders(1);
-      }
+      void loadOrders(1, searchQuery);
     }, 500);
 
     return () => clearTimeout(timeoutId);
-  }, [searchQuery]);
+  }, [loadOrders, searchQuery]);
 
   // 初始加载
   useEffect(() => {
-    loadOrders();
-  }, []);
+    void loadOrders();
+  }, [loadOrders]);
 
   return (
     <div className="container mx-auto py-6 space-y-6">

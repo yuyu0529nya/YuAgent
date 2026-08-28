@@ -1,6 +1,7 @@
-import { useState, useRef, useEffect } from "react"
+import { useEffect, useState } from "react"
 import { toast } from "@/hooks/use-toast"
 import { getInstalledTools } from "@/lib/tool-service"
+import { toMarketTool } from "@/lib/market-tool-mapper"
 import type { Tool } from "@/types/tool"
 import type { AgentTool } from "@/types/agent"
 import type { KnowledgeBase } from "@/lib/agent-knowledge-base-service"
@@ -33,17 +34,7 @@ interface UseAgentFormProps {
 
 export function useAgentForm({ initialData, isEditMode = false }: UseAgentFormProps = {}) {
   const [activeTab, setActiveTab] = useState("basic")
-  const [isSubmitting, setIsSubmitting] = useState(false)
-  const [isLoading, setIsLoading] = useState(false)
   const [isLoadingTools, setIsLoadingTools] = useState(false)
-  
-  // 编辑模式特有状态
-  const [isDeleting, setIsDeleting] = useState(false)
-  const [isPublishing, setIsPublishing] = useState(false)
-  const [isTogglingStatus, setIsTogglingStatus] = useState(false)
-  const [isLoadingVersions, setIsLoadingVersions] = useState(false)
-  const [isRollingBack, setIsRollingBack] = useState(false)
-  const [isLoadingLatestVersion, setIsLoadingLatestVersion] = useState(false)
   
   // 工具相关状态
   const [selectedToolForSidebar, setSelectedToolForSidebar] = useState<Tool | null>(null)
@@ -88,7 +79,7 @@ export function useAgentForm({ initialData, isEditMode = false }: UseAgentFormPr
       try {
         const response = await getInstalledTools({ pageSize: 100 });
         if (response.code === 200 && response.data && Array.isArray(response.data.records)) {
-          setInstalledTools(response.data.records);
+          setInstalledTools(response.data.records.map(toMarketTool));
         } else {
  
         }
@@ -137,7 +128,7 @@ export function useAgentForm({ initialData, isEditMode = false }: UseAgentFormPr
         return prev; // 没有无效工具，返回原状态
       });
     }
-  }, [isEditMode, isLoadingTools, installedTools, toast]);
+  }, [isEditMode, isLoadingTools, installedTools]);
 
   // 更新表单字段
   const updateFormField = (field: string, value: any) => {
@@ -162,13 +153,6 @@ export function useAgentForm({ initialData, isEditMode = false }: UseAgentFormPr
     }
     
     const isToolCurrentlyEnabled = formData.tools.some(t => t.id === toolIdentifier);
-    console.log('[toggleTool] 切换工具:', {
-      toolName: toolToToggle.name,
-      toolId: toolIdentifier,
-      currentlyEnabled: isToolCurrentlyEnabled,
-      action: isToolCurrentlyEnabled ? '禁用' : '启用'
-    });
-    
     setFormData((prev) => {
       let updatedTools: AgentTool[];
       if (isToolCurrentlyEnabled) {
@@ -310,25 +294,7 @@ export function useAgentForm({ initialData, isEditMode = false }: UseAgentFormPr
     // 基础状态
     activeTab,
     setActiveTab,
-    isSubmitting,
-    setIsSubmitting,
-    isLoading,
-    setIsLoading,
     isLoadingTools,
-    
-    // 编辑模式特有状态
-    isDeleting,
-    setIsDeleting,
-    isPublishing,
-    setIsPublishing,
-    isTogglingStatus,
-    setIsTogglingStatus,
-    isLoadingVersions,
-    setIsLoadingVersions,
-    isRollingBack,
-    setIsRollingBack,
-    isLoadingLatestVersion,
-    setIsLoadingLatestVersion,
     
     // 工具相关状态
     selectedToolForSidebar,

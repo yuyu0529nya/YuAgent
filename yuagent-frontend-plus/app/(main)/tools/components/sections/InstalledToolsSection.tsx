@@ -40,7 +40,7 @@ export function InstalledToolsSection({
         <Alert className="mb-4 border-amber-200 bg-amber-50">
           <Info className="h-4 w-4 text-amber-600" />
           <AlertDescription className="text-amber-800">
-            部分工具显示"来源已删除"，表示该工具的原始来源已被作者删除，但您仍可继续使用已安装的版本。
+            部分工具显示&quot;来源已删除&quot;，表示该工具的原始来源已被作者删除，但您仍可继续使用已安装的版本。
           </AlertDescription>
         </Alert>
       )}

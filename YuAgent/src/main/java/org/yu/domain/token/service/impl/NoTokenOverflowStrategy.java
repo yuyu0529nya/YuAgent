@@ -7,6 +7,7 @@ import org.yu.domain.token.model.config.TokenOverflowConfig;
 import org.yu.domain.shared.enums.TokenOverflowStrategyEnum;
 import org.yu.domain.token.service.TokenOverflowStrategy;
 
+import java.util.Collections;
 import java.util.List;
 
 /** 无策略的Token超限处理实现 不对消息进行任何处理，保留所有消息 */
@@ -34,11 +35,12 @@ public class NoTokenOverflowStrategy implements TokenOverflowStrategy {
      * @return 原消息列表，不做修改 */
     @Override
     public TokenProcessResult process(List<TokenMessage> messages, TokenOverflowConfig tokenOverflowConfig) {
+        List<TokenMessage> retainedMessages = messages == null ? Collections.emptyList() : messages;
         TokenProcessResult result = new TokenProcessResult();
-        result.setRetainedMessages(messages);
+        result.setRetainedMessages(retainedMessages);
         result.setStrategyName(getName());
         result.setProcessed(false);
-        result.setTotalTokens(calculateTotalTokens(messages));
+        result.setTotalTokens(calculateTotalTokens(retainedMessages));
         return result;
     }
 

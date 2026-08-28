@@ -13,6 +13,7 @@ import org.yu.domain.shared.enums.TokenOverflowStrategyEnum;
 import org.yu.domain.token.service.TokenOverflowStrategy;
 import org.yu.infrastructure.llm.LLMProviderService;
 import org.yu.infrastructure.llm.config.ProviderConfig;
+import org.yu.infrastructure.exception.BusinessException;
 
 import java.time.LocalDateTime;
 import java.util.*;
@@ -114,6 +115,9 @@ public class SummarizeTokenOverflowStrategy implements TokenOverflowStrategy {
             List<TokenMessage> historyMessages) {
 
         ProviderConfig providerConfig = tokenOverflowConfig.getProviderConfig();
+        if (providerConfig == null) {
+            throw new BusinessException("摘要策略需要模型服务商配置");
+        }
         String summaryPrefixPrompt = "。最后请你以这段话作为生成摘要的开头返回，开头：" + AgentPromptTemplates.getSummaryPrefix();
 
         // 使用当前服务商调用大模型
@@ -126,8 +130,9 @@ public class SummarizeTokenOverflowStrategy implements TokenOverflowStrategy {
                 .collect(Collectors.toList());
         UserMessage userMessage = new UserMessage(contents);
         ChatResponse chatResponse = chatLanguageModel.chat(Arrays.asList(systemMessage, userMessage));
-        return this.createNewSummaryMessage(chatResponse.aiMessage().text(),
+        summaryMessage = this.createNewSummaryMessage(chatResponse.aiMessage().text(),
                 chatResponse.tokenUsage().outputTokenCount(), historyMessages);
+        return summaryMessage;
     }
 
     /** 创建新的摘要消息记录

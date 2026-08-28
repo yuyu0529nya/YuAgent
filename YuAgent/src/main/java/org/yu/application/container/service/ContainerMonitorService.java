@@ -2,9 +2,6 @@ package org.yu.application.container.service;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.boot.context.event.ApplicationReadyEvent;
-import org.springframework.context.event.EventListener;
-import org.springframework.scheduling.annotation.Async;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.yu.domain.container.constant.ContainerStatus;
@@ -14,7 +11,6 @@ import org.yu.infrastructure.docker.DockerService;
 import org.yu.infrastructure.entity.Operator;
 
 import java.util.List;
-import java.util.concurrent.CompletableFuture;
 
 /** 容器监控服务 */
 @Service
@@ -147,70 +143,6 @@ public class ContainerMonitorService {
 
         } catch (Exception e) {
             logger.debug("更新容器资源使用率失败: {}", container.getName(), e);
-        }
-    }
-
-    /** 同步单个容器状态（用于启动时同步） */
-    private void syncSingleContainerStatus(ContainerEntity container) {
-        try {
-            if (container.getDockerContainerId() == null) {
-                logger.warn("容器缺少Docker容器ID，标记为错误状态: containerId={}", container.getId());
-                containerDomainService.markContainerError(container.getId(), "缺少Docker容器ID，需要手动恢复", Operator.ADMIN);
-                return;
-            }
-
-            DockerService.ContainerActualStatus actualStatus = dockerService
-                    .getContainerActualStatus(container.getDockerContainerId());
-
-            if (!actualStatus.exists()) {
-                logger.warn("Docker容器不存在，更新数据库状态: containerId={}, dockerId={}", container.getId(),
-                        container.getDockerContainerId());
-                containerDomainService.updateContainerStatus(container.getId(), ContainerStatus.STOPPED, Operator.ADMIN,
-                        null);
-                return;
-            }
-
-            if (!actualStatus.isRunning()) {
-                logger.info("Docker容器未运行，更新数据库状态: containerId={}, dockerStatus={}", container.getId(),
-                        actualStatus.getStatus());
-                containerDomainService.updateContainerStatus(container.getId(), ContainerStatus.STOPPED, Operator.ADMIN,
-                        null);
-                return;
-            }
-
-            // 容器运行正常，检查网络连通性
-            Integer healthCheckPort = resolveHealthCheckPort(container);
-            if (container.getIpAddress() != null && healthCheckPort != null) {
-                boolean networkOk = dockerService.isContainerNetworkAccessible(container.getIpAddress(),
-                        healthCheckPort);
-                if (!networkOk) {
-                    logger.warn("容器网络连通性异常但Docker运行正常: containerId={}, ip={}:{}", container.getId(),
-                            container.getIpAddress(), healthCheckPort);
-                }
-            }
-
-            logger.debug("容器状态同步完成: containerId={}, status=healthy", container.getId());
-
-        } catch (Exception e) {
-            logger.error("同步容器状态失败: containerId={}", container.getId(), e);
-        }
-    }
-
-    /** 将Docker状态映射到容器状态 */
-    private ContainerStatus mapDockerStatusToContainerStatus(String dockerStatus) {
-        switch (dockerStatus.toLowerCase()) {
-            case "running" :
-                return ContainerStatus.RUNNING;
-            case "exited" :
-            case "stopped" :
-                return ContainerStatus.STOPPED;
-            case "created" :
-                return ContainerStatus.CREATING;
-            case "dead" :
-            case "removing" :
-                return ContainerStatus.ERROR;
-            default :
-                return ContainerStatus.ERROR;
         }
     }
 

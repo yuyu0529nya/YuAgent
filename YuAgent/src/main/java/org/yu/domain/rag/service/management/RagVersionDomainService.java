@@ -28,7 +28,9 @@ import org.yu.domain.rag.service.RagQaDatasetDomainService;
 import org.yu.infrastructure.exception.BusinessException;
 
 import java.time.LocalDateTime;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 /** RAG版本领域服务
@@ -194,6 +196,15 @@ public class RagVersionDomainService {
             throw new BusinessException("RAG版本不存在");
         }
         return version;
+    }
+
+    /** 批量查询 RAG 版本，用于列表补充展示信息。 */
+    public List<RagVersionEntity> getRagVersionsByIds(List<String> versionIds) {
+        if (versionIds == null || versionIds.isEmpty()) {
+            return List.of();
+        }
+        return ragVersionRepository
+                .selectList(Wrappers.<RagVersionEntity>lambdaQuery().in(RagVersionEntity::getId, versionIds));
     }
 
     /** 更新审核状态
@@ -469,12 +480,19 @@ public class RagVersionDomainService {
                 .orderByAsc(RagVersionDocumentEntity::getCreatedAt);
         List<RagVersionDocumentEntity> allDocs = ragVersionDocumentRepository.selectList(docWrapper);
 
+        Map<String, RagVersionFileEntity> filesById = files.stream().collect(
+                Collectors.toMap(RagVersionFileEntity::getId, file -> file, (first, ignored) -> first, HashMap::new));
+        List<String> missingFileIds = allDocs.stream().map(RagVersionDocumentEntity::getRagVersionFileId)
+                .filter(StringUtils::isNotBlank).filter(fileId -> !filesById.containsKey(fileId)).distinct().toList();
+        if (!missingFileIds.isEmpty()) {
+            ragVersionFileRepository.selectByIds(missingFileIds).forEach(file -> filesById.put(file.getId(), file));
+        }
+
         List<RagVersionDocumentDTO> docDTOs = allDocs.stream().map(doc -> {
             RagVersionDocumentDTO dto = new RagVersionDocumentDTO();
             BeanUtils.copyProperties(doc, dto);
 
-            // 获取文件名
-            RagVersionFileEntity file = ragVersionFileRepository.selectById(doc.getRagVersionFileId());
+            RagVersionFileEntity file = filesById.get(doc.getRagVersionFileId());
             if (file != null) {
                 dto.setFileName(file.getFileName());
             }

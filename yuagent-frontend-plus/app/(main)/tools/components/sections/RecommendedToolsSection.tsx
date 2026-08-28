@@ -1,4 +1,4 @@
-import { MarketTool } from "../../utils/types";
+import type { Tool } from "@/types/tool";
 import { Search, Wrench } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
@@ -7,17 +7,19 @@ import { ToolCardSkeleton } from "../shared/ToolCardSkeleton";
 import { EmptyToolsState } from "../shared/EmptyToolsState";
 
 interface RecommendedToolsSectionProps {
-  tools: MarketTool[];
+  tools: Tool[];
   loading: boolean;
   error: string | null;
-  onInstallClick: (tool: MarketTool) => void;
+  onInstallClick: (tool: Tool) => void;
+  onRetry: () => void;
 }
 
 export function RecommendedToolsSection({
   tools,
   loading,
   error,
-  onInstallClick
+  onInstallClick,
+  onRetry,
 }: RecommendedToolsSectionProps) {
   return (
     <div className="mb-8 bg-white p-6 rounded-lg shadow-sm border border-gray-100">
@@ -64,7 +66,7 @@ export function RecommendedToolsSection({
         // 错误状态
         <div className="text-center py-10 bg-red-500/15 rounded-lg border border-red-400/30">
           <div className="text-red-500 mb-4">{error}</div>
-          <Button variant="outline" onClick={() => window.location.reload()}>
+          <Button variant="outline" onClick={onRetry}>
             重试
           </Button>
         </div>

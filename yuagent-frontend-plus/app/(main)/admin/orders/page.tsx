@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -38,6 +38,8 @@ export default function AdminOrdersPage() {
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [detailDialogOpen, setDetailDialogOpen] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
+  const latestOrdersRequest = useRef(0);
+  const hasInitializedSearch = useRef(false);
 
   const { toast } = useToast();
 
@@ -70,7 +72,8 @@ export default function AdminOrdersPage() {
   };
 
   // 加载订单数据
-  const loadOrders = async (page: number = 1, keyword?: string) => {
+  const loadOrders = useCallback(async (page: number = 1, keyword?: string) => {
+    const requestId = ++latestOrdersRequest.current;
     setLoading(true);
     try {
       const response = await getAllOrdersWithToast({
@@ -79,26 +82,29 @@ export default function AdminOrdersPage() {
         keyword: keyword?.trim() || undefined
       });
 
-      if (response.code === 200) {
+      if (response.code === 200 && requestId === latestOrdersRequest.current) {
         setPageData(response.data);
         setOrders(response.data.records || []);
-      } else {
+      } else if (requestId === latestOrdersRequest.current) {
         toast({
           title: "获取订单列表失败",
           description: response.message,
           variant: "destructive",
         });
       }
-    } catch (error) {
+    } catch {
+      if (requestId !== latestOrdersRequest.current) return;
       toast({
         title: "获取订单列表失败",
         description: "网络错误，请稍后重试",
         variant: "destructive",
       });
     } finally {
-      setLoading(false);
+      if (requestId === latestOrdersRequest.current) {
+        setLoading(false);
+      }
     }
-  };
+  }, [toast]);
 
   // 查看订单详情
   const handleViewDetail = async (order: Order) => {
@@ -174,17 +180,21 @@ export default function AdminOrdersPage() {
 
   // 初始加载
   useEffect(() => {
-    loadOrders();
-  }, []);
+    void loadOrders();
+  }, [loadOrders]);
 
   // 搜索防抖
   useEffect(() => {
+    if (!hasInitializedSearch.current) {
+      hasInitializedSearch.current = true;
+      return;
+    }
     const timeoutId = setTimeout(() => {
-      loadOrders(1, searchQuery);
+      void loadOrders(1, searchQuery);
     }, 500);
 
     return () => clearTimeout(timeoutId);
-  }, [searchQuery]);
+  }, [loadOrders, searchQuery]);
 
   const stats = getStatistics();
 

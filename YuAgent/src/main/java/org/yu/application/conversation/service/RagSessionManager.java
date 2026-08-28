@@ -9,6 +9,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.time.Duration;
+import java.util.Objects;
 
 /** RAG会话管理器 负责管理RAG对话的临时会话，支持会话复用和自动清理 */
 @Component
@@ -38,16 +39,15 @@ public class RagSessionManager {
      * @param userId 用户ID
      * @return 会话ID */
     public String createOrGetRagSession(String userId) {
-        String existingSessionId = ragSessionCache.getIfPresent(userId);
-
-        // 如果缓存中存在会话（说明未过期），直接返回
+        String cacheKey = ragSessionKey(userId);
+        String existingSessionId = ragSessionCache.getIfPresent(cacheKey);
         if (existingSessionId != null) {
             logger.debug("复用已存在的RAG会话: {} for user: {}", existingSessionId, userId);
             return existingSessionId;
         }
 
-        // 创建新会话
-        return createNewRagSession(userId);
+        // asMap 的 computeIfAbsent 对同一个键原子执行，避免并发请求重复落库创建临时会话。
+        return ragSessionCache.asMap().computeIfAbsent(cacheKey, ignored -> createNewRagSession(userId));
     }
 
     /** 为用户RAG对话创建新的临时会话
@@ -55,7 +55,7 @@ public class RagSessionManager {
      * @param userRagId 用户RAG ID
      * @return 会话ID */
     public String createOrGetUserRagSession(String userId, String userRagId) {
-        String sessionKey = userId + "_" + userRagId;
+        String sessionKey = userRagSessionKey(userId, userRagId);
         String existingSessionId = ragSessionCache.getIfPresent(sessionKey);
 
         // 如果缓存中存在会话（说明未过期），直接返回
@@ -64,8 +64,9 @@ public class RagSessionManager {
             return existingSessionId;
         }
 
-        // 创建新会话
-        return createNewUserRagSession(userId, userRagId, sessionKey);
+        // 与普通 RAG 会话一样，保证同一个用户知识库组合只创建一次。
+        return ragSessionCache.asMap().computeIfAbsent(sessionKey,
+                ignored -> createNewUserRagSession(userId, userRagId));
     }
 
     /** 创建新的RAG会话
@@ -80,9 +81,6 @@ public class RagSessionManager {
             // 更新会话标题
             sessionDomainService.updateSession(sessionId, userId, "RAG对话");
 
-            // 缓存会话信息到Guava Cache（自动TTL管理）
-            ragSessionCache.put(userId, sessionId);
-
             logger.info("创建新的RAG会话: {} for user: {}", sessionId, userId);
             return sessionId;
 
@@ -95,9 +93,8 @@ public class RagSessionManager {
     /** 创建新的用户RAG会话
      * @param userId 用户ID
      * @param userRagId 用户RAG ID
-     * @param sessionKey 会话缓存键
      * @return 会话ID */
-    private String createNewUserRagSession(String userId, String userRagId, String sessionKey) {
+    private String createNewUserRagSession(String userId, String userRagId) {
         try {
             // 使用现有的 createSession 方法
             SessionEntity session = sessionDomainService.createSession("system-rag-agent", userId);
@@ -105,9 +102,6 @@ public class RagSessionManager {
 
             // 更新会话标题
             sessionDomainService.updateSession(sessionId, userId, "知识库对话 - " + userRagId);
-
-            // 缓存会话信息到Guava Cache（自动TTL管理）
-            ragSessionCache.put(sessionKey, sessionId);
 
             logger.info("创建新的用户RAG会话: {} for user: {} userRag: {}", sessionId, userId, userRagId);
             return sessionId;
@@ -121,11 +115,21 @@ public class RagSessionManager {
     /** 手动清理指定用户的RAG会话
      * @param userId 用户ID */
     public void clearUserRagSessions(String userId) {
-        String sessionId = ragSessionCache.getIfPresent(userId);
+        String cacheKey = ragSessionKey(userId);
+        String sessionId = ragSessionCache.getIfPresent(cacheKey);
         if (sessionId != null) {
-            ragSessionCache.invalidate(userId);
+            ragSessionCache.invalidate(cacheKey);
             logger.info("手动清理用户RAG会话: {} for user: {}", sessionId, userId);
         }
+    }
+
+    private String ragSessionKey(String userId) {
+        return "rag:" + Objects.requireNonNull(userId, "userId cannot be null");
+    }
+
+    private String userRagSessionKey(String userId, String userRagId) {
+        return "user-rag:" + Objects.requireNonNull(userId, "userId cannot be null") + '\u0000'
+                + Objects.requireNonNull(userRagId, "userRagId cannot be null");
     }
 
     /** 获取当前缓存的会话数量（用于监控） */

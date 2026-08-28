@@ -5,7 +5,10 @@ import java.util.List;
 import org.springframework.beans.BeanUtils;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.yu.application.agent.assembler.AgentAssembler;
+import org.yu.application.agent.dto.AgentDTO;
 import org.yu.application.conversation.assembler.SessionAssembler;
+import org.yu.application.conversation.service.ChatSessionManager;
 import org.yu.domain.agent.model.AgentEntity;
 import org.yu.domain.agent.model.AgentVersionEntity;
 import org.yu.domain.agent.service.AgentDomainService;
@@ -33,15 +36,18 @@ public class AgentSessionAppService {
 
     private final ScheduledTaskExecutionService scheduledTaskExecutionService;
 
+    private final ChatSessionManager chatSessionManager;
+
     public AgentSessionAppService(AgentWorkspaceDomainService agentWorkspaceDomainService,
             AgentDomainService agentServiceDomainService, SessionDomainService sessionDomainService,
             ConversationDomainService conversationDomainService,
-            ScheduledTaskExecutionService scheduledTaskExecutionService) {
+            ScheduledTaskExecutionService scheduledTaskExecutionService, ChatSessionManager chatSessionManager) {
         this.agentWorkspaceDomainService = agentWorkspaceDomainService;
         this.agentServiceDomainService = agentServiceDomainService;
         this.sessionDomainService = sessionDomainService;
         this.conversationDomainService = conversationDomainService;
         this.scheduledTaskExecutionService = scheduledTaskExecutionService;
+        this.chatSessionManager = chatSessionManager;
     }
 
     /** 获取助理下的会话列表
@@ -82,14 +88,26 @@ public class AgentSessionAppService {
 
     }
 
+    /** 获取用户的全部会话。 */
+    public List<SessionDTO> getUserSessionList(String userId) {
+        return SessionAssembler.toDTOs(sessionDomainService.getSessionsByUserId(userId));
+    }
+
+    /** 根据用户所属会话获取关联助理。 */
+    public AgentDTO getAgentBySessionId(String sessionId, String userId) {
+        SessionEntity session = sessionDomainService.getSession(sessionId, userId);
+        AgentEntity agent = agentServiceDomainService.getAgentById(session.getAgentId());
+        return AgentAssembler.toDTO(agent);
+    }
+
     /** 创建会话
      * 
      * @param userId 用户id
      * @param agentId 助理id
      * @return 会话 */
     public SessionDTO createSession(String userId, String agentId) {
-        SessionEntity session = sessionDomainService.createSession(agentId, userId);
         AgentEntity agent = agentServiceDomainService.getAgentWithPermissionCheck(agentId, userId);
+        SessionEntity session = sessionDomainService.createSession(agentId, userId);
         String welcomeMessage = agent.getWelcomeMessage();
         MessageEntity messageEntity = new MessageEntity();
         messageEntity.setRole(Role.SYSTEM);
@@ -120,6 +138,12 @@ public class AgentSessionAppService {
 
         // 删除定时任务（包括取消延迟队列中的任务）
         scheduledTaskExecutionService.deleteTasksBySessionId(id, userId);
+    }
+
+    /** 中断当前用户正在进行的会话。 */
+    public boolean interruptSession(String sessionId, String userId) {
+        sessionDomainService.checkSessionExist(sessionId, userId);
+        return chatSessionManager.interruptSession(sessionId);
     }
 
     /** 发送消息

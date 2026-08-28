@@ -24,6 +24,8 @@ import org.yu.infrastructure.utils.ModelResponseToJsonUtils;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
+import java.util.function.Function;
 
 @Service
 public class InfoRequirementService {
@@ -36,6 +38,8 @@ public class InfoRequirementService {
     private static final Map<String, AgentWorkflowContext> BLOCKING_INFO = new ConcurrentHashMap<>();
     // 最大尝试次数限制
     private static final int MAX_INFO_CHECK_ATTEMPTS = 3;
+    // 用户补充信息等待上限，防止静态等待状态无限保留。
+    private static final long USER_INPUT_WAIT_TIMEOUT_MINUTES = 15;
 
     private final LLMServiceFactory llmServiceFactory;
     private final MessageDomainService messageDomainService;
@@ -184,17 +188,11 @@ public class InfoRequirementService {
             WAITING_FUTURES.put(sessionId, waitForUserInput);
             BLOCKING_INFO.put(sessionId, context);
 
-            // 返回转换后的Future，当用户提供输入时会自动继续处理
-            return waitForUserInput.thenCompose(input -> {
-                // 【关键】手动更新上下文中的用户消息为新提供的补充信息
-                // 这样下一次检查时模型才能评估到这个新信息
-                context.getChatContext().setUserMessage(input);
-
-                log.info("会话[{}]收到用户补充信息: {}", sessionId, input);
-
-                // 递归调用自身，尝试次数+1
-                return checkInfoCompleteness(context, attemptCount + 1);
-            });
+            // 当用户提供输入或等待超时后，都精准清理当前这一轮的等待状态。
+            // 使用 remove(key, value) 可避免旧 Future 完成时误删同会话的新等待状态。
+            return waitForUserInput.orTimeout(USER_INPUT_WAIT_TIMEOUT_MINUTES, TimeUnit.MINUTES).handle((input,
+                    error) -> resumeAfterUserInput(sessionId, context, waitForUserInput, input, error, attemptCount))
+                    .thenCompose(Function.identity());
 
         } catch (Exception e) {
             log.error("会话[{}]信息完整性检查异常", sessionId, e);
@@ -206,6 +204,25 @@ public class InfoRequirementService {
 
             return CompletableFuture.completedFuture(false);
         }
+    }
+
+    private CompletableFuture<Boolean> resumeAfterUserInput(String sessionId, AgentWorkflowContext<?> context,
+            CompletableFuture<String> waitingFuture, String input, Throwable error, int attemptCount) {
+        WAITING_FUTURES.remove(sessionId, waitingFuture);
+        BLOCKING_INFO.remove(sessionId, context);
+
+        if (error != null) {
+            log.warn("会话[{}]等待补充信息超时或失败: {}", sessionId, error.getMessage());
+            context.sendEndMessage("等待补充信息超时，请重新发起请求。", MessageType.TEXT);
+            return CompletableFuture.completedFuture(false);
+        }
+
+        // 【关键】手动更新上下文中的用户消息为新提供的补充信息，
+        // 这样下一次检查时模型才能评估到这个新信息。
+        context.getChatContext().setUserMessage(input);
+        log.info("会话[{}]收到用户补充信息", sessionId);
+
+        return checkInfoCompleteness(context, attemptCount + 1);
     }
 
     /** 构建请求 */

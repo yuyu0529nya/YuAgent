@@ -171,15 +171,15 @@ export const AdminRuleServiceWithToast = {
   },
 
   async createRule(data: CreateRuleRequest) {
-    return httpClient.post(API_ENDPOINTS.RULES, data, {}, { showToast: true });
+    return httpClient.post<ApiResponse<Rule>>(API_ENDPOINTS.RULES, data, {}, { showToast: true });
   },
 
   async updateRule(id: string, data: UpdateRuleRequest) {
-    return httpClient.put(API_ENDPOINTS.RULE_BY_ID(id), data, {}, { showToast: true });
+    return httpClient.put<ApiResponse<Rule>>(API_ENDPOINTS.RULE_BY_ID(id), data, {}, { showToast: true });
   },
 
   async deleteRule(id: string) {
-    return httpClient.delete(API_ENDPOINTS.RULE_BY_ID(id), {}, { showToast: true });
+    return httpClient.delete<ApiResponse<void>>(API_ENDPOINTS.RULE_BY_ID(id), {}, { showToast: true });
   }
 };
 

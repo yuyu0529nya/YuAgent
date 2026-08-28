@@ -12,6 +12,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/hooks/use-toast";
+import { useCopy } from "@/hooks/use-copy";
 import { 
   Search, 
   Plus, 
@@ -78,6 +79,7 @@ export default function ProvidersPage() {
   
   // 其他状态
   const [showApiKey, setShowApiKey] = useState(false);
+  const { copyToClipboard } = useCopy();
 
   // 数据加载
   useEffect(() => {
@@ -394,10 +396,6 @@ export default function ProvidersPage() {
     (model.name.toLowerCase().includes(modelSearchQuery.toLowerCase()) ||
      model.modelId.toLowerCase().includes(modelSearchQuery.toLowerCase()))
   );
-
-  const copyToClipboard = (text: string) => {
-    navigator.clipboard.writeText(text);
-  };
 
   const maskApiKey = (apiKey: string) => {
     if (apiKey.length <= 8) return apiKey;

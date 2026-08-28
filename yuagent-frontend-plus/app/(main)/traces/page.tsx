@@ -1,7 +1,8 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import Link from "next/link"
+import { useRouter } from "next/navigation"
 import {
   Activity,
   AlertCircle,
@@ -32,30 +33,52 @@ import {
 } from "@/lib/agent-trace-service"
 
 export default function TracesPage() {
+  const router = useRouter()
   const [agents, setAgents] = useState<AgentTraceStatistics[]>([])
   const [loading, setLoading] = useState(true)
+  const [errorMessage, setErrorMessage] = useState("")
   const [searchQuery, setSearchQuery] = useState("")
   const [filteredAgents, setFilteredAgents] = useState<AgentTraceStatistics[]>([])
   const [agentToDelete, setAgentToDelete] = useState<AgentTraceStatistics | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
+  const latestRequestIdRef = useRef(0)
 
-  useEffect(() => {
-    async function loadAgentTraceStatistics() {
-      try {
-        setLoading(true)
-        const response = await getUserAgentTraceStatisticsWithToast()
+  const loadAgentTraceStatistics = useCallback(async () => {
+    const requestId = ++latestRequestIdRef.current
+    setLoading(true)
+    setErrorMessage("")
 
-        if (response.code === 200) {
-          setAgents(response.data)
-          setFilteredAgents(response.data)
-        }
-      } finally {
+    try {
+      const response = await getUserAgentTraceStatisticsWithToast()
+      if (requestId !== latestRequestIdRef.current) {
+        return
+      }
+
+      if (response.code === 200) {
+        const data = response.data ?? []
+        setAgents(data)
+        setFilteredAgents(data)
+      } else {
+        setAgents([])
+        setFilteredAgents([])
+        setErrorMessage(response.message || "加载执行追踪失败")
+      }
+    } catch (error) {
+      if (requestId === latestRequestIdRef.current) {
+        setAgents([])
+        setFilteredAgents([])
+        setErrorMessage(error instanceof Error ? error.message : "加载执行追踪失败")
+      }
+    } finally {
+      if (requestId === latestRequestIdRef.current) {
         setLoading(false)
       }
     }
-
-    void loadAgentTraceStatistics()
   }, [])
+
+  useEffect(() => {
+    void loadAgentTraceStatistics()
+  }, [loadAgentTraceStatistics])
 
   useEffect(() => {
     if (!searchQuery.trim()) {
@@ -133,6 +156,26 @@ export default function TracesPage() {
     )
   }
 
+  if (errorMessage) {
+    return (
+      <div className="container mx-auto p-6">
+        <div className="mb-6">
+          <h1 className="mb-2 text-3xl font-bold">执行追踪</h1>
+          <p className="text-muted-foreground">查看您的 Agent 执行历史和性能统计</p>
+        </div>
+
+        <div className="flex flex-col items-center justify-center py-16 text-center">
+          <AlertCircle className="mb-4 h-16 w-16 text-destructive" />
+          <h2 className="mb-2 text-xl font-semibold">加载失败</h2>
+          <p className="max-w-md text-muted-foreground">{errorMessage}</p>
+          <Button className="mt-6" onClick={() => void loadAgentTraceStatistics()}>
+            重试
+          </Button>
+        </div>
+      </div>
+    )
+  }
+
   if (agents.length === 0) {
     return (
       <div className="container mx-auto p-6">
@@ -176,9 +219,7 @@ export default function TracesPage() {
           <Card
             key={agent.agentId}
             className="h-full cursor-pointer transition-shadow hover:shadow-lg"
-            onClick={() => {
-              window.location.href = `/traces/agents/${agent.agentId}`
-            }}
+            onClick={() => router.push(`/traces/agents/${agent.agentId}`)}
           >
             <CardHeader>
               <CardTitle className="flex items-center justify-between gap-2">

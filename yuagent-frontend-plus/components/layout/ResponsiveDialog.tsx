@@ -8,7 +8,7 @@ import type { ChatLayout } from '@/types/rag-dataset';
 interface ResponsiveDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  title: string;
+  title: ReactNode;
   children: ReactNode;
   layout: ChatLayout;
   className?: string;

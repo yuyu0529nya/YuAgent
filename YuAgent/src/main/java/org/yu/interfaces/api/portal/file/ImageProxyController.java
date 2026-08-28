@@ -1,5 +1,6 @@
 package org.yu.interfaces.api.portal.file;
 
+import jakarta.annotation.PreDestroy;
 import java.net.URI;
 import java.util.LinkedHashSet;
 import java.util.Locale;
@@ -27,12 +28,16 @@ import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.S3Configuration;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectResponse;
+import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
+import software.amazon.awssdk.services.s3.model.HeadObjectResponse;
 
 @RestController
 @RequestMapping("/files")
 public class ImageProxyController {
 
     private final OssProperties ossProperties;
+    private final Object s3ClientMonitor = new Object();
+    private volatile S3Client s3Client;
 
     public ImageProxyController(OssProperties ossProperties) {
         this.ossProperties = ossProperties;
@@ -45,16 +50,17 @@ public class ImageProxyController {
         }
 
         URI uri = parseUrl(url);
-        validateImageRequest(uri, url);
+        validateImageRequest(uri);
 
         String objectKey = extractObjectKey(uri);
         ResponseBytes<GetObjectResponse> responseBytes = downloadObject(objectKey);
-        MediaType mediaType = resolveMediaType(responseBytes.response().contentType(), url);
+        MediaType mediaType = resolveMediaType(responseBytes.response().contentType(), uri);
+        if (!"image".equalsIgnoreCase(mediaType.getType())) {
+            throw new BusinessException("对象不是图片类型");
+        }
 
-        return ResponseEntity.ok()
-                .cacheControl(CacheControl.maxAge(10, TimeUnit.MINUTES).cachePrivate())
-                .header(HttpHeaders.CONTENT_DISPOSITION, "inline")
-                .contentType(mediaType)
+        return ResponseEntity.ok().cacheControl(CacheControl.maxAge(10, TimeUnit.MINUTES).cachePrivate())
+                .header(HttpHeaders.CONTENT_DISPOSITION, "inline").contentType(mediaType)
                 .body(responseBytes.asByteArray());
     }
 
@@ -66,7 +72,7 @@ public class ImageProxyController {
         }
     }
 
-    private void validateImageRequest(URI uri, String url) {
+    void validateImageRequest(URI uri) {
         String scheme = uri.getScheme();
         if (!"https".equalsIgnoreCase(scheme) && !"http".equalsIgnoreCase(scheme)) {
             throw new BusinessException("仅支持代理 HTTP/HTTPS 图片");
@@ -77,7 +83,7 @@ public class ImageProxyController {
             throw new BusinessException("图片地址不在允许的存储域名范围内");
         }
 
-        MediaType mediaType = resolveMediaType(null, url);
+        MediaType mediaType = resolveMediaType(null, uri);
         if (!"image".equalsIgnoreCase(mediaType.getType())) {
             throw new BusinessException("仅支持图片预览");
         }
@@ -86,7 +92,7 @@ public class ImageProxyController {
     private boolean isAllowedHost(String host) {
         String lowerHost = host.toLowerCase(Locale.ROOT);
         for (String allowedHost : allowedHosts()) {
-            if (lowerHost.equals(allowedHost) || lowerHost.endsWith("." + allowedHost)) {
+            if (lowerHost.equals(allowedHost)) {
                 return true;
             }
         }
@@ -95,12 +101,27 @@ public class ImageProxyController {
 
     private Set<String> allowedHosts() {
         Set<String> hosts = new LinkedHashSet<>();
-        addHost(hosts, resolveEndpoint());
+        String endpoint = resolveEndpoint();
+        addHost(hosts, endpoint);
+        addBucketHost(hosts, endpoint, resolveBucketName());
         addHost(hosts, ossProperties.getCustomDomain());
         addHost(hosts, ossProperties.getUrlPrefix());
-        hosts.add("aliyuncs.com");
-        hosts.add("myqcloud.com");
         return hosts;
+    }
+
+    private void addBucketHost(Set<String> hosts, String endpoint, String bucketName) {
+        if (!StringUtils.hasText(endpoint) || !StringUtils.hasText(bucketName)) {
+            return;
+        }
+
+        String candidate = endpoint.contains("://") ? endpoint : "https://" + endpoint;
+        try {
+            URI uri = URI.create(candidate);
+            if (StringUtils.hasText(uri.getHost())) {
+                hosts.add(bucketName.toLowerCase(Locale.ROOT) + "." + uri.getHost().toLowerCase(Locale.ROOT));
+            }
+        } catch (Exception ignored) {
+        }
     }
 
     private void addHost(Set<String> hosts, String rawValue) {
@@ -142,29 +163,59 @@ public class ImageProxyController {
             throw new BusinessException("图片代理所需的对象存储配置不完整");
         }
 
-        S3Configuration serviceConfiguration = S3Configuration.builder()
-                .pathStyleAccessEnabled(ossProperties.isPathStyleAccess())
-                .build();
-
-        try (S3Client s3Client = S3Client.builder()
-                .endpointOverride(URI.create(endpoint))
-                .region(Region.of(region))
-                .httpClientBuilder(UrlConnectionHttpClient.builder())
-                .serviceConfiguration(serviceConfiguration)
-                .credentialsProvider(StaticCredentialsProvider
-                        .create(AwsBasicCredentials.create(accessKey, secretKey)))
-                .build()) {
-            GetObjectRequest request = GetObjectRequest.builder()
-                    .bucket(bucketName)
-                    .key(objectKey)
-                    .build();
-            return s3Client.getObjectAsBytes(request);
+        try {
+            GetObjectRequest request = GetObjectRequest.builder().bucket(bucketName).key(objectKey).build();
+            S3Client client = getOrCreateS3Client(endpoint, region, accessKey, secretKey);
+            ensureObjectSize(client, bucketName, objectKey);
+            return client.getObjectAsBytes(request);
+        } catch (BusinessException e) {
+            throw e;
         } catch (Exception e) {
             throw new BusinessException("读取私有图片失败", e);
         }
     }
 
-    private MediaType resolveMediaType(String contentType, String url) {
+    private void ensureObjectSize(S3Client client, String bucketName, String objectKey) {
+        HeadObjectResponse metadata = client
+                .headObject(HeadObjectRequest.builder().bucket(bucketName).key(objectKey).build());
+        long maxSize = ossProperties.getImageProxyMaxSize();
+        if (maxSize <= 0) {
+            throw new BusinessException("图片代理最大文件大小必须大于 0");
+        }
+        if (metadata.contentLength() > maxSize) {
+            throw new BusinessException("图片大小超过代理限制");
+        }
+    }
+
+    private S3Client getOrCreateS3Client(String endpoint, String region, String accessKey, String secretKey) {
+        S3Client current = s3Client;
+        if (current != null) {
+            return current;
+        }
+
+        synchronized (s3ClientMonitor) {
+            if (s3Client == null) {
+                S3Configuration serviceConfiguration = S3Configuration.builder()
+                        .pathStyleAccessEnabled(ossProperties.isPathStyleAccess()).build();
+                s3Client = S3Client.builder().endpointOverride(URI.create(endpoint)).region(Region.of(region))
+                        .httpClientBuilder(UrlConnectionHttpClient.builder()).serviceConfiguration(serviceConfiguration)
+                        .credentialsProvider(
+                                StaticCredentialsProvider.create(AwsBasicCredentials.create(accessKey, secretKey)))
+                        .build();
+            }
+            return s3Client;
+        }
+    }
+
+    @PreDestroy
+    public void closeS3Client() {
+        S3Client current = s3Client;
+        if (current != null) {
+            current.close();
+        }
+    }
+
+    private MediaType resolveMediaType(String contentType, URI uri) {
         if (StringUtils.hasText(contentType)) {
             try {
                 return MediaType.parseMediaType(contentType);
@@ -172,7 +223,8 @@ public class ImageProxyController {
             }
         }
 
-        String lowerUrl = url.toLowerCase(Locale.ROOT);
+        String path = uri.getPath();
+        String lowerUrl = path == null ? "" : path.toLowerCase(Locale.ROOT);
         if (lowerUrl.endsWith(".png")) {
             return MediaType.IMAGE_PNG;
         }
@@ -199,15 +251,18 @@ public class ImageProxyController {
     }
 
     private String resolveAccessKey() {
-        return firstNonBlank(ossProperties.getAccessKey(), System.getenv("OSS_ACCESS_KEY"), System.getenv("S3_SECRET_ID"));
+        return firstNonBlank(ossProperties.getAccessKey(), System.getenv("OSS_ACCESS_KEY"),
+                System.getenv("S3_SECRET_ID"));
     }
 
     private String resolveSecretKey() {
-        return firstNonBlank(ossProperties.getSecretKey(), System.getenv("OSS_SECRET_KEY"), System.getenv("S3_SECRET_KEY"));
+        return firstNonBlank(ossProperties.getSecretKey(), System.getenv("OSS_SECRET_KEY"),
+                System.getenv("S3_SECRET_KEY"));
     }
 
     private String resolveBucketName() {
-        return firstNonBlank(ossProperties.getBucketName(), System.getenv("OSS_BUCKET"), System.getenv("S3_BUCKET_NAME"));
+        return firstNonBlank(ossProperties.getBucketName(), System.getenv("OSS_BUCKET"),
+                System.getenv("S3_BUCKET_NAME"));
     }
 
     private String firstNonBlank(String... values) {

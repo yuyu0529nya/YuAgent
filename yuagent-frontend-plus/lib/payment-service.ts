@@ -74,141 +74,84 @@ export class PaymentService {
       interval?: number; // 轮询间隔（毫秒）
     } = {}
   ): Promise<() => void> {
-    
-    // 默认轮询配置：每3秒查询一次，最多查询5分钟
     const defaultConfig = {
-      maxDuration: 300000, // 5分钟
-      interval: 3000 // 每3秒查询一次
+      maxDuration: 300000,
+      interval: 3000,
     };
-    
     const finalConfig = { ...defaultConfig, ...config };
-    
-    let intervalHandle: NodeJS.Timeout | null = null;
+    let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
     let isPolling = true;
-    let elapsedTime = 0;
-    
+    const startedAt = Date.now();
+
     const stopPolling = () => {
- 
       isPolling = false;
-      if (intervalHandle) {
-        clearInterval(intervalHandle);
-        intervalHandle = null;
- 
+      if (timeoutHandle) {
+        clearTimeout(timeoutHandle);
+        timeoutHandle = null;
       }
     };
-    
-    const startPolling = () => {
+
+    const isTerminalStatus = (status: OrderStatusResponse["status"]) =>
+      status === "PAID" || status === "CANCELLED" || status === "EXPIRED";
+
+    const handleTerminalStatus = (status: OrderStatusResponse["status"]) => {
+      switch (status) {
+        case "PAID":
+          callbacks.onSuccess?.(orderNo);
+          break;
+        case "CANCELLED":
+          callbacks.onFailed?.("订单已取消");
+          break;
+        case "EXPIRED":
+          callbacks.onExpired?.();
+          break;
+      }
+      stopPolling();
+    };
+
+    const poll = async (): Promise<void> => {
       if (!isPolling) {
- 
         return;
       }
-      
- 
-      
-      intervalHandle = setInterval(async () => {
+
+      try {
+        const response = await PaymentService.queryOrderStatus(orderNo);
         if (!isPolling) {
- 
-          stopPolling();
           return;
         }
-        
- 
-        
-        try {
-          const response = await PaymentService.queryOrderStatus(orderNo);
-          
-          if (response.code === 200) {
-            const orderStatus = response.data;
- 
-            
-            // 通知状态变化
-            callbacks.onStatusChange?.(orderStatus);
-            
-            // 检查订单状态
-            switch (orderStatus.status) {
-              case 'PAID':
- 
-                callbacks.onSuccess?.(orderNo);
-                stopPolling();
-                return;
-              case 'CANCELLED':
- 
-                callbacks.onFailed?.('订单已取消');
-                stopPolling();
-                return;
-              case 'EXPIRED':
- 
-                callbacks.onExpired?.();
-                stopPolling();
-                return;
-              case 'PENDING':
- 
-                break;
-              default:
- 
-                break;
-            }
-          } else {
- 
+
+        if (response.code === 200) {
+          const orderStatus = response.data;
+          callbacks.onStatusChange?.(orderStatus);
+
+          if (isTerminalStatus(orderStatus.status)) {
+            handleTerminalStatus(orderStatus.status);
+            return;
           }
-        } catch (error) {
- 
-          callbacks.onError?.('网络错误，请检查网络连接');
+        } else {
+          callbacks.onError?.(response.message || "查询订单状态失败");
         }
-        
-        // 更新经过时间
-        elapsedTime += finalConfig.interval;
- 
-        
-        // 检查是否超过总时间限制
-        if (elapsedTime >= finalConfig.maxDuration) {
- 
-          callbacks.onExpired?.();
-          stopPolling();
-          return;
+      } catch {
+        if (isPolling) {
+          callbacks.onError?.("网络错误，请检查网络连接");
         }
-      }, finalConfig.interval);
-      
- 
-    };
-    
-    // 立即执行一次查询
- 
-    try {
-      const response = await PaymentService.queryOrderStatus(orderNo);
-      if (response.code === 200) {
- 
-        callbacks.onStatusChange?.(response.data);
-        
-        // 如果已经完成，就不需要轮询了
-        if (['PAID', 'CANCELLED', 'EXPIRED'].includes(response.data.status)) {
- 
-          switch (response.data.status) {
-            case 'PAID':
-              callbacks.onSuccess?.(orderNo);
-              break;
-            case 'CANCELLED':
-              callbacks.onFailed?.('订单已取消');
-              break;
-            case 'EXPIRED':
-              callbacks.onExpired?.();
-              break;
-          }
-          return stopPolling;
-        }
-      } else {
- 
       }
-    } catch (error) {
- 
-    }
-    
-    // 开始轮询
- 
-    startPolling();
-    
-    // 返回停止函数
- 
+
+      if (!isPolling) {
+        return;
+      }
+      if (Date.now() - startedAt >= finalConfig.maxDuration) {
+        callbacks.onExpired?.();
+        stopPolling();
+        return;
+      }
+
+      timeoutHandle = setTimeout(() => {
+        void poll();
+      }, finalConfig.interval);
+    };
+
+    await poll();
     return stopPolling;
   }
 }

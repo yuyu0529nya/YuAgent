@@ -9,10 +9,13 @@ import org.yu.domain.scheduledtask.model.DelayedTaskItem;
 import org.yu.domain.scheduledtask.model.ScheduledTaskEntity;
 
 import java.time.LocalDateTime;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.DelayQueue;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.ThreadPoolExecutor;
 
 /** 延迟队列管理器 负责管理延迟队列和任务调度 */
 @Service
@@ -22,6 +25,9 @@ public class DelayedTaskQueueManager {
 
     /** 延迟队列 */
     private final DelayQueue<DelayedTaskItem> delayQueue = new DelayQueue<>();
+
+    /** 每个任务在队列中只保留一个最新调度项。DelayQueue 不会基于 equals 自动去重， 因此需要显式维护这个索引，防止重试、恢复或重新调度时同一任务被执行多次。 */
+    private final ConcurrentMap<String, DelayedTaskItem> scheduledItems = new ConcurrentHashMap<>();
 
     /** 任务执行器 */
     private final ScheduleTaskExecutor taskExecutor;
@@ -42,12 +48,14 @@ public class DelayedTaskQueueManager {
     /** 初始化队列管理器 */
     @PostConstruct
     public void init() {
-        // 创建线程池用于执行任务
-        this.executorService = Executors.newFixedThreadPool(5, r -> {
-            Thread t = new Thread(r, "scheduled-task-executor-");
-            t.setDaemon(true);
-            return t;
-        });
+        // 定时任务可能等待模型或外部工具响应。固定线程池默认使用无界队列，突发积压会无限占用堆内存。
+        // 队列饱和时由消费线程执行任务以形成背压，避免悄悄丢失已到期任务。
+        this.executorService = new ThreadPoolExecutor(5, 5, 0L, TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>(100),
+                r -> {
+                    Thread t = new Thread(r, "scheduled-task-executor-");
+                    t.setDaemon(true);
+                    return t;
+                }, new ThreadPoolExecutor.CallerRunsPolicy());
 
         // 启动队列消费线程
         startConsumer();
@@ -86,6 +94,10 @@ public class DelayedTaskQueueManager {
      * @param executeTime 执行时间 */
     public void addTask(ScheduledTaskEntity task, LocalDateTime executeTime) {
         DelayedTaskItem item = new DelayedTaskItem(task, executeTime);
+        DelayedTaskItem previousItem = scheduledItems.put(item.getTaskId(), item);
+        if (previousItem != null) {
+            delayQueue.remove(previousItem);
+        }
         delayQueue.offer(item);
         logger.info("任务已添加到延迟队列: taskId={}, executeTime={}", task.getId(), executeTime);
     }
@@ -93,7 +105,8 @@ public class DelayedTaskQueueManager {
     /** 移除任务从延迟队列
      * @param taskId 任务ID */
     public void removeTask(String taskId) {
-        boolean removed = delayQueue.removeIf(item -> taskId.equals(item.getTaskId()));
+        DelayedTaskItem scheduledItem = scheduledItems.remove(taskId);
+        boolean removed = scheduledItem != null && delayQueue.remove(scheduledItem);
         if (removed) {
             logger.info("任务已从延迟队列移除: taskId={}", taskId);
         } else {
@@ -125,21 +138,18 @@ public class DelayedTaskQueueManager {
                 // 从延迟队列中取出到期的任务
                 DelayedTaskItem item = delayQueue.take();
 
-                if (item != null) {
+                if (item != null && scheduledItems.remove(item.getTaskId(), item)) {
                     logger.debug("从延迟队列取出到期任务: taskId={}", item.getTaskId());
 
                     // 提交任务到线程池执行
                     executorService.submit(() -> {
                         try {
-                            ScheduledTaskEntity task = item.getTask();
+                            ScheduledTaskEntity task = taskExecutor.getExecutableTask(item.getTask());
 
-                            // 检查任务是否可以执行
-                            if (taskExecutor.canExecute(task)) {
-                                taskExecutor.executeTask(task);
-
+                            if (task != null && taskExecutor.executeTask(task)) {
                                 scheduleNextExecution(task);
                             } else {
-                                logger.info("任务不满足执行条件，跳过执行: taskId={}", task.getId());
+                                logger.info("任务未执行或执行未完成，跳过后续调度: taskId={}", item.getTaskId());
                             }
                         } catch (Exception e) {
                             logger.error("执行任务异常: taskId={}, error={}", item.getTaskId(), e.getMessage(), e);
@@ -170,14 +180,13 @@ public class DelayedTaskQueueManager {
      * @param task 已执行的任务 */
     private void scheduleNextExecution(ScheduledTaskEntity task) {
         try {
-            // 重新加载任务状态（executeTask可能已更新数据库）
+            // executeTask 会更新同一任务对象的状态和下次执行时间。
             if (task.isActive() && task.getNextExecuteTime() != null) {
                 LocalDateTime nextTime = task.getNextExecuteTime();
 
                 // 只有未来的时间才需要调度
                 if (nextTime.isAfter(LocalDateTime.now())) {
-                    DelayedTaskItem newItem = new DelayedTaskItem(task, nextTime);
-                    delayQueue.offer(newItem);
+                    addTask(task, nextTime);
                     logger.info("任务已重新调度: taskId={}, nextTime={}", task.getId(), nextTime);
                 }
             }

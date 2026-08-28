@@ -21,6 +21,7 @@ import org.yu.domain.rag.model.FileDetailEntity;
 import org.yu.domain.rag.model.RagQaDatasetEntity;
 import org.yu.domain.rag.model.RagVersionEntity;
 import org.yu.domain.rag.model.UserRagEntity;
+import org.yu.domain.user.model.UserEntity;
 import org.yu.domain.rag.service.FileDetailDomainService;
 import org.yu.domain.rag.service.management.RagDataAccessDomainService;
 import org.yu.domain.rag.service.RagQaDatasetDomainService;
@@ -31,6 +32,11 @@ import org.yu.domain.user.service.UserDomainService;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 /** RAG市场应用服务
  * @author yu
@@ -72,15 +78,22 @@ public class RagMarketAppService {
         // 转换为MarketDTO
         List<RagMarketDTO> dtoList = RagVersionAssembler.toMarketDTOs(entityPage.getRecords());
 
-        // 设置用户信息、安装次数和是否已安装
-        for (RagMarketDTO dto : dtoList) {
-            enrichWithUserInfo(dto);
-            dto.setInstallCount(userRagDomainService.getInstallCount(dto.getId()));
+        List<String> versionIds = dtoList.stream().map(RagMarketDTO::getId).toList();
+        Map<String, Long> installCounts = userRagDomainService.getInstallCounts(versionIds);
+        Map<String, UserEntity> usersById = userDomainService.getByIds(
+                dtoList.stream().map(RagMarketDTO::getUserId).filter(StringUtils::isNotBlank).distinct().toList())
+                .stream().collect(Collectors.toMap(UserEntity::getId, Function.identity()));
+        Set<String> installedVersionIds = userRagDomainService.getInstalledRagVersionIds(currentUserId, versionIds);
 
-            // 设置是否已安装
-            if (StringUtils.isNotBlank(currentUserId)) {
-                dto.setIsInstalled(userRagDomainService.isRagInstalled(currentUserId, dto.getId()));
+        // 批量设置用户信息、安装次数和是否已安装，避免列表展示产生 N+1 查询。
+        for (RagMarketDTO dto : dtoList) {
+            UserEntity user = usersById.get(dto.getUserId());
+            if (user != null) {
+                dto.setUserNickname(user.getNickname());
+                dto.setUserAvatar(user.getAvatarUrl());
             }
+            dto.setInstallCount(installCounts.getOrDefault(dto.getId(), 0L));
+            dto.setIsInstalled(installedVersionIds.contains(dto.getId()));
         }
 
         // 创建DTO分页对象
@@ -126,25 +139,9 @@ public class RagMarketAppService {
         IPage<UserRagEntity> entityPage = userRagDomainService.listInstalledRags(userId, request.getPage(),
                 request.getPageSize(), request.getKeyword());
 
-        // 根据安装类型分别处理数据
-        List<UserRagDTO> dtoList = new ArrayList<>();
-        for (UserRagEntity entity : entityPage.getRecords()) {
-            UserRagDTO dto;
-
-            if (entity.isReferenceType()) {
-                // REFERENCE类型：获取原始RAG的实时信息
-                dto = enrichWithReferenceInfo(entity);
-            } else {
-                // SNAPSHOT类型：使用快照数据
-                dto = enrichWithSnapshotInfo(entity);
-            }
-
-            dtoList.add(dto);
-        }
-
         // 创建DTO分页对象
         Page<UserRagDTO> dtoPage = new Page<>(entityPage.getCurrent(), entityPage.getSize(), entityPage.getTotal());
-        dtoPage.setRecords(dtoList);
+        dtoPage.setRecords(enrichInstalledRags(entityPage.getRecords()));
 
         return dtoPage;
     }
@@ -156,23 +153,7 @@ public class RagMarketAppService {
     public List<UserRagDTO> getUserAllInstalledRags(String userId) {
         List<UserRagEntity> entities = userRagDomainService.listAllInstalledRags(userId);
 
-        // 根据安装类型分别处理数据
-        List<UserRagDTO> dtoList = new ArrayList<>();
-        for (UserRagEntity entity : entities) {
-            UserRagDTO dto;
-
-            if (entity.isReferenceType()) {
-                // REFERENCE类型：获取原始RAG的实时信息
-                dto = enrichWithReferenceInfo(entity);
-            } else {
-                // SNAPSHOT类型：使用快照数据
-                dto = enrichWithSnapshotInfo(entity);
-            }
-
-            dtoList.add(dto);
-        }
-
-        return dtoList;
+        return enrichInstalledRags(entities);
     }
 
     /** 获取用户安装的RAG详情
@@ -227,25 +208,6 @@ public class RagMarketAppService {
         }
 
         return dto;
-    }
-
-    /** 丰富用户信息
-     *
-     * @param dto RAG市场DTO */
-    private void enrichWithUserInfo(RagMarketDTO dto) {
-        if (dto == null || StringUtils.isBlank(dto.getUserId())) {
-            return;
-        }
-
-        try {
-            var user = userDomainService.getUserInfo(dto.getUserId());
-            if (user != null) {
-                dto.setUserNickname(user.getNickname());
-                dto.setUserAvatar(user.getAvatarUrl());
-            }
-        } catch (Exception e) {
-            // 忽略用户查询异常
-        }
     }
 
     /** 获取用户昵称
@@ -322,6 +284,65 @@ public class RagMarketAppService {
         }
     }
 
+    private List<UserRagDTO> enrichInstalledRags(List<UserRagEntity> entities) {
+        if (entities == null || entities.isEmpty()) {
+            return List.of();
+        }
+
+        List<String> snapshotIds = entities.stream().filter(entity -> entity.getId() != null)
+                .filter(UserRagEntity::isSnapshotType).map(UserRagEntity::getId).distinct().toList();
+        List<String> referenceDatasetIds = entities.stream().filter(entity -> entity.getId() != null)
+                .filter(UserRagEntity::isReferenceType).map(UserRagEntity::getOriginalRagId)
+                .filter(StringUtils::isNotBlank).distinct().toList();
+        List<String> versionIds = entities.stream().filter(entity -> entity.getId() != null)
+                .filter(UserRagEntity::isSnapshotType).map(UserRagEntity::getRagVersionId)
+                .filter(StringUtils::isNotBlank).distinct().toList();
+
+        Map<String, Long> snapshotFileCounts = ragDataAccessService.countUserRagFiles(snapshotIds);
+        Map<String, Integer> snapshotDocumentCounts = userRagSnapshotService.getUserRagDocumentCounts(snapshotIds);
+        Map<String, RagQaDatasetEntity> datasetsById = ragQaDatasetDomainService.listDatasetsByIds(referenceDatasetIds)
+                .stream().collect(Collectors.toMap(RagQaDatasetEntity::getId, Function.identity()));
+        Map<String, RagVersionEntity> versionsById = ragVersionDomainService.getRagVersionsByIds(versionIds).stream()
+                .collect(Collectors.toMap(RagVersionEntity::getId, Function.identity()));
+        List<String> creatorIds = java.util.stream.Stream
+                .concat(datasetsById.values().stream().map(RagQaDatasetEntity::getUserId),
+                        versionsById.values().stream().map(RagVersionEntity::getUserId))
+                .filter(StringUtils::isNotBlank).distinct().toList();
+        Map<String, UserEntity> usersById = userDomainService.getByIds(creatorIds).stream()
+                .collect(Collectors.toMap(UserEntity::getId, Function.identity(), (first, ignored) -> first));
+
+        return entities.stream().map(entity -> enrichInstalledRag(entity, snapshotFileCounts, snapshotDocumentCounts,
+                datasetsById, versionsById, usersById)).toList();
+    }
+
+    private UserRagDTO enrichInstalledRag(UserRagEntity entity, Map<String, Long> snapshotFileCounts,
+            Map<String, Integer> snapshotDocumentCounts, Map<String, RagQaDatasetEntity> datasetsById,
+            Map<String, RagVersionEntity> versionsById, Map<String, UserEntity> usersById) {
+        if (entity.getId() == null) {
+            return UserRagAssembler.toDTO(entity);
+        }
+
+        if (entity.isReferenceType()) {
+            RagQaDatasetEntity dataset = datasetsById.get(entity.getOriginalRagId());
+            if (dataset == null || !Objects.equals(dataset.getUserId(), entity.getUserId())) {
+                return UserRagAssembler.toDTO(entity);
+            }
+            UserEntity creator = usersById.get(dataset.getUserId());
+            return UserRagAssembler.enrichWithReferenceInfo(entity, dataset,
+                    creator != null ? creator.getNickname() : null);
+        }
+
+        RagVersionEntity version = versionsById.get(entity.getRagVersionId());
+        if (version == null) {
+            return UserRagAssembler.toDTO(entity);
+        }
+        UserEntity creator = usersById.get(version.getUserId());
+        return UserRagAssembler.enrichWithSnapshotInfo(entity,
+                Math.toIntExact(snapshotFileCounts.getOrDefault(entity.getId(), 0L)),
+                snapshotDocumentCounts.getOrDefault(entity.getId(), 0), creator != null ? creator.getNickname() : null,
+                version.getUserId());
+    }
+
     /** 获取已安装RAG的文件列表（返回DTO）
      *
      * @param userRagId 用户RAG安装记录ID
@@ -372,26 +393,7 @@ public class RagMarketAppService {
     public List<UserRagDTO> getInstalledRagVersions(String userRagId, String userId) {
         List<UserRagEntity> entities = userRagDomainService.getAvailableVersionsByUserRagId(userId, userRagId);
 
-        // 根据安装类型分别处理数据
-        List<UserRagDTO> dtoList = new ArrayList<>();
-        for (UserRagEntity entity : entities) {
-            UserRagDTO dto;
-
-            if (entity.getId() == null) {
-                // 虚拟的未安装版本，直接转换
-                dto = UserRagAssembler.toDTO(entity);
-            } else if (entity.isReferenceType()) {
-                // REFERENCE类型：获取原始RAG的实时信息
-                dto = enrichWithReferenceInfo(entity);
-            } else {
-                // SNAPSHOT类型：使用快照数据
-                dto = enrichWithSnapshotInfo(entity);
-            }
-
-            dtoList.add(dto);
-        }
-
-        return dtoList;
+        return enrichInstalledRags(entities);
     }
 
     /** 获取市场上RAG版本的文件列表（返回DTO）

@@ -46,7 +46,7 @@ export function ClickableFileLink({
           </div>
           <div className="flex items-center gap-2">
             <Badge variant="outline" className="text-xs px-1 py-0">
-              {(file.score * 100).toFixed(0)}%
+              {((file.score ?? 0) * 100).toFixed(0)}%
             </Badge>
             <span className="text-xs text-muted-foreground">
               点击查看详情

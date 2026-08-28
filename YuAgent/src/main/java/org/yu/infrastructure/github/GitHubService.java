@@ -18,9 +18,12 @@ import org.yu.infrastructure.config.GitHubProperties;
 import org.yu.infrastructure.exception.BusinessException;
 
 import jakarta.annotation.PostConstruct;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.net.URL;
+import java.net.URLConnection;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
@@ -30,6 +33,9 @@ import java.util.UUID;
 @Service
 public class GitHubService {
     private static final Logger logger = LoggerFactory.getLogger(GitHubService.class);
+    private static final int ARCHIVE_CONNECT_TIMEOUT_MILLIS = 30_000;
+    private static final int ARCHIVE_READ_TIMEOUT_MILLIS = 60_000;
+    private static final long MAX_ARCHIVE_SIZE_BYTES = 100L * 1024 * 1024;
 
     private final GitHubProperties gitHubProperties;
     private final GitHub github;
@@ -263,10 +269,60 @@ public class GitHubService {
 
         Path tempZipFile = Files.createTempFile(
                 "source-repo-" + repoInfo.getRepoName() + "-" + UUID.randomUUID().toString().substring(0, 8), ".zip");
-        FileUtils.copyURLToFile(archiveUrl, tempZipFile.toFile(), 30000, 60000);
+        try {
+            downloadArchiveWithinLimit(archiveUrl, tempZipFile);
+        } catch (IOException | RuntimeException e) {
+            try {
+                Files.deleteIfExists(tempZipFile);
+            } catch (IOException cleanupError) {
+                e.addSuppressed(cleanupError);
+            }
+            throw e;
+        }
 
         logger.info("源仓库归档已下载到: {}", tempZipFile);
         return tempZipFile;
+    }
+
+    private void downloadArchiveWithinLimit(URL archiveUrl, Path targetFile) throws IOException {
+        URLConnection connection = archiveUrl.openConnection();
+        connection.setConnectTimeout(ARCHIVE_CONNECT_TIMEOUT_MILLIS);
+        connection.setReadTimeout(ARCHIVE_READ_TIMEOUT_MILLIS);
+        long contentLength = connection.getContentLengthLong();
+        if (contentLength > MAX_ARCHIVE_SIZE_BYTES) {
+            throw new IOException("GitHub仓库归档超过大小上限");
+        }
+
+        try (InputStream input = connection.getInputStream(); OutputStream output = Files.newOutputStream(targetFile)) {
+            copyWithinLimit(input, output, MAX_ARCHIVE_SIZE_BYTES);
+        }
+    }
+
+    static long copyWithinLimit(InputStream input, OutputStream output, long maxSizeBytes) throws IOException {
+        byte[] buffer = new byte[8192];
+        long totalBytes = 0;
+        int bytesRead;
+        while ((bytesRead = input.read(buffer)) != -1) {
+            totalBytes += bytesRead;
+            if (totalBytes > maxSizeBytes) {
+                throw new IOException("GitHub仓库归档超过大小上限");
+            }
+            output.write(buffer, 0, bytesRead);
+        }
+        return totalBytes;
+    }
+
+    static Path resolvePathWithinRepository(Path repositoryRoot, String targetPath) {
+        if (targetPath == null || targetPath.trim().isEmpty()) {
+            throw new BusinessException("目标仓库路径不能为空");
+        }
+
+        Path normalizedRoot = repositoryRoot.toAbsolutePath().normalize();
+        Path resolvedPath = normalizedRoot.resolve(targetPath).normalize();
+        if (resolvedPath.equals(normalizedRoot) || !resolvedPath.startsWith(normalizedRoot)) {
+            throw new BusinessException("目标仓库路径不能越出仓库根目录: " + targetPath);
+        }
+        return resolvedPath;
     }
 
     /** 将指定目录的内容提交并推送到目标GitHub仓库的指定路径下。
@@ -308,7 +364,7 @@ public class GitHubService {
                     .setCredentialsProvider(new UsernamePasswordCredentialsProvider(targetUsername, targetToken))
                     .call();
 
-            Path fullTargetPathInClone = tempCloneDir.resolve(targetPathInRepo);
+            Path fullTargetPathInClone = resolvePathWithinRepository(tempCloneDir, targetPathInRepo);
             if (Files.exists(fullTargetPathInClone)) {
                 logger.info("目标路径 {} 在克隆仓库中已存在，将被清理。", fullTargetPathInClone);
                 FileUtils.deleteDirectory(fullTargetPathInClone.toFile());
@@ -386,7 +442,7 @@ public class GitHubService {
                     .setCredentialsProvider(new UsernamePasswordCredentialsProvider(targetUsername, targetToken))
                     .call();
 
-            Path fullTargetPathInClone = tempCloneDir.resolve(targetPathInRepo);
+            Path fullTargetPathInClone = resolvePathWithinRepository(tempCloneDir, targetPathInRepo);
             if (Files.exists(fullTargetPathInClone)) {
                 logger.info("目标路径 {} 在克隆仓库中已存在，将被清理。", fullTargetPathInClone);
                 FileUtils.deleteDirectory(fullTargetPathInClone.toFile());

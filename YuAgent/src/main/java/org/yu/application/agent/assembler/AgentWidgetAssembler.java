@@ -12,6 +12,7 @@ import org.yu.interfaces.dto.agent.request.UpdateWidgetRequest;
 
 import java.util.Collections;
 import java.util.List;
+import java.util.stream.IntStream;
 
 /** Agent小组件配置转换器 */
 @Component
@@ -90,8 +91,8 @@ public class AgentWidgetAssembler {
             return Collections.emptyList();
         }
 
-        return entities.stream().map(entity -> {
-            int index = entities.indexOf(entity);
+        return IntStream.range(0, entities.size()).mapToObj(index -> {
+            AgentWidgetEntity entity = entities.get(index);
             ModelDTO model = models != null && index < models.size() ? models.get(index) : null;
             ProviderDTO provider = providers != null && index < providers.size() ? providers.get(index) : null;
             return toDTO(entity, model, provider);
@@ -111,8 +112,8 @@ public class AgentWidgetAssembler {
             return Collections.emptyList();
         }
 
-        return entities.stream().map(entity -> {
-            int index = entities.indexOf(entity);
+        return IntStream.range(0, entities.size()).mapToObj(index -> {
+            AgentWidgetEntity entity = entities.get(index);
             ModelDTO model = models != null && index < models.size() ? models.get(index) : null;
             ProviderDTO provider = providers != null && index < providers.size() ? providers.get(index) : null;
             return toDTOWithEmbedCode(entity, model, provider, frontendBaseUrl);

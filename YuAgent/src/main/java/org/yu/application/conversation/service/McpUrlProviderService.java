@@ -13,14 +13,9 @@ import org.yu.infrastructure.mcp_gateway.HostedMcpInstallCommandHelper;
 import org.yu.infrastructure.mcp_gateway.MCPGatewayService;
 import org.yu.infrastructure.utils.JsonUtils;
 
-import java.io.IOException;
-import java.net.InetSocketAddress;
-import java.net.Socket;
 import java.util.Map;
 
-/**
- * Coordinates MCP runtime access for both user-installed tools and global tools.
- */
+/** Coordinates MCP runtime access for both user-installed tools and global tools. */
 @Service
 public class McpUrlProviderService {
 
@@ -42,8 +37,7 @@ public class McpUrlProviderService {
         if (isHostedTool(tool)) {
             return buildHostedToolSSEUrl(tool);
         }
-        boolean isGlobalTool = isGlobalTool(mcpServerName, userId);
-        if (isGlobalTool) {
+        if (tool != null && tool.isGlobal()) {
             return buildReviewContainerSSEUrl(mcpServerName);
         }
         return buildUserContainerSSEUrl(mcpServerName, userId);
@@ -55,16 +49,6 @@ public class McpUrlProviderService {
         } catch (Exception e) {
             logger.error("Failed to resolve MCP tool URL: userId={}, tool={}", userId, mcpServerName, e);
             throw new BusinessException("无法连接工具: " + mcpServerName + " - " + e.getMessage());
-        }
-    }
-
-    private boolean isGlobalTool(String mcpServerName, String userId) {
-        try {
-            ToolEntity tool = resolveToolForUsage(mcpServerName, userId);
-            return tool != null && tool.isGlobal();
-        } catch (Exception e) {
-            logger.warn("Unable to determine tool scope, defaulting to user container mode: {}", mcpServerName, e);
-            return false;
         }
     }
 
@@ -105,7 +89,6 @@ public class McpUrlProviderService {
             logger.info("Preparing user container MCP connection: userId={}, tool={}", userId, mcpServerName);
 
             ContainerDTO containerInfo = ensureUserContainerReady(userId);
-            waitForContainerEndpoint(containerInfo, mcpServerName, userId);
             deployTool(containerInfo, mcpServerName, userId);
 
             String sseUrl = mcpGatewayService.buildUserContainerUrl(mcpServerName, containerInfo.getIpAddress(),
@@ -163,48 +146,6 @@ public class McpUrlProviderService {
         return basicHealthy;
     }
 
-    private void waitForContainerEndpoint(ContainerDTO container, String toolName, String userId) {
-        Integer accessPort = resolveContainerAccessPort(container);
-        if (container == null || container.getIpAddress() == null || accessPort == null) {
-            throw new BusinessException("MCP容器缺少网络信息，无法连接工具: " + toolName);
-        }
-
-        final int maxAttempts = 10;
-        final long sleepMillis = 1000L;
-        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
-            if (isSocketReady(container.getIpAddress(), accessPort, 1500)) {
-                if (attempt > 1) {
-                    logger.info("Container endpoint became ready after {} attempt(s): userId={}, tool={}, target={}:{}",
-                            attempt, userId, toolName, container.getIpAddress(), accessPort);
-                }
-                return;
-            }
-
-            if (attempt < maxAttempts) {
-                logger.warn("Container endpoint not ready yet, retrying: userId={}, tool={}, attempt={}/{}, target={}:{}",
-                        userId, toolName, attempt, maxAttempts, container.getIpAddress(), accessPort);
-                try {
-                    Thread.sleep(sleepMillis);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    throw new BusinessException("等待MCP容器就绪被中断: " + e.getMessage(), e);
-                }
-            }
-        }
-
-        throw new BusinessException(
-                "MCP用户容器未就绪，无法连接工具: " + toolName + " (" + container.getIpAddress() + ":" + accessPort + ")");
-    }
-
-    private boolean isSocketReady(String host, Integer port, int timeoutMillis) {
-        try (Socket socket = new Socket()) {
-            socket.connect(new InetSocketAddress(host, port), timeoutMillis);
-            return true;
-        } catch (IOException e) {
-            return false;
-        }
-    }
-
     private void deployTool(ContainerDTO container, String toolName, String userId) {
         try {
             ToolEntity tool = toolDomainService.getToolByServerNameForUsage(toolName, userId);
@@ -223,11 +164,7 @@ public class McpUrlProviderService {
                 throw new BusinessException("MCP 容器内部部署失败");
             }
 
-            Thread.sleep(1000L);
             logger.debug("Tool {} deployed to user container", toolName);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new BusinessException("部署用户容器工具时被中断: " + e.getMessage(), e);
         } catch (Exception e) {
             logger.warn("Failed to deploy tool into user container: tool={}, error={}", toolName, e.getMessage());
             throw new BusinessException("部署用户容器工具失败: " + e.getMessage(), e);

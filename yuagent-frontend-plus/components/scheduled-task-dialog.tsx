@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { Clock, Calendar, Repeat, Plus } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
@@ -86,7 +86,7 @@ export function ScheduledTaskDialog({
   onTaskUpdated
 }: ScheduledTaskDialogProps) {
   // 初始化编辑数据的辅助函数
-  const initializeTaskData = (): ScheduledTaskData => {
+  const initializeTaskData = useCallback((): ScheduledTaskData => {
     if (!editingTask) {
       return {
         content: "",
@@ -142,48 +142,72 @@ export function ScheduledTaskDialog({
       monthDay,
       customRepeat
     }
-  }
+  }, [conversationId, editingTask])
 
-  const [taskData, setTaskData] = useState<ScheduledTaskData>(initializeTaskData())
+  const [taskData, setTaskData] = useState<ScheduledTaskData>(() => initializeTaskData())
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [sessions, setSessions] = useState<SessionDTO[]>([])
   const [loadingSessions, setLoadingSessions] = useState(false)
+  const latestSessionsRequestRef = useRef(0)
 
   // 当编辑任务变化时，重新初始化表单数据
   useEffect(() => {
     setTaskData(initializeTaskData())
-  }, [editingTask])
+  }, [initializeTaskData])
 
   // 获取会话列表
   useEffect(() => {
+    if (!agentId || !open) {
+      setSessions([])
+      setLoadingSessions(false)
+      return
+    }
+
+    const requestId = ++latestSessionsRequestRef.current
     const fetchSessions = async () => {
-      if (!agentId || !open) return
-      
       try {
         setLoadingSessions(true)
         const response = await getAgentSessionsWithToast(agentId)
-        
+
+        if (requestId !== latestSessionsRequestRef.current) return
+
         if (response.code === 200 && response.data) {
           setSessions(response.data)
+        } else {
+          setSessions([])
         }
-      } catch (error) {
- 
-        toast({
-          title: "获取会话列表失败",
-          description: "请稍后重试",
-          variant: "destructive"
-        })
+      } catch {
+        if (requestId === latestSessionsRequestRef.current) {
+          setSessions([])
+          toast({
+            title: "获取会话列表失败",
+            description: "请稍后重试",
+            variant: "destructive"
+          })
+        }
       } finally {
-        setLoadingSessions(false)
+        if (requestId === latestSessionsRequestRef.current) {
+          setLoadingSessions(false)
+        }
       }
     }
 
-    fetchSessions()
+    void fetchSessions()
+    return () => {
+      latestSessionsRequestRef.current += 1
+    }
   }, [agentId, open])
 
   // 重置表单数据
   const resetForm = () => {
     setTaskData(initializeTaskData())
+  }
+
+  const handleOpenChange = (nextOpen: boolean) => {
+    onOpenChange(nextOpen)
+    if (!nextOpen) {
+      resetForm()
+    }
   }
 
   // 构建重复配置
@@ -314,8 +338,7 @@ export function ScheduledTaskDialog({
         
         if (response.code === 200) {
           onTaskUpdated?.()
-          onOpenChange(false)
-          resetForm()
+          handleOpenChange(false)
         }
       } else {
         // 创建模式 - 创建新任务
@@ -331,8 +354,7 @@ export function ScheduledTaskDialog({
         
         if (response.code === 200) {
           onTaskCreated?.()
-          onOpenChange(false)
-          resetForm()
+          handleOpenChange(false)
         }
       }
       
@@ -380,7 +402,7 @@ export function ScheduledTaskDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
@@ -619,7 +641,7 @@ export function ScheduledTaskDialog({
         </div>
 
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
+          <Button variant="outline" onClick={() => handleOpenChange(false)}>
             取消
           </Button>
           <Button onClick={handleSubmit} disabled={isSubmitting}>

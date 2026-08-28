@@ -2,9 +2,7 @@
 
 import { useEffect, useState } from "react"
 import Link from "next/link"
-import { Bot, Search, MessageCircle, Zap, Filter, X } from "lucide-react"
-import { Metadata } from "next"
-import { redirect } from "next/navigation"
+import { Bot, Search, MessageCircle, Filter, X } from "lucide-react"
 import { toast } from "@/hooks/use-toast"
 
 import { Button } from "@/components/ui/button"
@@ -12,7 +10,6 @@ import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/componen
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { getPublishedAgents } from "@/lib/agent-service"
 import { resolveAssetUrl } from "@/lib/asset-url"
 import type { AgentVersion } from "@/types/agent"
@@ -23,7 +20,7 @@ export default function SearchPage() {
   const [agents, setAgents] = useState<AgentVersion[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [activeTab, setActiveTab] = useState("all")
+  const [refreshToken, setRefreshToken] = useState(0)
 
   // 防抖处理搜索查询
   useEffect(() => {
@@ -36,12 +33,19 @@ export default function SearchPage() {
 
   // 获取已发布的助理列表
   useEffect(() => {
+    const controller = new AbortController()
+    let active = true
+
     async function fetchAgents() {
       try {
         setLoading(true)
         setError(null)
 
-        const response = await getPublishedAgents(debouncedQuery)
+        const response = await getPublishedAgents(debouncedQuery, { signal: controller.signal })
+
+        if (!active) {
+          return
+        }
 
         if (response.code === 200) {
           setAgents(response.data)
@@ -54,6 +58,9 @@ export default function SearchPage() {
           })
         }
       } catch (error) {
+        if (!active) {
+          return
+        }
         const errorMessage = error instanceof Error ? error.message : "未知错误"
         setError(errorMessage)
         toast({
@@ -62,12 +69,19 @@ export default function SearchPage() {
           variant: "destructive",
         })
       } finally {
-        setLoading(false)
+        if (active) {
+          setLoading(false)
+        }
       }
     }
 
     fetchAgents()
-  }, [debouncedQuery])
+
+    return () => {
+      active = false
+      controller.abort()
+    }
+  }, [debouncedQuery, refreshToken])
 
   // 根据类型过滤助理 - 简化为显示所有助理
   const filteredAgents = agents.filter(() => true)
@@ -118,7 +132,7 @@ export default function SearchPage() {
 
         {/* 助理列表 */}
         <div className="mt-6">
-          {renderAgentList(filteredAgents, loading, error)}
+          {renderAgentList(filteredAgents, loading, error, () => setRefreshToken((token) => token + 1))}
         </div>
       </div>
     </div>
@@ -126,7 +140,12 @@ export default function SearchPage() {
 }
 
 // 渲染助理列表
-function renderAgentList(agents: AgentVersion[], loading: boolean, error: string | null) {
+function renderAgentList(
+  agents: AgentVersion[],
+  loading: boolean,
+  error: string | null,
+  onRetry: () => void,
+) {
   if (loading) {
     return (
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -160,7 +179,7 @@ function renderAgentList(agents: AgentVersion[], loading: boolean, error: string
     return (
       <div className="text-center py-10">
         <div className="text-red-500 mb-4">{error}</div>
-        <Button variant="outline" onClick={() => window.location.reload()}>
+        <Button variant="outline" onClick={onRetry}>
           重试
         </Button>
       </div>

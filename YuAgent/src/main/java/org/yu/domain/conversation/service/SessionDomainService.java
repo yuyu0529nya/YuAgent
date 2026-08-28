@@ -7,6 +7,7 @@ import org.yu.infrastructure.exception.BusinessException;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 
+import java.util.Collection;
 import java.util.List;
 
 @Service
@@ -24,6 +25,21 @@ public class SessionDomainService {
     public List<SessionEntity> getSessionsByAgentId(String agentId, String userId) {
         return sessionRepository.selectList(Wrappers.<SessionEntity>lambdaQuery().eq(SessionEntity::getAgentId, agentId)
                 .eq(SessionEntity::getUserId, userId).orderByDesc(SessionEntity::getCreatedAt));
+    }
+
+    /** 获取用户的全部会话，按最近更新时间倒序。 */
+    public List<SessionEntity> getSessionsByUserId(String userId) {
+        return sessionRepository.selectList(Wrappers.<SessionEntity>lambdaQuery().eq(SessionEntity::getUserId, userId)
+                .orderByDesc(SessionEntity::getUpdatedAt));
+    }
+
+    /** 批量获取当前用户可见的会话，供统计列表避免逐条查询。 */
+    public List<SessionEntity> getSessionsByIds(Collection<String> sessionIds, String userId) {
+        if (sessionIds == null || sessionIds.isEmpty()) {
+            return List.of();
+        }
+        return sessionRepository.selectList(Wrappers.<SessionEntity>lambdaQuery().in(SessionEntity::getId, sessionIds)
+                .eq(SessionEntity::getUserId, userId));
     }
 
     /** 删除会话

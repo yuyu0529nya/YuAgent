@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.util.StringUtils;
 import org.yu.domain.llm.event.ModelCreatedEvent;
 import org.yu.domain.llm.event.ModelDeletedEvent;
 import org.yu.domain.llm.event.ModelStatusChangedEvent;
@@ -347,6 +348,9 @@ public class LLMDomainService {
     }
 
     public ModelEntity findModelById(String modelId) {
+        if (!StringUtils.hasText(modelId)) {
+            return null;
+        }
         ModelEntity modelEntity = modelRepository.selectById(modelId);
         if (modelEntity == null) {
             return null;
@@ -371,6 +375,16 @@ public class LLMDomainService {
 
         Wrapper<ModelEntity> wrapper = Wrappers.<ModelEntity>lambdaQuery().in(ModelEntity::getId, modelIds);
         return modelRepository.selectList(wrapper);
+    }
+
+    /** 批量获取服务商信息。 */
+    public List<ProviderEntity> getProvidersByIds(Set<String> providerIds) {
+        if (providerIds == null || providerIds.isEmpty()) {
+            return new ArrayList<>();
+        }
+
+        Wrapper<ProviderEntity> wrapper = Wrappers.<ProviderEntity>lambdaQuery().in(ProviderEntity::getId, providerIds);
+        return providerRepository.selectList(wrapper);
     }
 
     /** 获取服务商下的所有模型（包括禁用的）- 用于管理员功能

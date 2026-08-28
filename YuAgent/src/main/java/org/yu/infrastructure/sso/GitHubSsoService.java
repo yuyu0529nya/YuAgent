@@ -1,8 +1,10 @@
 package org.yu.infrastructure.sso;
 
 import com.alibaba.fastjson.JSON;
+import jakarta.annotation.PreDestroy;
 import org.apache.http.HttpEntity;
 import org.apache.http.HttpHeaders;
+import org.apache.http.client.config.RequestConfig;
 import org.apache.http.client.methods.CloseableHttpResponse;
 import org.apache.http.client.methods.HttpGet;
 import org.apache.http.client.methods.HttpPost;
@@ -14,6 +16,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
+import org.springframework.web.util.UriComponentsBuilder;
 import org.yu.domain.sso.model.SsoProvider;
 import org.yu.domain.sso.model.SsoUserInfo;
 import org.yu.domain.sso.service.SsoService;
@@ -28,19 +31,24 @@ import java.util.Map;
 public class GitHubSsoService implements SsoService {
 
     private static final Logger logger = LoggerFactory.getLogger(GitHubSsoService.class);
+    private static final int CONNECT_TIMEOUT_MILLIS = 10_000;
+    private static final int READ_TIMEOUT_MILLIS = 20_000;
 
     private final SsoConfigProvider ssoConfigProvider;
+    private final CloseableHttpClient httpClient;
 
     public GitHubSsoService(SsoConfigProvider ssoConfigProvider) {
         this.ssoConfigProvider = ssoConfigProvider;
+        this.httpClient = createHttpClient();
     }
 
     @Override
     public String getLoginUrl(String redirectUrl) {
         SsoConfigProvider.GitHubSsoConfig config = getEffectiveConfig();
-        String callbackUrl = redirectUrl != null ? redirectUrl : config.getRedirectUri();
-        return config.getAuthorizeUrl() + "?client_id=" + config.getClientId() + "&redirect_uri=" + callbackUrl
-                + "&scope=user:email";
+        String callbackUrl = StringUtils.hasText(redirectUrl) ? redirectUrl : config.getRedirectUri();
+        return UriComponentsBuilder.fromHttpUrl(config.getAuthorizeUrl()).queryParam("client_id", config.getClientId())
+                .queryParam("redirect_uri", callbackUrl).queryParam("scope", "user:email").build().encode()
+                .toUriString();
     }
 
     @Override
@@ -86,7 +94,7 @@ public class GitHubSsoService implements SsoService {
 
     private String getAccessToken(String code) {
         SsoConfigProvider.GitHubSsoConfig config = getEffectiveConfig();
-        try (CloseableHttpClient httpClient = HttpClients.createDefault()) {
+        try {
             HttpPost httpPost = new HttpPost(config.getTokenUrl());
 
             // 设置请求头
@@ -105,6 +113,9 @@ public class GitHubSsoService implements SsoService {
 
             // 发送请求
             try (CloseableHttpResponse response = httpClient.execute(httpPost)) {
+                if (!hasSuccessStatus(response, "获取GitHub访问令牌")) {
+                    return null;
+                }
                 HttpEntity entity = response.getEntity();
                 if (entity != null) {
                     String result = EntityUtils.toString(entity);
@@ -120,7 +131,7 @@ public class GitHubSsoService implements SsoService {
 
     private Map<String, Object> getGitHubUserInfo(String accessToken) {
         SsoConfigProvider.GitHubSsoConfig config = getEffectiveConfig();
-        try (CloseableHttpClient httpClient = HttpClients.createDefault()) {
+        try {
             HttpGet httpGet = new HttpGet(config.getUserInfoUrl());
 
             // 设置请求头
@@ -129,6 +140,9 @@ public class GitHubSsoService implements SsoService {
 
             // 发送请求
             try (CloseableHttpResponse response = httpClient.execute(httpGet)) {
+                if (!hasSuccessStatus(response, "获取GitHub用户信息")) {
+                    return null;
+                }
                 HttpEntity entity = response.getEntity();
                 if (entity != null) {
                     String result = EntityUtils.toString(entity);
@@ -143,7 +157,7 @@ public class GitHubSsoService implements SsoService {
 
     private String getPrimaryEmail(String accessToken) {
         SsoConfigProvider.GitHubSsoConfig config = getEffectiveConfig();
-        try (CloseableHttpClient httpClient = HttpClients.createDefault()) {
+        try {
             HttpGet httpGet = new HttpGet(config.getUserEmailUrl());
 
             // 设置请求头
@@ -152,6 +166,9 @@ public class GitHubSsoService implements SsoService {
 
             // 发送请求
             try (CloseableHttpResponse response = httpClient.execute(httpGet)) {
+                if (!hasSuccessStatus(response, "获取GitHub用户邮箱")) {
+                    return null;
+                }
                 HttpEntity entity = response.getEntity();
                 if (entity != null) {
                     String result = EntityUtils.toString(entity);
@@ -175,10 +192,35 @@ public class GitHubSsoService implements SsoService {
         SsoConfigProvider.GitHubSsoConfig config = ssoConfigProvider.getGitHubConfig();
 
         // 检查配置是否完整
-        if (config.getClientId() == null || config.getClientSecret() == null || config.getRedirectUri() == null) {
+        if (!StringUtils.hasText(config.getClientId()) || !StringUtils.hasText(config.getClientSecret())
+                || !StringUtils.hasText(config.getRedirectUri())) {
             throw new BusinessException("GitHub SSO配置不完整，请在管理后台配置GitHub OAuth应用信息");
         }
 
         return config;
+    }
+
+    @PreDestroy
+    public void close() {
+        try {
+            httpClient.close();
+        } catch (IOException e) {
+            logger.warn("关闭GitHub SSO HTTP客户端失败", e);
+        }
+    }
+
+    private CloseableHttpClient createHttpClient() {
+        RequestConfig requestConfig = RequestConfig.custom().setConnectTimeout(CONNECT_TIMEOUT_MILLIS)
+                .setSocketTimeout(READ_TIMEOUT_MILLIS).setConnectionRequestTimeout(CONNECT_TIMEOUT_MILLIS).build();
+        return HttpClients.custom().setDefaultRequestConfig(requestConfig).build();
+    }
+
+    private boolean hasSuccessStatus(CloseableHttpResponse response, String action) {
+        int statusCode = response.getStatusLine().getStatusCode();
+        if (statusCode >= 200 && statusCode < 300) {
+            return true;
+        }
+        logger.warn("{}失败，GitHub返回HTTP状态码: {}", action, statusCode);
+        return false;
     }
 }

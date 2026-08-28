@@ -103,8 +103,8 @@ public class ContainerTemplate {
         template.setCpuLimit(1.0);
         template.setMemoryLimit(512);
         template.setVolumeMountPath("/app/data");
-        template.setNetworkMode(System.getenv().getOrDefault("YUAGENT_CONTAINER_DEFAULT_MCP_NETWORK",
-                "yuagent_yuagent-network"));
+        template.setNetworkMode(
+                System.getenv().getOrDefault("YUAGENT_CONTAINER_DEFAULT_MCP_NETWORK", "yuagent_yuagent-network"));
         template.setRestartPolicy("unless-stopped");
         return template;
     }

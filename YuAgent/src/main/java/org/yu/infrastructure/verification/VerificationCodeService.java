@@ -1,12 +1,13 @@
 package org.yu.infrastructure.verification;
 
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.yu.infrastructure.exception.BusinessException;
 import org.yu.infrastructure.verification.storage.CodeStorage;
 
+import java.security.SecureRandom;
 import java.util.Map;
-import java.util.Random;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 
@@ -20,6 +21,7 @@ public class VerificationCodeService {
     private final Map<String, LimitInfo> limitMap = new ConcurrentHashMap<>();
     // 存储IP和发送次数的映射，用于防刷
     private final Map<String, IpLimitInfo> ipLimitMap = new ConcurrentHashMap<>();
+    private final Object rateLimitMonitor = new Object();
 
     // 验证码存储接口，可以是内存存储或Redis存储
     private final CodeStorage codeStorage;
@@ -34,6 +36,7 @@ public class VerificationCodeService {
     private static final int MIN_SEND_INTERVAL_SECONDS = 60;
     // IP每日最大发送次数
     private static final int MAX_DAILY_IP_SEND_COUNT = 20;
+    private static final SecureRandom SECURE_RANDOM = new SecureRandom();
 
     @Autowired
     public VerificationCodeService(CodeStorage codeStorage) {
@@ -53,36 +56,22 @@ public class VerificationCodeService {
             throw new BusinessException("图形验证码错误或已过期");
         }
 
-        // 检查IP限制
-        checkIpLimit(ip);
-
-        // 检查邮箱发送限制
-        checkSendLimit(email);
-
         // 生成6位数字验证码
-        Random random = new Random();
         StringBuilder code = new StringBuilder();
         for (int i = 0; i < CODE_LENGTH; i++) {
-            code.append(random.nextInt(10));
+            code.append(SECURE_RANDOM.nextInt(10));
         }
 
         // 计算过期时间
         long expirationMillis = TimeUnit.MINUTES.toMillis(EXPIRATION_MINUTES);
 
+        // 检查并占用防刷额度必须是同一个临界区；单独 get/put 在并发请求下会让多个
+        // 请求同时通过检查，绕过发送间隔与每日限制。
+        reserveSendQuota(email, ip, System.currentTimeMillis());
+
         // 使用带业务类型的key
         String storageKey = generateStorageKey(email, businessType);
         codeStorage.storeCode(storageKey, code.toString(), expirationMillis);
-
-        // 记录发送次数
-        LimitInfo limitInfo = limitMap.getOrDefault(email, new LimitInfo());
-        limitInfo.incrementCount();
-        limitInfo.setLastSendTime(System.currentTimeMillis());
-        limitMap.put(email, limitInfo);
-
-        // 记录IP发送次数
-        IpLimitInfo ipLimitInfo = ipLimitMap.getOrDefault(ip, new IpLimitInfo());
-        ipLimitInfo.incrementCount();
-        ipLimitMap.put(ip, ipLimitInfo);
 
         return code.toString();
     }
@@ -112,34 +101,43 @@ public class VerificationCodeService {
         return businessType + ":" + email;
     }
 
-    private void checkSendLimit(String email) {
-        LimitInfo limitInfo = limitMap.get(email);
-        if (limitInfo != null) {
+    void reserveSendQuota(String email, String ip, long now) {
+        synchronized (rateLimitMonitor) {
+            LimitInfo limitInfo = limitMap.get(email);
             // 检查发送间隔
-            long elapsedSeconds = TimeUnit.MILLISECONDS
-                    .toSeconds(System.currentTimeMillis() - limitInfo.getLastSendTime());
-            if (elapsedSeconds < MIN_SEND_INTERVAL_SECONDS) {
-                throw new BusinessException("发送过于频繁，请" + (MIN_SEND_INTERVAL_SECONDS - elapsedSeconds) + "秒后再试");
+            if (limitInfo != null) {
+                long elapsedSeconds = TimeUnit.MILLISECONDS.toSeconds(now - limitInfo.getLastSendTime());
+                if (elapsedSeconds < MIN_SEND_INTERVAL_SECONDS) {
+                    throw new BusinessException("发送过于频繁，请" + (MIN_SEND_INTERVAL_SECONDS - elapsedSeconds) + "秒后再试");
+                }
+
+                if (limitInfo.getDailyCount() >= MAX_DAILY_SEND_COUNT) {
+                    throw new BusinessException("今日发送次数已达上限，请明天再试");
+                }
             }
 
-            // 检查日发送次数
-            if (limitInfo.getDailyCount() >= MAX_DAILY_SEND_COUNT) {
-                throw new BusinessException("今日发送次数已达上限，请明天再试");
+            IpLimitInfo ipLimitInfo = ipLimitMap.get(ip);
+            if (ipLimitInfo != null && ipLimitInfo.getDailyCount() >= MAX_DAILY_IP_SEND_COUNT) {
+                throw new BusinessException("您的IP今日请求次数已达上限，请明天再试");
             }
+
+            limitInfo = limitInfo == null ? new LimitInfo() : limitInfo;
+            ipLimitInfo = ipLimitInfo == null ? new IpLimitInfo() : ipLimitInfo;
+            limitInfo.incrementCount();
+            limitInfo.setLastSendTime(now);
+            ipLimitInfo.incrementCount();
+            limitMap.put(email, limitInfo);
+            ipLimitMap.put(ip, ipLimitInfo);
         }
     }
 
-    private void checkIpLimit(String ip) {
-        IpLimitInfo ipLimitInfo = ipLimitMap.get(ip);
-        if (ipLimitInfo != null && ipLimitInfo.getDailyCount() >= MAX_DAILY_IP_SEND_COUNT) {
-            throw new BusinessException("您的IP今日请求次数已达上限，请明天再试");
-        }
-    }
-
-    // 用于定时重置每日发送次数（可在应用启动时设置每日零点执行）
+    /** 每日零点重置发送配额，避免“每日”额度永久累积。 */
+    @Scheduled(cron = "0 0 0 * * *")
     public void resetAllCounts() {
-        limitMap.clear();
-        ipLimitMap.clear();
+        synchronized (rateLimitMonitor) {
+            limitMap.clear();
+            ipLimitMap.clear();
+        }
     }
 
     // 限制信息内部类

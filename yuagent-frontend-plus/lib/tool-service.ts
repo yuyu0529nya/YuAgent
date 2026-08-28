@@ -1,13 +1,16 @@
-import { httpClient } from "@/lib/http-client"
+import { httpClient, type RequestConfig } from "@/lib/http-client"
 import { API_ENDPOINTS, API_CONFIG } from "@/lib/api-config"
 import { toast } from "@/hooks/use-toast"
-import { Tool, ToolVersion, ApiResponse, GetMarketToolsParams, PublishToolToMarketParams } from "@/types/tool"
+import { ApiResponse, GetMarketToolsParams, PageResponse, PortalToolDTO, PublishToolToMarketParams, ToolVersionDTO } from "@/types/tool"
 import { withToast } from "./toast-utils"
 
 // 获取工具市场列表
-export async function getMarketTools(params?: GetMarketToolsParams): Promise<ApiResponse<any>> {
+export async function getMarketTools(
+  params?: GetMarketToolsParams,
+  config?: Pick<RequestConfig, "signal">,
+): Promise<ApiResponse<PageResponse<ToolVersionDTO>>> {
   try {
-    return await httpClient.get(API_ENDPOINTS.MARKET_TOOLS, { params })
+    return await httpClient.get(API_ENDPOINTS.MARKET_TOOLS, { ...config, params })
   } catch (error) {
  
     return {
@@ -20,28 +23,13 @@ export async function getMarketTools(params?: GetMarketToolsParams): Promise<Api
 }
 
 // 获取工具市场列表（带Toast提示）
-export const getMarketToolsWithToast = withToast(getMarketTools)
-
-// 获取工具详情
-export async function getMarketToolDetail(id: string): Promise<ApiResponse<Tool>> {
-  try {
-    return await httpClient.get(API_ENDPOINTS.MARKET_TOOL_DETAIL(id))
-  } catch (error) {
- 
-    return {
-      code: 500,
-      message: "获取工具详情失败",
-      data: null as any,
-      timestamp: Date.now()
-    }
-  }
-}
-
-// 获取工具详情（带Toast提示）
-export const getMarketToolDetailWithToast = withToast(getMarketToolDetail)
+export const getMarketToolsWithToast = withToast(getMarketTools, {
+  showSuccessToast: false,
+  errorTitle: "获取工具市场列表失败",
+})
 
 // 获取工具版本详情
-export async function getMarketToolVersionDetail(id: string, version: string): Promise<ApiResponse<any>> {
+export async function getMarketToolVersionDetail(id: string, version: string): Promise<ApiResponse<ToolVersionDTO | null>> {
   try {
     return await httpClient.get(API_ENDPOINTS.MARKET_TOOL_VERSION_DETAIL(id, version))
   } catch (error) {
@@ -56,10 +44,13 @@ export async function getMarketToolVersionDetail(id: string, version: string): P
 }
 
 // 获取工具版本详情（带Toast提示）
-export const getMarketToolVersionDetailWithToast = withToast(getMarketToolVersionDetail)
+export const getMarketToolVersionDetailWithToast = withToast(getMarketToolVersionDetail, {
+  showSuccessToast: false,
+  errorTitle: "获取工具版本详情失败",
+})
 
 // 获取工具版本列表
-export async function getMarketToolVersions(id: string): Promise<ApiResponse<ToolVersion[]>> {
+export async function getMarketToolVersions(id: string): Promise<ApiResponse<ToolVersionDTO[]>> {
   try {
     return await httpClient.get(API_ENDPOINTS.MARKET_TOOL_VERSIONS(id))
   } catch (error) {
@@ -121,7 +112,7 @@ export const installToolWithToast = withToast(
 /**
  * 获取用户已安装的工具和推荐工具列表
  */
-export async function getUserTools(params?: any): Promise<ApiResponse<Tool[]>> {
+export async function getUserTools(params?: Record<string, string | number | boolean>): Promise<ApiResponse<PortalToolDTO[]>> {
   try {
     return await httpClient.get(API_ENDPOINTS.USER_TOOLS, { params });
   } catch (error) {
@@ -172,7 +163,7 @@ export const deleteUserToolWithToast = withToast(
 )
 
 // 上传工具
-export async function uploadTool(data: any): Promise<ApiResponse<Tool>> {
+export async function uploadTool(data: unknown): Promise<ApiResponse<PortalToolDTO | null>> {
   try {
     return await httpClient.post(API_ENDPOINTS.UPLOAD_TOOL, data)
   } catch (error) {
@@ -180,7 +171,7 @@ export async function uploadTool(data: any): Promise<ApiResponse<Tool>> {
     return {
       code: 500,
       message: "上传工具失败",
-      data: null as any,
+      data: null,
       timestamp: Date.now()
     }
   }
@@ -220,7 +211,7 @@ export const deleteToolWithToast = withToast(
 )
 
 // 获取用户工具详情
-export async function getToolDetail(id: string): Promise<ApiResponse<Tool>> {
+export async function getToolDetail(id: string): Promise<ApiResponse<PortalToolDTO | null>> {
   try {
     return await httpClient.get(API_ENDPOINTS.TOOL_DETAIL(id))
   } catch (error) {
@@ -228,17 +219,20 @@ export async function getToolDetail(id: string): Promise<ApiResponse<Tool>> {
     return {
       code: 500,
       message: "获取工具详情失败",
-      data: null as any,
+      data: null,
       timestamp: Date.now()
     }
   }
 }
 
 // 获取用户工具详情（带Toast提示）
-export const getToolDetailWithToast = withToast(getToolDetail)
+export const getToolDetailWithToast = withToast(getToolDetail, {
+  showSuccessToast: false,
+  errorTitle: "获取工具详情失败",
+})
 
 // 更新工具
-export async function updateTool(id: string, data: any): Promise<ApiResponse<Tool>> {
+export async function updateTool(id: string, data: unknown): Promise<ApiResponse<PortalToolDTO | null>> {
   try {
     return await httpClient.put(API_ENDPOINTS.UPDATE_TOOL(id), data)
   } catch (error) {
@@ -246,7 +240,7 @@ export async function updateTool(id: string, data: any): Promise<ApiResponse<Too
     return {
       code: 500,
       message: "更新工具失败",
-      data: null as any,
+      data: null,
       timestamp: Date.now()
     }
   }
@@ -268,7 +262,8 @@ export async function getInstalledTools(params?: {
   page?: number;
   pageSize?: number;
   toolName?: string;
-}): Promise<ApiResponse<any>> {
+}): Promise<ApiResponse<PageResponse<ToolVersionDTO>>>
+{
   try {
     return await httpClient.get(API_ENDPOINTS.INSTALLED_TOOLS, { params });
   } catch (error) {
@@ -276,8 +271,25 @@ export async function getInstalledTools(params?: {
     return {
       code: 500,
       message: "获取已安装工具失败",
-      data: [],
+      data: { records: [], total: 0, size: 0, current: 1, pages: 0 },
       timestamp: Date.now()
+    }
+  }
+}
+
+/** Checks whether the signed-in user installed one exact tool version. */
+export async function isToolVersionInstalled(
+  toolId: string,
+  version: string,
+): Promise<ApiResponse<boolean>> {
+  try {
+    return await httpClient.get(API_ENDPOINTS.INSTALLED_TOOL_VERSION(toolId, version))
+  } catch {
+    return {
+      code: 500,
+      message: "获取工具安装状态失败",
+      data: false,
+      timestamp: Date.now(),
     }
   }
 }
@@ -327,7 +339,7 @@ export const uninstallToolWithToast = withToast(
 /**
  * 获取推荐工具列表
  */
-export async function getRecommendTools(): Promise<ApiResponse<any>> {
+export async function getRecommendTools(): Promise<ApiResponse<ToolVersionDTO[]>> {
   try {
     return await httpClient.get(API_ENDPOINTS.RECOMMEND_TOOLS);
   } catch (error) {

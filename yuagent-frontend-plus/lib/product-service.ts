@@ -17,7 +17,7 @@ export class ProductService {
   // 根据ID获取商品详情
   static async getProductById(id: string): Promise<ApiResponse<Product>> {
     try {
-      return await httpClient.get(API_ENDPOINTS.PRODUCT_BY_ID(id));
+      return await httpClient.get<ApiResponse<Product>>(API_ENDPOINTS.PRODUCT_BY_ID(id));
     } catch (error) {
       return {
         code: 500,
@@ -31,7 +31,7 @@ export class ProductService {
   // 根据业务标识获取商品
   static async getProductByBusinessKey(type: string, serviceId: string): Promise<ApiResponse<Product>> {
     try {
-      return await httpClient.get(API_ENDPOINTS.PRODUCT_BY_BUSINESS, {
+      return await httpClient.get<ApiResponse<Product>>(API_ENDPOINTS.PRODUCT_BY_BUSINESS, {
         params: { type, serviceId }
       });
     } catch (error) {
@@ -47,7 +47,7 @@ export class ProductService {
   // 获取指定类型的活跃商品列表
   static async getActiveProducts(type?: string): Promise<ApiResponse<Product[]>> {
     try {
-      return await httpClient.get(API_ENDPOINTS.ACTIVE_PRODUCTS, {
+      return await httpClient.get<ApiResponse<Product[]>>(API_ENDPOINTS.ACTIVE_PRODUCTS, {
         params: type ? { type } : undefined
       });
     } catch (error) {
@@ -63,7 +63,7 @@ export class ProductService {
   // 检查商品是否存在且激活
   static async isProductActive(type: string, serviceId: string): Promise<ApiResponse<boolean>> {
     try {
-      return await httpClient.get(API_ENDPOINTS.BUSINESS_ACTIVE, {
+      return await httpClient.get<ApiResponse<boolean>>(API_ENDPOINTS.BUSINESS_ACTIVE, {
         params: { type, serviceId }
       });
     } catch (error) {
@@ -96,7 +96,12 @@ export class ProductService {
           timestamp: Date.now()
         };
       }
-      return response as ApiResponse<Record<string, Product[]>>;
+      return {
+        code: response.code,
+        message: response.message,
+        data: {},
+        timestamp: response.timestamp
+      };
     } catch (error) {
       return {
         code: 500,

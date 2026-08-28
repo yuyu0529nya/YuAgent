@@ -129,7 +129,7 @@ export async function getLatestVersionNumber(ragId: string): Promise<ApiResponse
     return {
       code: 500,
       message: error instanceof Error ? error.message : "获取最新版本号失败",
-      data: null,
+      data: "",
       timestamp: Date.now()
     }
   }

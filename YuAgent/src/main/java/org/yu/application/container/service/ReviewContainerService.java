@@ -6,9 +6,7 @@ import org.springframework.stereotype.Service;
 import org.yu.application.container.dto.ContainerDTO;
 import org.yu.infrastructure.exception.BusinessException;
 
-/**
- * Service for managing the review container used during MCP tool validation.
- */
+/** Service for managing the review container used during MCP tool validation. */
 @Service
 public class ReviewContainerService {
 
@@ -26,7 +24,8 @@ public class ReviewContainerService {
             Integer accessPort = resolveContainerAccessPort(reviewContainer);
 
             if (reviewContainer.getIpAddress() == null || accessPort == null) {
-                logger.error("Review container network info incomplete: ip={}, internalPort={}, externalPort={}, status={}",
+                logger.error(
+                        "Review container network info incomplete: ip={}, internalPort={}, externalPort={}, status={}",
                         reviewContainer.getIpAddress(), reviewContainer.getInternalPort(),
                         reviewContainer.getExternalPort(), reviewContainer.getStatus());
                 throw new BusinessException("审核容器网络配置不完整，容器状态: " + reviewContainer.getStatus());
@@ -79,7 +78,8 @@ public class ReviewContainerService {
 
         boolean healthy = isRunning && hasNetworkInfo && hasDockerContainerId;
         if (!healthy) {
-            logger.debug("Review container basic health failed: containerId={}, running={}, networkInfo={}, dockerId={}",
+            logger.debug(
+                    "Review container basic health failed: containerId={}, running={}, networkInfo={}, dockerId={}",
                     container.getId(), isRunning, hasNetworkInfo, hasDockerContainerId);
         }
         return healthy;
@@ -97,8 +97,7 @@ public class ReviewContainerService {
 
     private boolean isLocalAddress(String ipAddress) {
         return "localhost".equalsIgnoreCase(ipAddress) || "host.docker.internal".equalsIgnoreCase(ipAddress)
-                || "127.0.0.1".equals(ipAddress)
-                || "::1".equals(ipAddress) || "0:0:0:0:0:0:0:1".equals(ipAddress);
+                || "127.0.0.1".equals(ipAddress) || "::1".equals(ipAddress) || "0:0:0:0:0:0:0:1".equals(ipAddress);
     }
 
     public static class ReviewContainerConnection {

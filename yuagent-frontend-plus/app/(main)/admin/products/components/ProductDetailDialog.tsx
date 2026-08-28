@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -28,27 +28,40 @@ interface ProductDetailDialogProps {
 export function ProductDetailDialog({ open, onOpenChange, product }: ProductDetailDialogProps) {
   const [rule, setRule] = useState<Rule | null>(null);
   const [loadingRule, setLoadingRule] = useState(false);
+  const latestRuleRequest = useRef(0);
 
-  // 加载关联的规则信息
-  useEffect(() => {
-    if (open && product.ruleId) {
-      loadRule();
+  const loadRule = useCallback(async () => {
+    if (!product.ruleId) {
+      setRule(null);
+      return;
     }
-  }, [open, product.ruleId]);
 
-  const loadRule = async () => {
+    const requestId = ++latestRuleRequest.current;
     setLoadingRule(true);
     try {
       const response = await AdminRuleService.getRuleById(product.ruleId);
-      if (response.code === 200) {
+      if (response.code === 200 && requestId === latestRuleRequest.current) {
         setRule(response.data);
       }
-    } catch (error) {
- 
+    } catch {
+      if (requestId === latestRuleRequest.current) {
+        setRule(null);
+      }
     } finally {
-      setLoadingRule(false);
+      if (requestId === latestRuleRequest.current) {
+        setLoadingRule(false);
+      }
     }
-  };
+  }, [product.ruleId]);
+
+  // 加载关联的规则信息
+  useEffect(() => {
+    if (open) {
+      void loadRule();
+    } else {
+      setRule(null);
+    }
+  }, [loadRule, open]);
 
   // 格式化价格配置显示
   const formatPricingConfig = (config: Record<string, any>) => {

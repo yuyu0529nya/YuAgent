@@ -1,0 +1,111 @@
+// Package server 负责装配整个 MCP Gateway：构造 workspaces.ServiceManager、
+// 分别挂载 gateway.Handler（MCP 流量）与 admin.Handler（管理 API），
+// 并异步恢复持久化的 MCP 部署。
+package server
+
+import (
+	"context"
+
+	"github.com/labstack/echo/v4"
+
+	"github.com/lucky-aeon/agentx/plugin-helper/internal/admin"
+	"github.com/lucky-aeon/agentx/plugin-helper/internal/gateway"
+	"github.com/lucky-aeon/agentx/plugin-helper/internal/platform/config"
+	"github.com/lucky-aeon/agentx/plugin-helper/internal/platform/identity"
+	"github.com/lucky-aeon/agentx/plugin-helper/internal/platform/oplog"
+	"github.com/lucky-aeon/agentx/plugin-helper/internal/platform/persistence"
+	"github.com/lucky-aeon/agentx/plugin-helper/internal/platform/xlog"
+	"github.com/lucky-aeon/agentx/plugin-helper/internal/runtime"
+	"github.com/lucky-aeon/agentx/plugin-helper/internal/workspaces"
+)
+
+// Server 是整个网关的顶层聚合。
+// 目前只持有 workspaces.ServiceManager 以便在关闭时统一终止所有 MCP 服务。
+type Server struct {
+	services workspaces.ServiceManagerI
+	auth     *identity.Service
+	opLogDB  interface{ Close(context.Context) error }
+}
+
+// New 构造并返回一个 Server 实例，同时在给定的 Echo 上注册：
+//   - 管理 API（admin.Handler）
+//   - MCP 协议入口（gateway.Handler）
+//   - /admin 静态资源（前端 dashboard）
+//   - /* 单服务代理（必须最后注册）
+//
+// 非 SaaS 模式下会异步触发一次从 mcp_servers.json 恢复 MCP 部署。
+func New(cfg config.Config, e *echo.Echo) *Server {
+	portMgr := runtime.NewPortManager()
+	services := workspaces.NewServiceMgr(cfg, portMgr)
+	var store identity.Store
+	if cfg.GetAuthConfig().GetMode() == "saas" {
+		if err := identity.ValidateSaaSConfig(&cfg); err != nil {
+			panic(err)
+		}
+		mongoStore, err := identity.OpenMongoStore(context.Background(), cfg.Auth.MongoURI, cfg.Auth.MongoDatabase)
+		if err != nil {
+			panic(err)
+		}
+		store = mongoStore
+	}
+	authSvc := identity.NewService(&cfg, store)
+	if err := authSvc.Bootstrap(context.Background()); err != nil {
+		panic(err)
+	}
+	operationLogs, opLogCloser, err := openOperationLogStore(context.Background(), cfg)
+	if err != nil {
+		panic(err)
+	}
+	xlog.RegisterSink(oplog.NewXLogSink(operationLogs))
+
+	adminH := admin.NewHandler(services, &cfg, authSvc, operationLogs)
+	gatewayH := gateway.NewHandler(services, &cfg, authSvc)
+
+	// 先注册精确匹配的路由
+	adminH.Register(e)
+	gatewayH.Register(e)
+
+	// 静态托管前端 dashboard
+	e.Static("/admin", "web/dist")
+
+	// 通配路由 /* 必须最后注册（echo 的路由优先级要求）
+	gatewayH.RegisterProxy(e)
+
+	// SaaS 模式的账号、工作区、已安装 MCP 都以 Mongo 为准。
+	// mcp_servers.json 是旧版全局持久化文件，不能在 SaaS 下自动回放到 default workspace。
+	if !authSvc.IsSaaS() {
+		_ = persistence.LoadAndDeployServers(cfg, func(name string, mcpCfg config.MCPServerConfig) error {
+			_, err := adminH.DeployServer(name, mcpCfg)
+			return err
+		})
+	}
+
+	return &Server{services: services, auth: authSvc, opLogDB: opLogCloser}
+}
+
+// Close 优雅关闭底层 service manager（会关闭所有 workspaces 及其 MCP 服务）。
+func (s *Server) Close() {
+	s.services.Close()
+	if s.auth != nil {
+		_ = s.auth.Close(context.Background())
+	}
+	if s.opLogDB != nil {
+		_ = s.opLogDB.Close(context.Background())
+	}
+}
+
+func openOperationLogStore(ctx context.Context, cfg config.Config) (oplog.Store, interface{ Close(context.Context) error }, error) {
+	cfg.Default()
+	if cfg.OperationLog != nil && cfg.OperationLog.Storage == "mongo" {
+		store, err := oplog.OpenMongoStore(ctx, cfg.OperationLog.MongoURI, cfg.OperationLog.MongoDatabase, cfg.OperationLog.MongoCollection)
+		if err != nil {
+			return nil, nil, err
+		}
+		return store, store, nil
+	}
+	store, err := oplog.NewFileRecorder(cfg.WorkspacePath)
+	if err != nil {
+		return nil, nil, err
+	}
+	return store, nil, nil
+}

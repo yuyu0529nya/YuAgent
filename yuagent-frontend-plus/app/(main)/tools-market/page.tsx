@@ -2,42 +2,17 @@
 
 import { useState, useEffect } from "react"
 import Link from "next/link"
-import { Search, X, Plus, Wrench, Download, Info, User, Check, ChevronRight, ArrowLeft } from "lucide-react"
+import { Search, X, Plus, Wrench, Download, Info, User, ArrowLeft } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardHeader, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
-import { toast } from "@/hooks/use-toast"
 
-import { Tool, ToolStatus } from "@/types/tool"
-import { getMarketToolsWithToast, installToolWithToast } from "@/lib/tool-service"
+import { Tool } from "@/types/tool"
+import { toMarketTool } from "@/lib/market-tool-mapper"
+import { getMarketTools } from "@/lib/tool-service"
 import { InstallToolDialog } from "@/components/tool/install-tool-dialog"
-
-// 安装工具对话框
-function ToolInstallDialog({ 
-  open, 
-  onOpenChange, 
-  tool, 
-  version, 
-  onSuccess 
-}: { 
-  open: boolean
-  onOpenChange: (open: boolean) => void
-  tool: Tool | null
-  version?: string | undefined
-  onSuccess?: () => void
-}) {
-  return (
-    <InstallToolDialog
-      open={open}
-      onOpenChange={onOpenChange}
-      tool={tool}
-      version={version}
-      onSuccess={onSuccess || (() => {})}
-    />
-  )
-}
 
 export default function ToolsMarketPage() {
   // 工具市场状态
@@ -48,7 +23,7 @@ export default function ToolsMarketPage() {
   const [tools, setTools] = useState<Tool[]>([])
   const [selectedTool, setSelectedTool] = useState<Tool | null>(null)
   const [isInstallDialogOpen, setIsInstallDialogOpen] = useState(false)
-  const [installingToolId, setInstallingToolId] = useState<string | null>(null)
+  const [refreshToken, setRefreshToken] = useState(0)
   
   // 防抖处理搜索查询
   useEffect(() => {
@@ -61,58 +36,50 @@ export default function ToolsMarketPage() {
 
   // 获取工具市场列表
   useEffect(() => {
+    const controller = new AbortController()
+    let active = true
+
     async function fetchTools() {
       try {
         setLoading(true)
         setError(null)
 
-        const response = await getMarketToolsWithToast({
+        const response = await getMarketTools({
           toolName: debouncedQuery,
           page: 1,
-          pageSize: 15
-        })
+          pageSize: 15,
+        }, { signal: controller.signal })
+
+        if (!active) {
+          return
+        }
 
         if (response.code === 200) {
-          // 转换API返回的数据为前端需要的格式
-          const marketTools = (response.data.records || []).map((item: any) => ({
-            id: item.id,
-            toolId: item.toolId,
-            name: item.name,
-            icon: item.icon,
-            subtitle: item.subtitle,
-            description: item.description,
-            user_id: item.userId,
-            author: item.userName || "未知作者",
-            labels: item.labels || [],
-            tool_type: item.toolType || "",
-            upload_type: item.uploadType || "",
-            upload_url: item.uploadUrl || "",
-            install_command: {
-              type: 'sse',
-              url: `https://api.example.com/tools/${item.toolId}`
-            },
-            tool_list: item.toolList || [],
-            status: ToolStatus.APPROVED,
-            is_office: item.office || false,
-            installCount: item.installCount || 0,
-            current_version: item.version || "0.0.1",
-            createdAt: item.createdAt,
-            updatedAt: item.updatedAt
-          }));
+          const marketTools = response.data.records.map(toMarketTool);
           setTools(marketTools);
         } else {
           setError(response.message)
         }
       } catch (error) {
+        if (!active) {
+          return
+        }
         const errorMessage = error instanceof Error ? error.message : "未知错误"
         setError(errorMessage)
       } finally {
-        setLoading(false)
+        if (active) {
+          setLoading(false)
+        }
       }
     }
 
-      fetchTools()
-  }, [debouncedQuery])
+    fetchTools()
+
+    return () => {
+      active = false
+      controller.abort()
+    }
+  }, [debouncedQuery, refreshToken])
 
   // 清除搜索
   const clearSearch = () => {
@@ -120,7 +87,7 @@ export default function ToolsMarketPage() {
   }
 
   // 处理安装工具
-  const handleInstallTool = async (tool: Tool) => {
+  const handleInstallTool = (tool: Tool) => {
     setSelectedTool(tool)
     setIsInstallDialogOpen(true)
   }
@@ -140,11 +107,6 @@ export default function ToolsMarketPage() {
       
       // 选择性地从页面中移除已安装的工具
       // setTools(tools.filter(t => t.id !== selectedTool.id && t.toolId !== selectedTool.toolId))
-      
-      toast({
-        title: "安装成功",
-        description: `${selectedTool.name} 已成功安装`
-      })
     }
   }
 
@@ -226,7 +188,7 @@ export default function ToolsMarketPage() {
         // 错误状态
         <div className="text-center py-10">
           <div className="text-red-500 mb-4">{error}</div>
-          <Button variant="outline" onClick={() => window.location.reload()}>
+          <Button variant="outline" onClick={() => setRefreshToken((token) => token + 1)}>
             重试
           </Button>
         </div>
@@ -305,10 +267,10 @@ export default function ToolsMarketPage() {
                   <Button 
                     size="sm"
                     onClick={() => handleInstallTool(tool)}
-                    disabled={installingToolId === tool.id}
+                    disabled={tool.isInstalled}
                   >
                     <Download className="mr-2 h-4 w-4" />
-                    安装
+                    {tool.isInstalled ? "已安装" : "安装"}
                   </Button>
                   <Button 
                     variant="outline" 
@@ -333,24 +295,7 @@ export default function ToolsMarketPage() {
         onOpenChange={setIsInstallDialogOpen}
         tool={selectedTool}
         version={selectedTool?.current_version}
-        onSuccess={() => {
-          // 标记选中工具为已安装
-          if (selectedTool) {
-            // 更新本地工具状态
-            const updatedTools = tools.map(t => {
-              if (t.id === selectedTool.id || t.toolId === selectedTool.toolId) {
-                return { ...t, isInstalled: true };
-              }
-              return t;
-            });
-            setTools(updatedTools);
-            
-            toast({
-              title: "安装成功",
-              description: `${selectedTool.name} 已成功安装`
-            });
-          }
-        }}
+        onSuccess={handleInstallSuccess}
       />
     </div>
   )

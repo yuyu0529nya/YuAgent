@@ -172,9 +172,8 @@ public class ScheduledTaskExecutionService {
                 // 只调度未来的任务
                 if (nextExecuteTime != null && nextExecuteTime.isAfter(now)) {
                     queueManager.addTask(task, nextExecuteTime);
-                } else if (nextExecuteTime != null && nextExecuteTime.isBefore(now)) {
-                    // 过期任务，立即执行一次
-                    queueManager.addTask(task, now.plusSeconds(1));
+                } else if (nextExecuteTime != null) {
+                    scheduleExpiredTask(task, now);
                 }
             }
 
@@ -183,5 +182,25 @@ public class ScheduledTaskExecutionService {
         } catch (Exception e) {
             logger.error("加载活跃任务到延迟队列失败: {}", e.getMessage(), e);
         }
+    }
+
+    /** 恢复服务时，过期的队列时间不能直接视为仍可执行：超过执行容差的重复任务应重算下一次， 一次性任务则结束，避免任务在重启后永久丢失或重复执行。 */
+    private void scheduleExpiredTask(ScheduledTaskEntity task, LocalDateTime now) {
+        if (taskScheduleService.shouldExecuteAt(task, now)) {
+            queueManager.addTask(task, now.plusSeconds(1));
+            return;
+        }
+
+        LocalDateTime nextExecuteTime = taskScheduleService.calculateNextExecuteTime(task, now);
+        if (nextExecuteTime != null) {
+            task.setNextExecuteTime(nextExecuteTime);
+            scheduledTaskDomainService.updateTask(task);
+            queueManager.addTask(task, nextExecuteTime);
+            return;
+        }
+
+        task.complete();
+        scheduledTaskDomainService.completeTask(task.getId(), task.getUserId());
+        logger.info("过期且无需再次执行的任务已完成: taskId={}", task.getId());
     }
 }

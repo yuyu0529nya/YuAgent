@@ -1,5 +1,7 @@
 package org.yu.infrastructure.verification.storage;
 
+import jakarta.annotation.PreDestroy;
+
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
@@ -19,7 +21,11 @@ public class MemoryCodeStorage implements CodeStorage {
 
     public MemoryCodeStorage() {
         // 初始化定时任务
-        scheduler = Executors.newSingleThreadScheduledExecutor();
+        scheduler = Executors.newSingleThreadScheduledExecutor(runnable -> {
+            Thread thread = new Thread(runnable, "verification-code-cleanup");
+            thread.setDaemon(true);
+            return thread;
+        });
         // 定期执行清理任务，每5分钟清理一次过期验证码
         scheduler.scheduleAtFixedRate(this::cleanExpiredCodes, CLEANUP_INTERVAL_MINUTES, CLEANUP_INTERVAL_MINUTES,
                 TimeUnit.MINUTES);
@@ -40,7 +46,7 @@ public class MemoryCodeStorage implements CodeStorage {
         }
 
         // 检查是否过期
-        if (System.currentTimeMillis() > codeInfo.getExpirationTime()) {
+        if (System.currentTimeMillis() >= codeInfo.getExpirationTime()) {
             codeMap.remove(key);
             return null;
         }
@@ -50,18 +56,19 @@ public class MemoryCodeStorage implements CodeStorage {
 
     @Override
     public boolean verifyCode(String key, String code) {
-        String storedCode = getCode(key);
-        if (storedCode == null) {
-            return false;
-        }
-
-        boolean result = storedCode.equals(code);
-        if (result) {
-            // 验证成功后移除
-            removeCode(key);
-        }
-
-        return result;
+        long currentTime = System.currentTimeMillis();
+        boolean[] verified = {false};
+        codeMap.computeIfPresent(key, (ignored, codeInfo) -> {
+            if (codeInfo.getExpirationTime() <= currentTime) {
+                return null;
+            }
+            if (codeInfo.getCode().equals(code)) {
+                verified[0] = true;
+                return null;
+            }
+            return codeInfo;
+        });
+        return verified[0];
     }
 
     @Override
@@ -74,7 +81,7 @@ public class MemoryCodeStorage implements CodeStorage {
         long currentTime = System.currentTimeMillis();
         int count = 0;
         for (Map.Entry<String, CodeInfo> entry : codeMap.entrySet()) {
-            if (entry.getValue().getExpirationTime() < currentTime) {
+            if (entry.getValue().getExpirationTime() <= currentTime) {
                 codeMap.remove(entry.getKey());
                 count++;
             }
@@ -82,6 +89,11 @@ public class MemoryCodeStorage implements CodeStorage {
         if (count > 0) {
             logger.info("已清理 " + count + " 个过期验证码");
         }
+    }
+
+    @PreDestroy
+    public void destroy() {
+        scheduler.shutdownNow();
     }
 
     // 验证码信息内部类

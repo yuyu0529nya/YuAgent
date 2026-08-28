@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -16,7 +16,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Database, FileText, Users, Clock, Tag } from "lucide-react";
@@ -51,32 +51,43 @@ export function RagReviewDialog({
   const [contentPreview, setContentPreview] = useState<RagContentPreviewDTO | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const { toast } = useToast();
+  const latestPreviewRequestRef = useRef(0);
+
+  // 加载内容预览
+  const loadContentPreview = useCallback(async () => {
+    const ragId = rag?.id;
+    if (!ragId) return;
+
+    const requestId = ++latestPreviewRequestRef.current;
+    try {
+      setPreviewLoading(true);
+      const response = await AdminRagService.getRagContentPreview(ragId);
+      if (requestId !== latestPreviewRequestRef.current) return;
+
+      setContentPreview(response.code === 200 ? response.data : null);
+    } catch {
+      if (requestId === latestPreviewRequestRef.current) {
+        setContentPreview(null);
+      }
+    } finally {
+      if (requestId === latestPreviewRequestRef.current) {
+        setPreviewLoading(false);
+      }
+    }
+  }, [rag?.id]);
 
   // 重置表单
   useEffect(() => {
-    if (open && rag) {
+    if (open) {
       setStatus(RagPublishStatus.PUBLISHED);
       setRejectReason("");
+      setContentPreview(null);
       loadContentPreview();
     }
-  }, [open, rag]);
-
-  // 加载内容预览
-  const loadContentPreview = async () => {
-    if (!rag) return;
-    
-    try {
-      setPreviewLoading(true);
-      const response = await AdminRagService.getRagContentPreview(rag.id);
-      if (response.code === 200) {
-        setContentPreview(response.data);
-      }
-    } catch (error) {
- 
-    } finally {
-      setPreviewLoading(false);
-    }
-  };
+    return () => {
+      latestPreviewRequestRef.current += 1;
+    };
+  }, [loadContentPreview, open]);
 
   // 提交审核
   const handleReview = async () => {

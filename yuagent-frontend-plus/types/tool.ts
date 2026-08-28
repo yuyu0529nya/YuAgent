@@ -11,7 +11,7 @@ export interface Tool {
   tool_type: string
   upload_type: string
   upload_url: string
-  install_command: PluginInstallConfig
+  install_command?: PluginInstallConfig
   tool_list: ToolItem[]
   status: ToolStatus
   is_office: boolean
@@ -19,8 +19,34 @@ export interface Tool {
   current_version?: string // 当前版本号
   mcpServerName?: string // MCP服务器名称，用于预设参数
   isGlobal?: boolean // 是否为全局工具
+  isInstalled?: boolean // 当前用户是否已安装（仅用于页面即时状态）
   createdAt: string
   updatedAt: string
+}
+
+/** 用户工具管理接口返回的后端 DTO（保持服务端 camelCase 字段）。 */
+export interface PortalToolDTO {
+  id: string
+  name: string
+  icon: string | null
+  subtitle?: string | null
+  description?: string | null
+  userId?: string | null
+  userName?: string | null
+  labels?: string[] | null
+  toolType?: string | null
+  uploadType?: string | null
+  uploadUrl?: string | null
+  toolList?: ToolItem[] | null
+  status?: string | null
+  isOffice?: boolean | null
+  installCount?: number | null
+  currentVersion?: string | null
+  installCommand?: unknown
+  mcpServerName?: string | null
+  isGlobal?: boolean | null
+  createdAt?: string | null
+  updatedAt?: string | null
 }
 
 export interface ToolVersion {
@@ -46,15 +72,21 @@ export interface ToolVersion {
 export interface ToolItem {
   name: string
   description: string
+  enabled?: boolean
   inputSchema?: {
     type: string
-    properties: Record<string, any>
+    properties: Record<string, ToolParameter>
     required: string[]
   }
   parameters?: {
-    properties: Record<string, { description: string | null } | any>
+    properties: Record<string, ToolParameter>
     required: string[]
   }
+}
+
+export interface ToolParameter {
+  description?: string | null
+  [key: string]: unknown
 }
 
 export type PluginInstallConfig = HostedPluginConfig | StdioPluginConfig;
@@ -74,12 +106,13 @@ export interface StdioPluginConfig {
 }
 
 export enum ToolStatus {
-  PENDING = "等待审核",
-  DEPLOYING = "部署中",
-  FETCHING_TOOLS = "获取工具列表",
-  MANUAL_REVIEW = "人工审核",
-  APPROVED = "通过",
-  FAILED = "失败"
+  WAITING_REVIEW = "WAITING_REVIEW",
+  GITHUB_URL_VALIDATE = "GITHUB_URL_VALIDATE",
+  DEPLOYING = "DEPLOYING",
+  FETCHING_TOOLS = "FETCHING_TOOLS",
+  MANUAL_REVIEW = "MANUAL_REVIEW",
+  APPROVED = "APPROVED",
+  FAILED = "FAILED"
 }
 
 // API响应基本结构
@@ -113,24 +146,27 @@ export interface GetMarketToolsParams {
 export interface ToolVersionDTO {
   id: string
   name: string
-  icon: string
-  subtitle: string
-  description: string
-  userId: string
+  icon: string | null
+  subtitle: string | null
+  description: string | null
+  userId: string | null
   version: string
   toolId: string
-  uploadType: string
-  uploadUrl: string
-  toolList: ToolItem[]
-  labels: string[]
-  isOffice: boolean
-  publicStatus: boolean
-  changeLog: string
-  createdAt: string
-  updatedAt: string
-  userName: string
-  versions: ToolVersionDTO[]
-  office: boolean
+  uploadType: string | null
+  uploadUrl: string | null
+  toolList: ToolItem[] | null
+  labels: string[] | null
+  isOffice?: boolean | null
+  publicStatus?: boolean | null
+  changeLog?: string | null
+  createdAt: string | null
+  updatedAt: string | null
+  userName: string | null
+  versions?: ToolVersionDTO[]
+  office?: boolean | null
+  installCount?: number | null
+  mcpServerName?: string | null
+  delete?: boolean | null
 }
 
 // 用户安装工具请求参数

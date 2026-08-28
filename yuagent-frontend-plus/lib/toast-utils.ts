@@ -1,10 +1,10 @@
 import { toast } from "@/hooks/use-toast"
 
-interface ApiResponse<T = any> {
+interface ApiResponse<T> {
   code: number;
   message: string;
   data: T;
-  timestamp: number;
+  timestamp?: number;
 }
 
 /**
@@ -34,11 +34,13 @@ export function handleApiResponse<T>(
 
   if (isSuccess && showSuccessToast) {
     toast({
+      title: successTitle,
       description: response.message,
       variant: "default",
     });
   } else if (!isSuccess && showErrorToast) {
     toast({
+      title: errorTitle,
       description: response.message,
       variant: "destructive",
     });
@@ -53,23 +55,25 @@ export function handleApiResponse<T>(
  * @param options toast配置选项
  * @returns 包装后的API函数
  */
-export function withToast<T extends (...args: any[]) => Promise<ApiResponse<any>>>(
-  apiFn: T,
+export function withToast<TArgs extends unknown[], TResponse extends ApiResponse<unknown>>(
+  apiFn: (...args: TArgs) => Promise<TResponse>,
   options: {
     showSuccessToast?: boolean;
     showErrorToast?: boolean;
     successTitle?: string;
     errorTitle?: string;
   } = {}
-): (...args: Parameters<T>) => Promise<ReturnType<T>> {
-  return async (...args: Parameters<T>): Promise<ReturnType<T>> => {
+): (...args: TArgs) => Promise<TResponse> {
+  return async (...args: TArgs): Promise<TResponse> => {
     try {
       const response = await apiFn(...args);
-      return handleApiResponse(response, options) as ReturnType<T>;
+      handleApiResponse(response, options);
+      return response;
     } catch (error) {
-      // 处理异常情况
-      if (options.showErrorToast) {
+      const { showErrorToast = true, errorTitle = "操作失败" } = options
+      if (showErrorToast) {
         toast({
+          title: errorTitle,
           description: error instanceof Error ? error.message : "未知错误",
           variant: "destructive",
         });
@@ -77,4 +81,4 @@ export function withToast<T extends (...args: any[]) => Promise<ApiResponse<any>
       throw error;
     }
   };
-} 
+}

@@ -205,6 +205,28 @@ public class AgentEntity extends BaseEntity {
         this.updatedAt = LocalDateTime.now();
     }
 
+    /** 应用发布版本中的可执行配置。
+     *
+     * <p>
+     * 版本与助理是不同聚合，必须保留助理的主键、归属、状态与审计信息；只使用版本中的内容配置。
+     * </p>
+     */
+    public void applyPublishedVersion(AgentVersionEntity version) {
+        if (version == null) {
+            throw new BusinessException("助理没有可用版本");
+        }
+
+        this.name = version.getName();
+        this.avatar = version.getAvatar();
+        this.description = version.getDescription();
+        this.systemPrompt = version.getSystemPrompt();
+        this.welcomeMessage = version.getWelcomeMessage();
+        this.toolIds = version.getToolIds();
+        this.knowledgeBaseIds = version.getKnowledgeBaseIds();
+        this.toolPresetParams = version.getToolPresetParams();
+        this.multiModal = version.getMultiModal();
+    }
+
     /** 软删除 */
     public void delete() {
         this.deletedAt = LocalDateTime.now();

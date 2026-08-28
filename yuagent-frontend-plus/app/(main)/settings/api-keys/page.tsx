@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback, useRef } from "react"
 import { Plus, Key, ExternalLink } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
@@ -15,7 +15,7 @@ import {
   updateApiKeyStatusWithToast,
   resetApiKeyWithToast
 } from "@/lib/api-key-service"
-import { getWorkspaceAgents } from "@/lib/api-services"
+import { getWorkspaceAgents } from "@/lib/agent-service"
 
 // 类型定义
 import { ApiKeyResponse, CreateApiKeyRequest, UpdateApiKeyStatusRequest } from "@/types/api-key"
@@ -47,24 +47,28 @@ export default function ApiKeysPage() {
   // 操作状态
   const [operatingKeyId, setOperatingKeyId] = useState<string | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
+  const latestKeysRequest = useRef(0)
 
   // 获取Agent列表
   useEffect(() => {
+    let active = true
     async function fetchAgents() {
       try {
         const response = await getWorkspaceAgents()
-        if (response.code === 200) {
+        if (active && response.code === 200) {
           setAgents(response.data)
         }
-      } catch (error) {
- 
-      }
+      } catch {}
     }
-    fetchAgents()
+    void fetchAgents()
+    return () => {
+      active = false
+    }
   }, [])
 
   // 获取API密钥列表
-  const fetchApiKeys = async () => {
+  const fetchApiKeys = useCallback(async () => {
+    const requestId = ++latestKeysRequest.current
     try {
       setLoading(true)
       setError(null)
@@ -76,21 +80,25 @@ export default function ApiKeysPage() {
       }
       
       const response = await getUserApiKeysWithToast(params)
-      if (response.code === 200) {
+      if (response.code === 200 && requestId === latestKeysRequest.current) {
         setApiKeys(response.data)
-      } else {
+      } else if (requestId === latestKeysRequest.current) {
         setError(response.message)
       }
     } catch (error) {
-      setError(error instanceof Error ? error.message : "未知错误")
+      if (requestId === latestKeysRequest.current) {
+        setError(error instanceof Error ? error.message : "未知错误")
+      }
     } finally {
-      setLoading(false)
+      if (requestId === latestKeysRequest.current) {
+        setLoading(false)
+      }
     }
-  }
+  }, [agentFilter, searchQuery, statusFilter])
 
   useEffect(() => {
-    fetchApiKeys()
-  }, [searchQuery, statusFilter, agentFilter])
+    void fetchApiKeys()
+  }, [fetchApiKeys])
 
   // 创建API密钥
   const handleCreateKey = async (agentId: string, name: string): Promise<ApiKeyResponse | null> => {

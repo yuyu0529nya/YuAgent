@@ -79,8 +79,8 @@ public class RagDocStorageConsumer {
         } catch (Exception e) {
             log.error("Vectorization failed, fileId={}, unitId={}, cost={}ms",
                     storageMessage != null ? storageMessage.getFileId() : "unknown",
-                    storageMessage != null ? storageMessage.getId() : "unknown",
-                    System.currentTimeMillis() - startTime, e);
+                    storageMessage != null ? storageMessage.getId() : "unknown", System.currentTimeMillis() - startTime,
+                    e);
 
             if (storageMessage != null) {
                 markEmbeddingFailed(storageMessage);
@@ -98,9 +98,9 @@ public class RagDocStorageConsumer {
                     .eq(DocumentUnitEntity::getFileId, fileId).eq(DocumentUnitEntity::getIsVector, true));
 
             if (totalVectorizableUnits <= 0) {
-                totalVectorizableUnits = documentUnitRepository.selectCount(Wrappers.<DocumentUnitEntity>lambdaQuery()
-                        .eq(DocumentUnitEntity::getFileId, fileId).eq(DocumentUnitEntity::getIsVector, false)
-                        .isNotNull(DocumentUnitEntity::getContent));
+                totalVectorizableUnits = documentUnitRepository.selectCount(
+                        Wrappers.<DocumentUnitEntity>lambdaQuery().eq(DocumentUnitEntity::getFileId, fileId)
+                                .eq(DocumentUnitEntity::getIsVector, false).isNotNull(DocumentUnitEntity::getContent));
             }
 
             if (totalVectorizableUnits <= 0) {

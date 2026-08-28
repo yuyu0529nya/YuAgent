@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -33,35 +33,49 @@ export function RagVersionHistoryDialog({
   const [versions, setVersions] = useState<RagVersionDTO[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const latestVersionRequestRef = useRef(0)
 
   // 获取版本历史
-  const loadVersionHistory = async () => {
-    if (!dataset) return
+  const loadVersionHistory = useCallback(async () => {
+    const datasetId = dataset?.id
+    if (!datasetId) return
 
+    const requestId = ++latestVersionRequestRef.current
     setLoading(true)
     setError(null)
 
     try {
-      const response = await getRagVersionHistory(dataset.id)
-      
+      const response = await getRagVersionHistory(datasetId)
+
+      if (requestId !== latestVersionRequestRef.current) {
+        return
+      }
+
       if (response.code === 200) {
         setVersions(response.data)
       } else {
         setError(response.message)
       }
     } catch (error) {
-      setError(error instanceof Error ? error.message : "获取版本历史失败")
+      if (requestId === latestVersionRequestRef.current) {
+        setError(error instanceof Error ? error.message : "获取版本历史失败")
+      }
     } finally {
-      setLoading(false)
+      if (requestId === latestVersionRequestRef.current) {
+        setLoading(false)
+      }
     }
-  }
+  }, [dataset?.id])
 
   // 当对话框打开时加载数据
   useEffect(() => {
-    if (open && dataset) {
+    if (open) {
       loadVersionHistory()
     }
-  }, [open, dataset])
+    return () => {
+      latestVersionRequestRef.current += 1
+    }
+  }, [loadVersionHistory, open])
 
   // 获取状态图标
   const getStatusIcon = (status: RagPublishStatus) => {
@@ -87,7 +101,7 @@ export function RagVersionHistoryDialog({
         <DialogHeader>
           <DialogTitle>版本历史</DialogTitle>
           <DialogDescription>
-            查看知识库"{dataset.name}"的发布历史
+            查看知识库&quot;{dataset.name}&quot;的发布历史
           </DialogDescription>
         </DialogHeader>
         

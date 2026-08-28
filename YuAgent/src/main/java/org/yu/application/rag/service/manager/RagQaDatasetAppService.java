@@ -50,6 +50,7 @@ import org.yu.infrastructure.utils.JsonUtils;
 import java.util.List;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.Map;
 
 /** RAG数据集应用服务
  * @author shilong.zang
@@ -276,15 +277,27 @@ public class RagQaDatasetAppService {
      * @param userId 用户ID
      * @return 数据集DTO列表 */
     public List<RagQaDatasetDTO> getDatasetsByIds(List<String> datasetIds, String userId) {
+        if (datasetIds == null || datasetIds.isEmpty()) {
+            return List.of();
+        }
+
+        List<String> requestedIds = datasetIds.stream().filter(StringUtils::hasText).distinct().toList();
+        if (requestedIds.isEmpty()) {
+            return List.of();
+        }
+        Map<String, RagQaDatasetEntity> datasetsById = new HashMap<>();
+        for (RagQaDatasetEntity entity : ragQaDatasetDomainService.listDatasetsByIdsForUser(requestedIds, userId)) {
+            datasetsById.put(entity.getId(), entity);
+        }
+        Map<String, Long> fileCounts = fileDetailDomainService.countFilesByDatasets(requestedIds, userId);
         List<RagQaDatasetDTO> datasets = new ArrayList<>();
         for (String datasetId : datasetIds) {
-            try {
-                RagQaDatasetDTO dataset = getDataset(datasetId, userId);
-                datasets.add(dataset);
-            } catch (Exception e) {
-                log.warn("获取数据集 {} 失败，用户 {} 可能无权限访问: {}", datasetId, userId, e.getMessage());
-                // 跳过无权限访问的数据集
+            RagQaDatasetEntity entity = datasetsById.get(datasetId);
+            if (entity == null) {
+                log.warn("获取数据集 {} 失败，用户 {} 可能无权限访问", datasetId, userId);
+                continue;
             }
+            datasets.add(RagQaDatasetAssembler.toDTO(entity, fileCounts.getOrDefault(datasetId, 0L)));
         }
         return datasets;
     }
@@ -293,28 +306,25 @@ public class RagQaDatasetAppService {
      * @param userId 用户ID
      * @return 数据集DTO列表 */
     public List<RagQaDatasetDTO> getUserAvailableDatasets(String userId) {
-        List<RagQaDatasetDTO> availableDatasets = new ArrayList<>();
-
-        // 获取用户所有已安装的RAG
         List<UserRagEntity> installedRags = userRagDomainService.listAllInstalledRags(userId);
-
-        for (UserRagEntity userRag : installedRags) {
-            try {
-                // 根据RAG安装类型正确获取文件数量
-                Long fileCount = getRagFileCount(userId, userRag);
-
-                // 转换为DTO
-                RagQaDatasetDTO dataset = RagQaDatasetAssembler.fromUserRagEntity(userRag, fileCount);
-                availableDatasets.add(dataset);
-
-            } catch (Exception e) {
-                // 如果数据集不存在或无权限访问，跳过该安装记录
-                log.warn("获取已安装RAG {} 失败，用户 {} 可能无权限访问或数据集已被删除: {}", userRag.getOriginalRagId(), userId,
-                        e.getMessage());
-            }
+        if (installedRags.isEmpty()) {
+            return List.of();
         }
 
-        return availableDatasets;
+        List<String> snapshotRagIds = installedRags.stream().filter(UserRagEntity::isSnapshotType)
+                .map(UserRagEntity::getId).filter(StringUtils::hasText).distinct().toList();
+        List<String> referenceRagIds = installedRags.stream().filter(UserRagEntity::isReferenceType)
+                .map(UserRagEntity::getOriginalRagId).filter(StringUtils::hasText).distinct().toList();
+        Map<String, Long> snapshotFileCounts = ragDataAccessService.countUserRagFiles(snapshotRagIds);
+        Map<String, Long> referenceFileCounts = fileDetailDomainService
+                .countFilesByDatasetsWithoutUserCheck(referenceRagIds);
+
+        return installedRags.stream().map(userRag -> {
+            long fileCount = userRag.isSnapshotType()
+                    ? snapshotFileCounts.getOrDefault(userRag.getId(), 0L)
+                    : referenceFileCounts.getOrDefault(userRag.getOriginalRagId(), 0L);
+            return RagQaDatasetAssembler.fromUserRagEntity(userRag, fileCount);
+        }).toList();
     }
 
     /** 根据RAG安装类型获取正确的文件数量
@@ -343,13 +353,7 @@ public class RagQaDatasetAppService {
         Page<RagQaDatasetDTO> dtoPage = new Page<>(entityPage.getCurrent(), entityPage.getSize(),
                 entityPage.getTotal());
 
-        // 转换为DTO并添加文件数量
-        List<RagQaDatasetDTO> dtoList = entityPage.getRecords().stream().map(entity -> {
-            Long fileCount = fileDetailDomainService.countFilesByDataset(entity.getId(), userId);
-            return RagQaDatasetAssembler.toDTO(entity, fileCount);
-        }).toList();
-
-        dtoPage.setRecords(dtoList);
+        dtoPage.setRecords(toDatasetDTOs(entityPage.getRecords(), userId));
         return dtoPage;
     }
 
@@ -358,10 +362,20 @@ public class RagQaDatasetAppService {
      * @return 数据集列表 */
     public List<RagQaDatasetDTO> listAllDatasets(String userId) {
         List<RagQaDatasetEntity> entities = ragQaDatasetDomainService.listAllDatasets(userId);
-        return entities.stream().map(entity -> {
-            Long fileCount = fileDetailDomainService.countFilesByDataset(entity.getId(), userId);
-            return RagQaDatasetAssembler.toDTO(entity, fileCount);
-        }).toList();
+        return toDatasetDTOs(entities, userId);
+    }
+
+    private List<RagQaDatasetDTO> toDatasetDTOs(List<RagQaDatasetEntity> entities, String userId) {
+        if (entities == null || entities.isEmpty()) {
+            return List.of();
+        }
+
+        List<String> datasetIds = entities.stream().map(RagQaDatasetEntity::getId).filter(StringUtils::hasText)
+                .distinct().toList();
+        Map<String, Long> fileCounts = fileDetailDomainService.countFilesByDatasets(datasetIds, userId);
+        return entities.stream()
+                .map(entity -> RagQaDatasetAssembler.toDTO(entity, fileCounts.getOrDefault(entity.getId(), 0L)))
+                .toList();
     }
 
     /** 上传文件到数据集
@@ -391,8 +405,8 @@ public class RagQaDatasetAppService {
     public FileDetailDTO importFileByUrl(ImportFileByUrlRequest request, String userId) {
         ragQaDatasetDomainService.checkDatasetExists(request.getDatasetId(), userId);
 
-        RemoteFileImportService.DownloadedRemoteFile downloadedFile =
-                remoteFileImportService.download(request.getUrl(), request.getFilename());
+        RemoteFileImportService.DownloadedRemoteFile downloadedFile = remoteFileImportService.download(request.getUrl(),
+                request.getFilename());
 
         FileDetailEntity entity = new FileDetailEntity();
         entity.setDataSetId(request.getDatasetId());
@@ -572,9 +586,7 @@ public class RagQaDatasetAppService {
                 throw new IllegalStateException("文件没有找到可用于向量化的语料数据");
             }
 
-            publishBatchVectorization(fileEntity, documentUnits,
-                    "manual vectorization units=" + documentUnits.size());
-
+            publishBatchVectorization(fileEntity, documentUnits, "manual vectorization units=" + documentUnits.size());
 
         } else {
             throw new IllegalArgumentException("不支持的处理类型: " + request.getProcessType());
@@ -740,11 +752,10 @@ public class RagQaDatasetAppService {
         storageMessage.setVector(true);
         storageMessage.setDatasetId(fileEntity.getDataSetId());
         storageMessage.setUserId(fileEntity.getUserId());
-        storageMessage.setEmbeddingModelConfig(userModelConfigResolver.getUserEmbeddingModelConfig(fileEntity.getUserId()));
-        storageMessage.setBatchUnits(documentUnits.stream()
-                .filter(unit -> StringUtils.hasText(unit.getContent()))
-                .map(this::toBatchUnit)
-                .toList());
+        storageMessage
+                .setEmbeddingModelConfig(userModelConfigResolver.getUserEmbeddingModelConfig(fileEntity.getUserId()));
+        storageMessage.setBatchUnits(documentUnits.stream().filter(unit -> StringUtils.hasText(unit.getContent()))
+                .map(this::toBatchUnit).toList());
 
         MessageEnvelope<RagDocSyncStorageMessage> env = MessageEnvelope.builder(storageMessage)
                 .addEventType(EventType.DOC_SYNC_RAG).description(description).build();
@@ -764,19 +775,16 @@ public class RagQaDatasetAppService {
     }
 
     private List<DocumentUnitEntity> findVectorizableDocumentUnits(String fileId, boolean includeVectorizedUnits) {
-        List<DocumentUnitEntity> documentUnits = documentUnitDomainService
-                .listDocumentsByFileAndStatus(fileId, true, includeVectorizedUnits ? null : false);
+        List<DocumentUnitEntity> documentUnits = documentUnitDomainService.listDocumentsByFileAndStatus(fileId, true,
+                includeVectorizedUnits ? null : false);
 
         List<DocumentUnitEntity> filteredUnits = documentUnits.stream()
-                .filter(unit -> StringUtils.hasText(unit.getContent()))
-                .toList();
+                .filter(unit -> StringUtils.hasText(unit.getContent())).toList();
         if (!filteredUnits.isEmpty()) {
             return filteredUnits;
         }
 
         return documentUnitDomainService.listDocumentsByFileAndStatus(fileId, null, false).stream()
-                .filter(unit -> StringUtils.hasText(unit.getContent()))
-                .toList();
+                .filter(unit -> StringUtils.hasText(unit.getContent())).toList();
     }
 }
-

@@ -2,12 +2,14 @@ package org.yu.domain.user.service;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.yu.domain.user.model.UserEntity;
 
 @SpringBootTest
+@Disabled("直接写入共享数据库；需要独立测试数据库后再作为集成测试运行")
 public class UserDomainServiceTest {
 
     @Autowired

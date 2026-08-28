@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { CreditCard, Wallet, RefreshCw } from "lucide-react";
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -42,6 +42,7 @@ export default function SimpleRechargeFlow({
   const [orderStatus, setOrderStatus] = useState<OrderStatusResponse | null>(null);
   const [qrStatus, setQrStatus] = useState<QRCodeStatus>('generating');
   const [showQRCode, setShowQRCode] = useState(false);
+  const resetTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   
   // 预设金额选项
   const presetAmounts = [10, 50, 100, 200, 500, 1000];
@@ -192,7 +193,11 @@ export default function SimpleRechargeFlow({
     onSuccess: (orderNo: string) => {
       onSuccess?.(orderNo, amount);
       // 2秒后重置界面
-      setTimeout(() => {
+      if (resetTimeoutRef.current) {
+        clearTimeout(resetTimeoutRef.current);
+      }
+      resetTimeoutRef.current = setTimeout(() => {
+        resetTimeoutRef.current = null;
         handleReset();
       }, 2000);
     },
@@ -218,6 +223,10 @@ export default function SimpleRechargeFlow({
   
   // 重置界面
   const handleReset = () => {
+    if (resetTimeoutRef.current) {
+      clearTimeout(resetTimeoutRef.current);
+      resetTimeoutRef.current = null;
+    }
     setShowQRCode(false);
     setPaymentResponse(null);
     setOrderStatus(null);
@@ -246,6 +255,11 @@ export default function SimpleRechargeFlow({
   
   useEffect(() => {
     loadPaymentMethods();
+    return () => {
+      if (resetTimeoutRef.current) {
+        clearTimeout(resetTimeoutRef.current);
+      }
+    };
   }, []);
   
   if (showQRCode) {

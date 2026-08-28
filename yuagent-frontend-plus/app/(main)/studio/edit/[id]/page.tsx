@@ -1,6 +1,7 @@
 "use client"
 
-import React, { useEffect, useState } from "react"
+import React, { useEffect, useRef, useState } from "react"
+import dynamic from "next/dynamic"
 import { useRouter, useParams } from "next/navigation"
 import { toast } from "@/hooks/use-toast"
 import { Button } from "@/components/ui/button"
@@ -29,8 +30,18 @@ import {
 } from "@/lib/agent-service"
 import { PublishStatus } from "@/types/agent"
 import type { AgentVersion, AgentTool } from "@/types/agent"
-import AgentFormModal from "@/components/agent-form-modal"
 import type { AgentFormData } from "@/hooks/use-agent-form"
+
+const AgentFormModal = dynamic(() => import("@/components/agent-form-modal"), {
+  ssr: false,
+  loading: () => (
+    <div className="space-y-6 p-6" aria-label="正在加载助理编辑器">
+      <div className="h-8 w-48 animate-pulse rounded bg-muted" />
+      <div className="h-10 w-full animate-pulse rounded bg-muted" />
+      <div className="h-64 animate-pulse rounded bg-muted" />
+    </div>
+  ),
+})
 
 export default function EditAgentPage() {
   const router = useRouter()
@@ -39,6 +50,7 @@ export default function EditAgentPage() {
   
   // 编辑特有状态
   const [initialData, setInitialData] = useState<Partial<AgentFormData> | undefined>(undefined)
+  const currentFormDataRef = useRef<AgentFormData | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
   
   // 版本管理状态
@@ -100,6 +112,7 @@ export default function EditAgentPage() {
           }
 
           setInitialData(formData)
+          currentFormDataRef.current = formData
         } else {
           toast({
             title: "获取助理详情失败",
@@ -190,6 +203,7 @@ export default function EditAgentPage() {
         // toast已通过withToast处理
         // 更新初始数据以反映最新保存的状态
         setInitialData(formData)
+        currentFormDataRef.current = formData
       }
     } catch (error) {
  
@@ -232,21 +246,20 @@ export default function EditAgentPage() {
     setIsPublishing(true)
 
     try {
-      // 需要从当前formData获取数据
-      // 这里暂时使用initialData，实际应该从AgentFormModal获取当前状态
-      if (!initialData) return
+      const currentFormData = currentFormDataRef.current ?? initialData
+      if (!currentFormData) return
 
-      const toolIds = initialData.tools?.map(tool => tool.id) || [];
+      const toolIds = currentFormData.tools?.map(tool => tool.id) || [];
       
       const response = await publishAgentVersionWithToast(agentId, {
         versionNumber,
         changeLog: changeLog || `发布 ${versionNumber} 版本`,
-        systemPrompt: initialData.systemPrompt || "",
-        welcomeMessage: initialData.welcomeMessage || "",
+        systemPrompt: currentFormData.systemPrompt || "",
+        welcomeMessage: currentFormData.welcomeMessage || "",
         toolIds: toolIds,
-        knowledgeBaseIds: initialData.knowledgeBaseIds || [],
-        toolPresetParams: initialData.toolPresetParams || {},
-        multiModal: initialData.multiModal || false,
+        knowledgeBaseIds: currentFormData.knowledgeBaseIds || [],
+        toolPresetParams: currentFormData.toolPresetParams || {},
+        multiModal: currentFormData.multiModal || false,
       })
 
       if (response.code === 200) {
@@ -379,6 +392,9 @@ export default function EditAgentPage() {
         title="编辑助理"
         onSubmit={handleUpdateAgent}
         onCancel={handleCancel}
+        onFormDataChange={(formData) => {
+          currentFormDataRef.current = formData
+        }}
         onDelete={() => setShowDeleteDialog(true)}
         onPublish={openPublishDialog}
 

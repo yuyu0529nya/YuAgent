@@ -20,9 +20,12 @@ import java.util.List;
 public class DocumentUnitDomainService {
 
     private final DocumentUnitRepository documentUnitRepository;
+    private final FileDetailDomainService fileDetailDomainService;
 
-    public DocumentUnitDomainService(DocumentUnitRepository documentUnitRepository) {
+    public DocumentUnitDomainService(DocumentUnitRepository documentUnitRepository,
+            FileDetailDomainService fileDetailDomainService) {
         this.documentUnitRepository = documentUnitRepository;
+        this.fileDetailDomainService = fileDetailDomainService;
     }
 
     /** 分页查询文件的语料
@@ -35,6 +38,7 @@ public class DocumentUnitDomainService {
      * @return 分页结果 */
     public IPage<DocumentUnitEntity> listDocumentUnits(String fileId, String userId, Integer page, Integer pageSize,
             String keyword) {
+        fileDetailDomainService.getFileById(fileId, userId);
         LambdaQueryWrapper<DocumentUnitEntity> wrapper = Wrappers.<DocumentUnitEntity>lambdaQuery()
                 .eq(DocumentUnitEntity::getFileId, fileId);
 
@@ -60,6 +64,7 @@ public class DocumentUnitDomainService {
         if (entity == null) {
             throw new IllegalArgumentException("语料不存在");
         }
+        fileDetailDomainService.getFileById(entity.getFileId(), userId);
         return entity;
     }
 
@@ -68,6 +73,7 @@ public class DocumentUnitDomainService {
      * @param entity 语料实体
      * @param userId 用户ID */
     public void updateDocumentUnit(DocumentUnitEntity entity, String userId) {
+        getDocumentUnit(entity.getId(), userId);
         LambdaUpdateWrapper<DocumentUnitEntity> updateWrapper = Wrappers.<DocumentUnitEntity>lambdaUpdate()
                 .eq(DocumentUnitEntity::getId, entity.getId()).set(DocumentUnitEntity::getContent, entity.getContent())
                 .set(entity.getIsVector() != null, DocumentUnitEntity::getIsVector, entity.getIsVector());
@@ -80,6 +86,7 @@ public class DocumentUnitDomainService {
      * @param documentUnitId 语料ID
      * @param userId 用户ID */
     public void deleteDocumentUnit(String documentUnitId, String userId) {
+        getDocumentUnit(documentUnitId, userId);
         LambdaUpdateWrapper<DocumentUnitEntity> deleteWrapper = Wrappers.<DocumentUnitEntity>lambdaUpdate()
                 .eq(DocumentUnitEntity::getId, documentUnitId);
 

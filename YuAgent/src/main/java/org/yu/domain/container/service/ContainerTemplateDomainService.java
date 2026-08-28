@@ -28,7 +28,8 @@ public class ContainerTemplateDomainService {
     private final ContainerTemplateRepository templateRepository;
     private final ContainerConfig containerConfig;
 
-    public ContainerTemplateDomainService(ContainerTemplateRepository templateRepository, ContainerConfig containerConfig) {
+    public ContainerTemplateDomainService(ContainerTemplateRepository templateRepository,
+            ContainerConfig containerConfig) {
         this.templateRepository = templateRepository;
         this.containerConfig = containerConfig;
     }

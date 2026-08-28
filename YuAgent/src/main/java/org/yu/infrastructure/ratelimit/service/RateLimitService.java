@@ -67,8 +67,7 @@ public class RateLimitService {
         LocalDateTime cutoffTime = LocalDateTime.now()
                 .minusMinutes(rateLimitConfig.getRecharge().getCleanupIntervalMinutes());
 
-        int removedCount = 0;
-
+        int sizeBeforeCleanup = rechargeRateLimiters.size();
         rechargeRateLimiters.entrySet().removeIf(entry -> {
             if (entry.getValue().getLastAccessTime().isBefore(cutoffTime)) {
                 logger.debug("清理不活跃的充值限流器: userId={}", entry.getKey());
@@ -77,6 +76,7 @@ public class RateLimitService {
             return false;
         });
 
+        int removedCount = Math.max(0, sizeBeforeCleanup - rechargeRateLimiters.size());
         if (removedCount > 0) {
             logger.info("清理不活跃的充值限流器完成: 清理数量={}, 剩余数量={}", removedCount, rechargeRateLimiters.size());
         }

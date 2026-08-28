@@ -13,8 +13,10 @@ import java.util.UUID;
 
 public final class HostedMcpInstallCommandHelper {
 
-    private static final Set<String> SERVER_CONFIG_KEYS = Set.of("type", "url", "baseUrl", "headers", "command",
-            "args", "env", "name", "isActive", "description", "workspace");
+    private static final Set<String> SERVER_CONFIG_KEYS = Set.of("type", "url", "baseUrl", "headers", "command", "args",
+            "env", "name", "isActive", "description", "workspace", "gateway_protocol");
+
+    private static final String REMOTE_AUTH_TOKEN_ENV = "MCP_REMOTE_AUTH_ACCESS_TOKEN";
 
     private HostedMcpInstallCommandHelper() {
     }
@@ -33,7 +35,8 @@ public final class HostedMcpInstallCommandHelper {
         if (mcpServersValue instanceof Map<?, ?> mcpServers && !mcpServers.isEmpty()) {
             if (looksLikeServerConfigMap(mcpServers)) {
                 Map<String, Object> normalizedServerConfig = normalizeServerConfig(castStringObjectMap(mcpServers));
-                String serverName = resolveServerName(normalizedServerConfig, preferredServerName, preferredDisplayName);
+                String serverName = resolveServerName(normalizedServerConfig, preferredServerName,
+                        preferredDisplayName);
                 return buildNormalizedCommand(serverName, normalizedServerConfig);
             }
 
@@ -91,7 +94,8 @@ public final class HostedMcpInstallCommandHelper {
         }
     }
 
-    private static NormalizedInstallCommand buildNormalizedCommand(String serverName, Map<String, Object> serverConfig) {
+    private static NormalizedInstallCommand buildNormalizedCommand(String serverName,
+            Map<String, Object> serverConfig) {
         Map<String, Object> mcpServers = new LinkedHashMap<>();
         mcpServers.put(serverName, serverConfig);
 
@@ -107,7 +111,8 @@ public final class HostedMcpInstallCommandHelper {
         if (map == null || map.isEmpty()) {
             return false;
         }
-        return map.keySet().stream().allMatch(key -> key instanceof String stringKey && SERVER_CONFIG_KEYS.contains(stringKey));
+        return map.keySet().stream()
+                .allMatch(key -> key instanceof String stringKey && SERVER_CONFIG_KEYS.contains(stringKey));
     }
 
     private static Map<String, Object> normalizeServerConfig(Map<String, Object> rawServerConfig) {
@@ -131,13 +136,63 @@ public final class HostedMcpInstallCommandHelper {
             }
         }
 
+        // Earlier tool records stored remote MCP endpoints as baseUrl. The gateway
+        // deployment API expects the canonical url field, so retain the legacy
+        // field while supplying the compatible value when url is absent.
+        if (!StringUtils.hasText(stringValue(normalized.get("url")))
+                && StringUtils.hasText(stringValue(normalized.get("baseUrl")))) {
+            normalized.put("url", normalized.get("baseUrl"));
+        }
+
+        String transportType = resolveTransportType(normalized);
+        if ("streamablehttp".equalsIgnoreCase(transportType) || "streamable-http".equalsIgnoreCase(transportType)
+                || "streamhttp".equalsIgnoreCase(transportType)) {
+            // Newer MCP services use a single Streamable HTTP endpoint. The
+            // shared gateway converts it to the SSE interface used by this app.
+            normalized.put("gateway_protocol", "streamhttp");
+        }
+
+        moveAuthorizationHeaderToGatewayEnv(normalized);
+
         return normalized;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void moveAuthorizationHeaderToGatewayEnv(Map<String, Object> normalized) {
+        if (!(normalized.get("headers") instanceof Map<?, ?> rawHeaders)) {
+            return;
+        }
+
+        String authorization = null;
+        for (Map.Entry<?, ?> entry : rawHeaders.entrySet()) {
+            if ("authorization".equalsIgnoreCase(String.valueOf(entry.getKey()))) {
+                authorization = stringValue(entry.getValue());
+                break;
+            }
+        }
+        if (!StringUtils.hasText(authorization)) {
+            return;
+        }
+
+        String token = authorization.replaceFirst("(?i)^Bearer\\s+", "").trim();
+        if (!StringUtils.hasText(token)) {
+            return;
+        }
+
+        Map<String, Object> env = normalized.get("env") instanceof Map<?, ?> rawEnv
+                ? castStringObjectMap(rawEnv)
+                : new LinkedHashMap<>();
+        env.putIfAbsent(REMOTE_AUTH_TOKEN_ENV, token);
+        normalized.put("env", env);
+        // The gateway accepts remote credentials through env; retaining the
+        // legacy headers field would only store an unsupported duplicate.
+        normalized.remove("headers");
     }
 
     private static String resolveServerName(Map<String, Object> serverConfig, String preferredServerName,
             String preferredDisplayName) {
-        String candidate = firstNonBlank(stringValue(serverConfig.get("name")), preferredServerName, preferredDisplayName,
-                "mcp-server");
+        String candidate = firstNonBlank(stringValue(serverConfig.get("name")), preferredServerName,
+                preferredDisplayName, "mcp-server");
 
         String normalized = candidate.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9_-]+", "-")
                 .replaceAll("(^-+|-+$)", "").replaceAll("-{2,}", "-");
@@ -145,8 +200,8 @@ public final class HostedMcpInstallCommandHelper {
             return normalized;
         }
 
-        String seed = firstNonBlank(candidate, stringValue(serverConfig.get("url")), stringValue(serverConfig.get("baseUrl")),
-                UUID.randomUUID().toString());
+        String seed = firstNonBlank(candidate, stringValue(serverConfig.get("url")),
+                stringValue(serverConfig.get("baseUrl")), UUID.randomUUID().toString());
         return "mcp-" + UUID.nameUUIDFromBytes(seed.getBytes(StandardCharsets.UTF_8)).toString().substring(0, 8);
     }
 

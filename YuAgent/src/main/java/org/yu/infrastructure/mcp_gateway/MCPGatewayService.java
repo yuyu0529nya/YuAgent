@@ -21,6 +21,7 @@ import org.yu.infrastructure.config.MCPGatewayProperties;
 import org.yu.infrastructure.exception.BusinessException;
 
 import jakarta.annotation.PostConstruct;
+import jakarta.annotation.PreDestroy;
 import org.yu.infrastructure.utils.JsonUtils;
 
 import java.io.IOException;
@@ -35,12 +36,14 @@ public class MCPGatewayService {
     private static final Logger logger = LoggerFactory.getLogger(MCPGatewayService.class);
 
     private final MCPGatewayProperties properties;
+    private final CloseableHttpClient httpClient;
 
     /** 通过构造函数注入配置
      * 
      * @param properties MCP Gateway配置 */
     public MCPGatewayService(MCPGatewayProperties properties) {
         this.properties = properties;
+        this.httpClient = createHttpClient();
     }
 
     /** 初始化时验证配置有效性 */
@@ -55,6 +58,15 @@ public class MCPGatewayService {
         }
 
         logger.info("MCP Gateway服务已初始化，基础URL: {}", properties.getBaseUrl());
+    }
+
+    @PreDestroy
+    public void close() {
+        try {
+            httpClient.close();
+        } catch (IOException e) {
+            logger.warn("Failed to close MCP Gateway HTTP client", e);
+        }
     }
 
     /** 构建用户容器SSE URL（纯技术方法）
@@ -73,7 +85,10 @@ public class MCPGatewayService {
      * @param mcpServerName 工具服务名称
      * @return 全局工具SSE URL */
     public String buildGlobalSSEUrl(String mcpServerName) {
-        return properties.getBaseUrl() + "/" + mcpServerName + "/sse?api_key=" + properties.getApiKey();
+        // Hosted MCP services are aggregated by the gateway's global SSE
+        // endpoint. This also lets the gateway bridge Streamable HTTP services
+        // for the application's SSE-only MCP client.
+        return properties.getBaseUrl() + "/sse?api_key=" + properties.getApiKey();
     }
 
     /** 部署工具到MCP Gateway
@@ -100,26 +115,29 @@ public class MCPGatewayService {
 
     /** 部署工具到指定URL的通用方法 */
     private boolean deployToolToUrl(String installCommand, String url) {
-        try (CloseableHttpClient httpClient = createHttpClient()) {
+        try {
             HttpPost httpPost = new HttpPost(url);
             httpPost.setHeader("Content-Type", "application/json");
             httpPost.setHeader("Authorization", "Bearer " + properties.getApiKey());
             httpPost.setEntity(new StringEntity(installCommand, "UTF-8"));
 
-            logger.info("发送部署请求到: {}", url);
+            logger.info("发送 MCP Gateway 工具部署请求");
             try (CloseableHttpResponse response = httpClient.execute(httpPost)) {
                 int statusCode = response.getStatusLine().getStatusCode();
                 HttpEntity entity = response.getEntity();
                 String responseBody = entity != null ? EntityUtils.toString(entity) : null;
 
                 if (statusCode >= 200 && statusCode < 300 && responseBody != null) {
-                    Map result = JsonUtils.parseObject(responseBody, Map.class);
-                    logger.info("部署响应: {}", result);
-                    Object successValue = result.get("success");
-                    if (successValue instanceof Boolean success) {
-                        return success;
+                    Map<String, Object> result = JsonUtils.parseMap(responseBody);
+                    if (result == null) {
+                        throw new BusinessException("工具部署响应格式无效");
                     }
-                    return Boolean.parseBoolean(String.valueOf(successValue));
+                    Object successValue = result.get("success");
+                    boolean success = successValue instanceof Boolean booleanValue
+                            ? booleanValue
+                            : Boolean.parseBoolean(String.valueOf(successValue));
+                    logger.info("MCP Gateway 工具部署响应已接收，success={}", success);
+                    return success;
                 } else {
                     String errorMsg = String.format("工具部署失败，状态码: %d，响应: %s", statusCode, responseBody);
                     logger.error(errorMsg);
@@ -138,8 +156,8 @@ public class MCPGatewayService {
      * @throws BusinessException 如果API调用失败 */
     public List<ToolDefinition> listTools(String toolName) throws Exception {
         String url = properties.getBaseUrl() + "/" + toolName + "/sse?api_key=" + properties.getApiKey();
-        HttpMcpTransport transport = new HttpMcpTransport.Builder().sseUrl(url).timeout(Duration.ofSeconds(10))
-                .logRequests(false).logResponses(true).build();
+        HttpMcpTransport transport = new HttpMcpTransport.Builder().sseUrl(url).timeout(getMcpClientTimeout())
+                .logRequests(false).logResponses(false).build();
         McpClient client = new DefaultMcpClient.Builder().transport(transport).build();
         try {
             List<ToolSpecification> toolSpecifications = client.listTools();
@@ -164,10 +182,11 @@ public class MCPGatewayService {
         String url = "http://" + containerIp + ":" + containerPort + "/" + toolName + "/sse?api_key="
                 + properties.getApiKey();
 
-        logger.info("从审核容器获取工具列表: {}", url);
+        logger.info("Fetching MCP tools from review container: tool={}, host={}:{}", toolName, containerIp,
+                containerPort);
 
-        HttpMcpTransport transport = new HttpMcpTransport.Builder().sseUrl(url).timeout(Duration.ofSeconds(10))
-                .logRequests(false).logResponses(true).build();
+        HttpMcpTransport transport = new HttpMcpTransport.Builder().sseUrl(url).timeout(getMcpClientTimeout())
+                .logRequests(false).logResponses(false).build();
         McpClient client = new DefaultMcpClient.Builder().transport(transport).build();
         try {
             List<ToolSpecification> toolSpecifications = client.listTools();
@@ -187,9 +206,14 @@ public class MCPGatewayService {
     /** 创建配置了超时的HTTP客户端 */
     private CloseableHttpClient createHttpClient() {
         RequestConfig config = RequestConfig.custom().setConnectTimeout(properties.getConnectTimeout())
-                .setSocketTimeout(properties.getReadTimeout()).build();
+                .setSocketTimeout(properties.getReadTimeout())
+                .setConnectionRequestTimeout(properties.getConnectionRequestTimeout()).build();
 
         return HttpClients.custom().setDefaultRequestConfig(config).build();
+    }
+
+    Duration getMcpClientTimeout() {
+        return Duration.ofMillis(properties.getReadTimeout());
     }
 
 }

@@ -17,11 +17,12 @@ import java.net.URI;
 import java.net.URISyntaxException;
 import java.util.Locale;
 
-/**
- * Validates the tool source URL before deployment.
+/** Validates the tool source URL before deployment.
  *
- * <p>GitHub repositories still go through the original GitHub API validation,
- * while managed MCP services such as hosted SSE endpoints only need basic URL validation.</p>
+ * <p>
+ * GitHub repositories still go through the original GitHub API validation, while managed MCP services such as hosted
+ * SSE endpoints only need basic URL validation.
+ * </p>
  */
 public class AppGithubUrlValidateProcessor implements AppToolStateProcessor {
 

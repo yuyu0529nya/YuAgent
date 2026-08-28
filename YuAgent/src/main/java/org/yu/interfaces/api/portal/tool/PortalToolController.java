@@ -147,6 +147,13 @@ public class PortalToolController {
         return Result.success(toolAppService.getInstalledTools(userId, queryToolRequest));
     }
 
+    /** Returns whether the current user installed the exact tool version. */
+    @GetMapping("/installed/{toolId}/{version}")
+    public Result<Boolean> isToolVersionInstalled(@PathVariable String toolId, @PathVariable String version) {
+        String userId = UserContext.getCurrentUserId();
+        return Result.success(toolAppService.isToolVersionInstalled(userId, toolId, version));
+    }
+
     /** 获取工具已发布的所有版本
      * 
      * @param toolId 工具id

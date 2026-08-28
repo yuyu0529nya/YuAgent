@@ -52,8 +52,8 @@ public class SlidingWindowTokenOverflowStrategy implements TokenOverflowStrategy
         Collections.sort(sortedMessages, Comparator.comparing(TokenMessage::getCreatedAt).reversed());
 
         // 计算可用token数（考虑预留空间）
-        int maxTokens = config.getMaxTokens();
-        int reserveTokens = (int) (maxTokens * config.getReserveRatio());
+        int maxTokens = getMaxTokens();
+        int reserveTokens = (int) (maxTokens * getReserveRatio());
         int availableTokens = maxTokens - reserveTokens;
 
         // 保留最新的消息，直到达到token限制
@@ -61,7 +61,7 @@ public class SlidingWindowTokenOverflowStrategy implements TokenOverflowStrategy
         int totalTokens = 0;
 
         for (TokenMessage message : sortedMessages) {
-            int messageTokens = message.getBodyTokenCount() != null ? message.getBodyTokenCount() : 0;
+            int messageTokens = getMessageTokenCount(message);
             if (totalTokens + messageTokens <= availableTokens) {
                 retainedMessages.add(message);
                 totalTokens += messageTokens;
@@ -99,13 +99,22 @@ public class SlidingWindowTokenOverflowStrategy implements TokenOverflowStrategy
         }
 
         int totalTokens = calculateTotalTokens(messages);
-        int maxTokens = config.getMaxTokens();
+        int maxTokens = getMaxTokens();
         return totalTokens > maxTokens;
     }
 
     /** 计算消息列表的总token数 */
     private int calculateTotalTokens(List<TokenMessage> messages) {
-        return messages.stream().mapToInt(m -> m.getBodyTokenCount() != null ? m.getBodyTokenCount() : 0).sum();
+        return messages.stream().mapToInt(this::getMessageTokenCount).sum();
+    }
+
+    private int getMessageTokenCount(TokenMessage message) {
+        if (message == null) {
+            return 0;
+        }
+        return message.getBodyTokenCount() != null
+                ? message.getBodyTokenCount()
+                : message.getTokenCount() != null ? message.getTokenCount() : 0;
     }
 
     /** 获取配置的最大Token数，如果未配置则使用默认值

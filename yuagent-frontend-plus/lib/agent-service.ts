@@ -1,5 +1,5 @@
-import { API_CONFIG, API_ENDPOINTS } from "@/lib/api-config"
-import { httpClient } from "@/lib/http-client"
+import { API_ENDPOINTS } from "@/lib/api-config"
+import { httpClient, type RequestConfig } from "@/lib/http-client"
 import type {
   Agent,
   ApiResponse,
@@ -8,18 +8,18 @@ import type {
   UpdateAgentRequest,
   PublishAgentVersionRequest,
   AgentVersion,
-  SearchAgentsRequest,
 } from "@/types/agent"
 import { withToast } from "./toast-utils"
 
 // 获取用户的助理列表
-export async function getUserAgents(params?: Partial<GetAgentsParams>): Promise<ApiResponse<Agent[]>> {
+export async function getUserAgents(
+  params?: Partial<GetAgentsParams>,
+  config?: Pick<RequestConfig, "signal">,
+): Promise<ApiResponse<Agent[]>> {
   try {
  
     
-    const response = await httpClient.get<ApiResponse<Agent[]>>("/agents/user", {
-      params: params
-    });
+    const response = await httpClient.get<ApiResponse<Agent[]>>("/agents/user", { ...config, params });
     
     return response;
   } catch (error) {
@@ -55,12 +55,16 @@ export async function getWorkspaceAgents(): Promise<ApiResponse<Agent[]>> {
 }
 
 // 获取已发布的助理列表
-export async function getPublishedAgents(name?: string): Promise<ApiResponse<AgentVersion[]>> {
+export async function getPublishedAgents(
+  name?: string,
+  config?: Pick<RequestConfig, "signal">,
+): Promise<ApiResponse<AgentVersion[]>> {
   try {
  
     
     const response = await httpClient.get<ApiResponse<AgentVersion[]>>(API_ENDPOINTS.PUBLISHED_AGENTS, {
-      params: name ? { name } : undefined
+      ...config,
+      params: name ? { name } : undefined,
     });
     
     return response;
@@ -271,35 +275,12 @@ export async function getAgentLatestVersion(agentId: string): Promise<ApiRespons
   }
 }
 
-// 搜索助理
-export async function searchAgents(params: SearchAgentsRequest): Promise<ApiResponse<Agent[]>> {
-  try {
-    const userId = API_CONFIG.CURRENT_USER_ID
- 
-    
-    const response = await httpClient.get<ApiResponse<Agent[]>>(API_ENDPOINTS.USER_AGENTS(userId), {
-      params
-    });
-    
-    return response;
-  } catch (error) {
- 
-    // 返回格式化的错误响应
-    return {
-      code: 500,
-      message: error instanceof Error ? error.message : "未知错误",
-      data: [] as Agent[],
-      timestamp: Date.now(),
-    }
-  }
-}
-
 // Add this function to get agent details by session ID
 export async function getAgentBySessionId(sessionId: string): Promise<ApiResponse<Agent>> {
   try {
  
     
-    const response = await httpClient.get<ApiResponse<Agent>>(`/agents/session-agent/${sessionId}`);
+    const response = await httpClient.get<ApiResponse<Agent>>(API_ENDPOINTS.SESSION_AGENT(sessionId));
     
     return response;
   } catch (error) {
@@ -400,11 +381,6 @@ export const deleteAgentWithToast = withToast(deleteAgent, {
 export const publishAgentVersionWithToast = withToast(publishAgentVersion, {
   successTitle: "发布助理版本成功",
   errorTitle: "发布助理版本失败"
-})
-
-export const searchAgentsWithToast = withToast(searchAgents, {
-  showSuccessToast: false,
-  errorTitle: "搜索助理失败"
 })
 
 export const getAgentBySessionIdWithToast = withToast(getAgentBySessionId, {

@@ -66,6 +66,7 @@ class AgentExecutionTraceAppServiceTest {
         assertFalse(result.isEmpty());
         assertEquals("已删除助理", result.get(0).getAgentName());
         assertEquals("未知会话", result.get(0).getSessionTitle());
+        verify(sessionDomainService).getSessionsByIds(List.of("session-1"), userId);
     }
 
     @Test

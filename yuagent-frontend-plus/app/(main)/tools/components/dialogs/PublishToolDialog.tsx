@@ -24,32 +24,14 @@ interface PublishToolDialogProps {
   onPublishSuccess?: () => void;
 }
 
-// Helper function to increment version
 function incrementVersion(version: string): string {
-  if (!version || version === "0.0.0" || !/^\d+(\.\d+){0,2}$/.test(version)) return "0.0.1"; // Basic validation and default for invalid
-
-  const parts = version.split('.').map(Number);
-  parts[parts.length - 1]++; // Increment the last part
-
-  for (let i = parts.length - 1; i > 0; i--) {
-    if (parts[i] >= 10) {
-      parts[i] = 0;
-      parts[i - 1]++;
-    } else {
-      break; // No more carry-over needed
-    }
-  }
-  // Handle major version increment if first part becomes 10 (e.g. from 0.9.x)
-  if (parts.length === 1 && parts[0] >=10) { // e.g. version "9" becomes "10"
-      // or if we want to limit to x.y.z and 0.9.9 -> 1.0.0
-  } else if (parts.length > 1 && parts[0] >= 10 && parts.length === 3 && version.startsWith('0.')){
-    // This specific condition for 0.9.9 -> 1.0.0 is tricky if not constrained.
-    // The general loop above handles 0.0.9 -> 0.1.0 correctly.
-    // For simplicity, if the first part (major) was incremented due to chain reaction from minor/patch
-    // and it was, for example, 0 before, it will become 1.
+  if (!/^\d+(\.\d+){0,2}$/.test(version) || version === "0.0.0") {
+    return "0.0.1";
   }
 
-  return parts.join('.');
+  const parts = version.split(".").map(Number);
+  parts[parts.length - 1] += 1;
+  return parts.join(".");
 }
 
 export function PublishToolDialog({
@@ -145,7 +127,7 @@ export function PublishToolDialog({
         }
       }
       // Errors are handled by publishToolToMarketWithToast
-    } catch (error) {
+    } catch {
       // Errors are handled by publishToolToMarketWithToast
  
     } finally {

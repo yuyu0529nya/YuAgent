@@ -7,6 +7,7 @@ import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.yu.domain.rag.constant.InstallType;
 import org.yu.domain.rag.constant.RagPublishStatus;
 import org.yu.domain.rag.model.RagQaDatasetEntity;
@@ -19,9 +20,14 @@ import org.yu.infrastructure.exception.BusinessException;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 /** 用户RAG领域服务
@@ -49,6 +55,7 @@ public class UserRagDomainService {
      * @param userId 用户ID
      * @param ragVersionId RAG版本ID
      * @return 安装记录 */
+    @Transactional(rollbackFor = Exception.class)
     public UserRagEntity installRag(String userId, String ragVersionId) {
         // 验证版本存在
         RagVersionEntity ragVersion = ragVersionDomainService.getRagVersion(ragVersionId);
@@ -136,6 +143,7 @@ public class UserRagDomainService {
      * @param userRagId 用户RAG安装记录ID
      * @param targetVersionId 目标版本ID
      * @return 更新后的安装记录 */
+    @Transactional(rollbackFor = Exception.class)
     public UserRagEntity switchRagVersion(String userId, String userRagId, String targetVersionId) {
         // 获取当前安装记录
         UserRagEntity userRag = getUserRag(userId, userRagId);
@@ -191,6 +199,7 @@ public class UserRagDomainService {
      * 
      * @param userId 用户ID
      * @param ragVersionId RAG版本ID */
+    @Transactional(rollbackFor = Exception.class)
     public void uninstallRag(String userId, String ragVersionId) {
         // 获取安装记录
         UserRagEntity userRag = getInstalledRag(userId, ragVersionId);
@@ -226,6 +235,18 @@ public class UserRagDomainService {
         return userRagRepository.exists(wrapper);
     }
 
+    /** 批量获取用户已安装的 RAG 版本 ID，避免市场列表逐条 exists 查询。 */
+    public Set<String> getInstalledRagVersionIds(String userId, Collection<String> ragVersionIds) {
+        if (StringUtils.isBlank(userId) || ragVersionIds == null || ragVersionIds.isEmpty()) {
+            return Set.of();
+        }
+
+        return userRagRepository
+                .selectObjs(Wrappers.<UserRagEntity>query().select("rag_version_id").eq("user_id", userId)
+                        .in("rag_version_id", ragVersionIds))
+                .stream().filter(Objects::nonNull).map(Object::toString).collect(Collectors.toSet());
+    }
+
     /** 检查RAG是否已安装（按原始RAG ID检查）
      * 
      * @param userId 用户ID
@@ -233,6 +254,32 @@ public class UserRagDomainService {
      * @return 是否已安装 */
     public boolean isRagInstalledByOriginalId(String userId, String originalRagId) {
         return findInstalledRagByOriginalId(userId, originalRagId) != null;
+    }
+
+    /** Returns installed RAG records keyed by their original dataset IDs.
+     *
+     * <p>
+     * Callers that validate multiple configured knowledge bases should use this method instead of issuing one query per
+     * dataset.
+     * </p>
+     */
+    public Map<String, UserRagEntity> getInstalledRagsByOriginalIds(String userId, Collection<String> originalRagIds) {
+        if (StringUtils.isBlank(userId) || originalRagIds == null || originalRagIds.isEmpty()) {
+            return Map.of();
+        }
+
+        List<String> nonBlankOriginalRagIds = originalRagIds.stream().filter(StringUtils::isNotBlank).distinct()
+                .toList();
+        if (nonBlankOriginalRagIds.isEmpty()) {
+            return Map.of();
+        }
+
+        return userRagRepository
+                .selectList(Wrappers.<UserRagEntity>lambdaQuery().eq(UserRagEntity::getUserId, userId)
+                        .in(UserRagEntity::getOriginalRagId, nonBlankOriginalRagIds))
+                .stream().filter(userRag -> StringUtils.isNotBlank(userRag.getOriginalRagId()))
+                .collect(Collectors.toMap(UserRagEntity::getOriginalRagId, Function.identity(),
+                        (first, ignored) -> first, LinkedHashMap::new));
     }
 
     /** 查找用户安装的RAG（按原始RAG ID）
@@ -324,9 +371,8 @@ public class UserRagDomainService {
             // 检查是否已安装该版本
             return isRagInstalled(userId, ragVersionId);
         } else if (StringUtils.isNotBlank(ragId)) {
-            // 检查是否为创建者（需要调用其他服务）
-            // 这里假设创建者总是有权限
-            return true;
+            return ragQaDatasetDomainService.findDataset(ragId, userId) != null
+                    || isRagInstalledByOriginalId(userId, ragId);
         }
 
         return false;
@@ -341,6 +387,26 @@ public class UserRagDomainService {
                 .eq(UserRagEntity::getRagVersionId, ragVersionId);
 
         return userRagRepository.selectCount(wrapper);
+    }
+
+    /** 批量获取 RAG 版本安装次数，避免列表展示时逐条 count 查询。 */
+    public Map<String, Long> getInstallCounts(Collection<String> ragVersionIds) {
+        if (ragVersionIds == null || ragVersionIds.isEmpty()) {
+            return Map.of();
+        }
+
+        List<Map<String, Object>> rows = userRagRepository
+                .selectMaps(Wrappers.<UserRagEntity>query().select("rag_version_id", "COUNT(*) AS install_count")
+                        .in("rag_version_id", ragVersionIds).groupBy("rag_version_id"));
+        Map<String, Long> counts = new HashMap<>();
+        for (Map<String, Object> row : rows) {
+            Object versionId = row.get("rag_version_id");
+            Object installCount = row.get("install_count");
+            if (versionId != null && installCount instanceof Number number) {
+                counts.put(versionId.toString(), number.longValue());
+            }
+        }
+        return counts;
     }
 
     /** 更新用户安装记录的基本信息
@@ -365,7 +431,13 @@ public class UserRagDomainService {
      * 
      * @param userId 用户ID
      * @param originalRagId 原始RAG数据集ID */
+    @Transactional(rollbackFor = Exception.class)
     public void forceUninstallRagByOriginalId(String userId, String originalRagId) {
+        List<UserRagEntity> installedRags = userRagRepository.selectList(Wrappers.<UserRagEntity>lambdaQuery()
+                .eq(UserRagEntity::getUserId, userId).eq(UserRagEntity::getOriginalRagId, originalRagId));
+        installedRags.stream().filter(UserRagEntity::isSnapshotType)
+                .forEach(userRag -> userRagSnapshotService.deleteUserSnapshot(userRag.getId()));
+
         LambdaUpdateWrapper<UserRagEntity> wrapper = Wrappers.<UserRagEntity>lambdaUpdate()
                 .eq(UserRagEntity::getUserId, userId).eq(UserRagEntity::getOriginalRagId, originalRagId);
 

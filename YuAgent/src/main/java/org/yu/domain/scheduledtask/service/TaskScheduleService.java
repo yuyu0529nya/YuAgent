@@ -8,6 +8,7 @@ import org.yu.domain.scheduledtask.model.ScheduledTaskEntity;
 import java.time.DayOfWeek;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.time.YearMonth;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
 
@@ -31,8 +32,12 @@ public class TaskScheduleService {
      * @param currentTime 当前时间
      * @return 下次执行时间，如果任务不需要再执行返回null */
     public LocalDateTime calculateNextExecuteTime(ScheduledTaskEntity task, LocalDateTime currentTime) {
+        if (task == null || task.getRepeatType() == null || currentTime == null) {
+            return null;
+        }
+
         RepeatConfig config = task.getRepeatConfig();
-        if (config == null) {
+        if (config == null || config.getExecuteDateTime() == null) {
             return null;
         }
 
@@ -154,16 +159,16 @@ public class TaskScheduleService {
 
     private LocalDateTime calculateMonthlyNextTime(RepeatConfig config, LocalDateTime currentTime) {
         Integer monthDay = config.getMonthDay();
-        if (monthDay == null) {
+        if (!isValidMonthDay(monthDay)) {
             return null;
         }
 
-        LocalDateTime executeTime = config.getExecuteDateTime();
-        LocalTime time = executeTime.toLocalTime();
-
-        LocalDateTime nextTime = currentTime.toLocalDate().withDayOfMonth(monthDay).atTime(time);
+        LocalTime time = config.getExecuteDateTime().toLocalTime();
+        YearMonth yearMonth = YearMonth.from(currentTime);
+        LocalDateTime nextTime = yearMonth.atDay(Math.min(monthDay, yearMonth.lengthOfMonth())).atTime(time);
         if (nextTime.isBefore(currentTime) || nextTime.equals(currentTime)) {
-            nextTime = nextTime.plusMonths(1);
+            yearMonth = yearMonth.plusMonths(1);
+            nextTime = yearMonth.atDay(Math.min(monthDay, yearMonth.lengthOfMonth())).atTime(time);
         }
 
         return nextTime;
@@ -189,7 +194,7 @@ public class TaskScheduleService {
         String timeUnit = config.getTimeUnit();
         LocalDateTime endDateTime = config.getEndDateTime();
 
-        if (interval == null || timeUnit == null) {
+        if (interval == null || interval <= 0 || timeUnit == null) {
             return null;
         }
 
@@ -249,11 +254,12 @@ public class TaskScheduleService {
 
     private boolean shouldExecuteMonthly(RepeatConfig config, LocalDateTime checkTime) {
         Integer monthDay = config.getMonthDay();
-        if (monthDay == null) {
+        if (!isValidMonthDay(monthDay)) {
             return false;
         }
 
-        if (checkTime.getDayOfMonth() != monthDay) {
+        int executionDay = Math.min(monthDay, checkTime.toLocalDate().lengthOfMonth());
+        if (checkTime.getDayOfMonth() != executionDay) {
             return false;
         }
 
@@ -273,7 +279,7 @@ public class TaskScheduleService {
         String timeUnit = config.getTimeUnit();
         LocalDateTime endDateTime = config.getEndDateTime();
 
-        if (interval == null || timeUnit == null) {
+        if (interval == null || interval <= 0 || timeUnit == null) {
             return false;
         }
 
@@ -311,5 +317,9 @@ public class TaskScheduleService {
     private boolean isWorkday(LocalDateTime dateTime) {
         DayOfWeek dayOfWeek = dateTime.getDayOfWeek();
         return dayOfWeek != DayOfWeek.SATURDAY && dayOfWeek != DayOfWeek.SUNDAY;
+    }
+
+    private boolean isValidMonthDay(Integer monthDay) {
+        return monthDay != null && monthDay >= 1 && monthDay <= 31;
     }
 }

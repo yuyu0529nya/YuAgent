@@ -1,7 +1,8 @@
 "use client"
 
 import { useState, useRef, KeyboardEvent, useEffect } from "react"
-import { ArrowLeft, Loader2, X, Bold, Italic, Strikethrough, Heading, List, Quote, Table, Code, Image, Eye, Upload, Save } from "lucide-react"
+import dynamic from "next/dynamic"
+import { ArrowLeft, Loader2, X, Bold, Italic, Strikethrough, Heading, List, Quote, Table, Code, Image as ImageIcon, Eye, Upload, Save } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
@@ -24,10 +25,14 @@ import { zodResolver } from "@hookform/resolvers/zod"
 import { useForm } from "react-hook-form"
 import Link from "next/link"
 import { updateToolWithToast, getToolDetailWithToast } from "@/lib/tool-service"
-import { MessageMarkdown } from '@/components/ui/message-markdown'
 import { useParams, useRouter } from "next/navigation"
-import { Tool } from "@/types/tool"
+import { PortalToolDTO } from "@/types/tool"
 import FileUpload from "@/components/ui/file-upload"
+
+const MessageMarkdown = dynamic(
+  () => import('@/components/ui/message-markdown').then(module => module.MessageMarkdown),
+  { ssr: false },
+)
 
 // 表单验证模式 - 移除icon字段的File类型要求
 const formSchema = z.object({
@@ -41,6 +46,16 @@ const formSchema = z.object({
 });
 
 type FormValues = z.infer<typeof formSchema>;
+
+function serializeInstallCommand(command: PortalToolDTO["installCommand"]): string {
+  if (typeof command === "string") {
+    return command
+  }
+  if (command && typeof command === "object") {
+    return JSON.stringify(command, null, 2)
+  }
+  return ""
+}
 
 export default function EditToolPage() {
   const params = useParams();
@@ -57,7 +72,6 @@ export default function EditToolPage() {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   // 移除fileInputRef，因为FileUpload组件会自己管理
   // const fileInputRef = useRef<HTMLInputElement>(null);
-  const [tool, setTool] = useState<Tool | null>(null);
   
   // 初始化表单
   const form = useForm<FormValues>({
@@ -88,11 +102,9 @@ export default function EditToolPage() {
             name: tool.name || "",
             subtitle: tool.subtitle || "",
             description: tool.description || "",
-            uploadUrl: (tool as any).uploadUrl || "", 
+            uploadUrl: tool.uploadUrl || "", 
             labels: tool.labels || [],
-            installCommand: typeof (tool as any).installCommand === 'object' 
-              ? JSON.stringify((tool as any).installCommand, null, 2) 
-              : ((tool as any).installCommand || ""),
+            installCommand: serializeInstallCommand(tool.installCommand),
           });
           
           // 如果有图标，设置图标预览
@@ -100,7 +112,6 @@ export default function EditToolPage() {
             // 直接设置到表单中
             form.setValue("icon", tool.icon);
           }
-          setTool(tool);
         } else {
           toast({
             title: "获取工具详情失败",
@@ -643,7 +654,7 @@ export default function EditToolPage() {
                           className="h-8 px-2"
                           onClick={() => handleMarkdownFormat('image')}
                         >
-                          <Image className="h-4 w-4" />
+                          <ImageIcon className="h-4 w-4" />
                         </Button>
                       </div>
                     )}

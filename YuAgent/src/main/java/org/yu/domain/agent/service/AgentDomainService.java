@@ -5,7 +5,6 @@ import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.toolkit.StringUtils;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
-import org.springframework.beans.BeanUtils;
 import org.springframework.stereotype.Service;
 import org.yu.domain.agent.constant.PublishStatus;
 import org.yu.domain.agent.model.*;
@@ -95,12 +94,9 @@ public class AgentDomainService {
     }
 
     /** 切换Agent的启用/禁用状态 */
-    public AgentEntity toggleAgentStatus(String agentId) {
+    public AgentEntity toggleAgentStatus(String agentId, String userId) {
 
-        AgentEntity agent = agentRepository.selectById(agentId);
-        if (agent == null) {
-            throw new BusinessException("Agent不存在: " + agentId);
-        }
+        AgentEntity agent = getAgent(agentId, userId);
 
         // 根据当前状态切换
         if (Boolean.TRUE.equals(agent.getEnabled())) {
@@ -291,7 +287,11 @@ public class AgentDomainService {
     }
 
     public AgentEntity getAgentById(String agentId) {
-        return this.getAgentsByIds(Collections.singletonList(agentId)).get(0);
+        AgentEntity agent = agentRepository.selectById(agentId);
+        if (agent == null) {
+            throw new BusinessException("助理不存在: " + agentId);
+        }
+        return agent;
     }
 
     public AgentEntity getAgentWithPermissionCheck(String agentId, String userId) {
@@ -309,7 +309,7 @@ public class AgentDomainService {
         String publishedVersion = agentEntity.getPublishedVersion();
         if (!StringUtils.isEmpty(publishedVersion)) {
             AgentVersionEntity agentVersionEntity = getAgentVersionById(publishedVersion);
-            BeanUtils.copyProperties(agentVersionEntity, agentEntity);
+            agentEntity.applyPublishedVersion(agentVersionEntity);
         }
 
         return agentEntity;

@@ -21,11 +21,12 @@ import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
 
-/**
- * Publishes approved tools into the internal GitHub repository when the source is a GitHub repo.
+/** Publishes approved tools into the internal GitHub repository when the source is a GitHub repo.
  *
- * <p>Hosted MCP services such as Aliyun Bailian are already deployable by installCommand,
- * so they skip the repository publishing step.</p>
+ * <p>
+ * Hosted MCP services such as Aliyun Bailian are already deployable by installCommand, so they skip the repository
+ * publishing step.
+ * </p>
  */
 public class AppPublishingProcessor implements AppToolStateProcessor {
 
@@ -78,7 +79,7 @@ public class AppPublishingProcessor implements AppToolStateProcessor {
 
             Path sourcePathToPublish = actualContentRoot;
             if (sourceRepoInfo.getPathInRepo() != null && !sourceRepoInfo.getPathInRepo().isEmpty()) {
-                sourcePathToPublish = actualContentRoot.resolve(sourceRepoInfo.getPathInRepo());
+                sourcePathToPublish = resolveSourcePath(actualContentRoot, sourceRepoInfo.getPathInRepo());
                 if (!Files.exists(sourcePathToPublish) || !Files.isDirectory(sourcePathToPublish)) {
                     throw new BusinessException("源 GitHub 仓库中的路径不存在或不是目录: " + sourceRepoInfo.getPathInRepo());
                 }
@@ -109,10 +110,19 @@ public class AppPublishingProcessor implements AppToolStateProcessor {
         try {
             URI uri = new URI(sourceUrl.trim());
             String host = uri.getHost();
-            return host != null && host.toLowerCase(Locale.ROOT).contains("github.com");
+            return "https".equalsIgnoreCase(uri.getScheme()) && "github.com".equalsIgnoreCase(host);
         } catch (URISyntaxException e) {
             return false;
         }
+    }
+
+    static Path resolveSourcePath(Path contentRoot, String pathInRepo) {
+        Path normalizedRoot = contentRoot.toAbsolutePath().normalize();
+        Path resolvedPath = normalizedRoot.resolve(pathInRepo).normalize();
+        if (!resolvedPath.startsWith(normalizedRoot)) {
+            throw new BusinessException("源 GitHub 仓库路径不能越出仓库根目录: " + pathInRepo);
+        }
+        return resolvedPath;
     }
 
     private void cleanupTemporaryFiles(Path tempDownloadPath, Path tempUnzipPath) {

@@ -146,8 +146,7 @@ public class AgentExecutionTraceAppService {
         }
 
         List<String> agentIds = agentStatistics.stream()
-                .map(AgentExecutionTraceDomainService.AgentStatistics::getAgentId)
-                .collect(Collectors.toList());
+                .map(AgentExecutionTraceDomainService.AgentStatistics::getAgentId).collect(Collectors.toList());
         Map<String, String> agentNameMap = getAgentNameMap(agentIds, userId);
 
         return agentStatistics.stream().map(stats -> {
@@ -180,8 +179,7 @@ public class AgentExecutionTraceAppService {
 
         String agentName = getAgentName(agentId, userId);
         List<String> sessionIds = sessionStatistics.stream()
-                .map(AgentExecutionTraceDomainService.SessionStatistics::getSessionId)
-                .collect(Collectors.toList());
+                .map(AgentExecutionTraceDomainService.SessionStatistics::getSessionId).collect(Collectors.toList());
         Map<String, SessionEntity> sessionMap = getSessionMap(sessionIds, userId);
 
         return sessionStatistics.stream().map(stats -> {
@@ -263,23 +261,15 @@ public class AgentExecutionTraceAppService {
     }
 
     private Map<String, SessionEntity> getSessionMap(List<String> sessionIds, String userId) {
-        return sessionIds.stream().distinct()
-                .map(sessionId -> {
-                    SessionEntity session = getSession(sessionId, userId);
-                    if (session == null) {
-                        return null;
-                    }
-                    return Map.entry(sessionId, session);
-                })
-                .filter(entry -> entry != null)
-                .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
-    }
-
-    private SessionEntity getSession(String sessionId, String userId) {
         try {
-            return sessionDomainService.getSession(sessionId, userId);
+            List<SessionEntity> sessions = sessionDomainService
+                    .getSessionsByIds(sessionIds.stream().distinct().toList(), userId);
+            if (sessions == null) {
+                return Map.of();
+            }
+            return sessions.stream().collect(Collectors.toMap(SessionEntity::getId, Function.identity()));
         } catch (Exception e) {
-            return null;
+            return Map.of();
         }
     }
 }

@@ -165,6 +165,26 @@ public class UserRagSnapshotDomainService {
         return Math.toIntExact(userRagDocumentRepository.selectCount(wrapper));
     }
 
+    /** 批量统计用户 RAG 快照文档数量，避免列表展示时逐条 count 查询。 */
+    public Map<String, Integer> getUserRagDocumentCounts(List<String> userRagIds) {
+        if (userRagIds == null || userRagIds.isEmpty()) {
+            return Map.of();
+        }
+
+        List<Map<String, Object>> rows = userRagDocumentRepository
+                .selectMaps(Wrappers.<UserRagDocumentEntity>query().select("user_rag_id", "COUNT(*) AS document_count")
+                        .in("user_rag_id", userRagIds).groupBy("user_rag_id"));
+        Map<String, Integer> counts = new HashMap<>();
+        for (Map<String, Object> row : rows) {
+            Object userRagId = row.get("user_rag_id");
+            Object documentCount = row.get("document_count");
+            if (userRagId != null && documentCount instanceof Number number) {
+                counts.put(userRagId.toString(), Math.toIntExact(number.longValue()));
+            }
+        }
+        return counts;
+    }
+
     // ========== 私有辅助方法 ==========
 
     /** 回滚用户快照数据 */
@@ -180,6 +200,8 @@ public class UserRagSnapshotDomainService {
     private UserRagFileEntity convertToUserRagFile(RagVersionFileEntity versionFile, String userRagId) {
         UserRagFileEntity userFile = new UserRagFileEntity();
         BeanUtils.copyProperties(versionFile, userFile);
+        // 快照归属于具体用户安装记录，不能复用版本文件主键；否则不同用户安装同一版本时会发生主键冲突。
+        userFile.setId(null);
         userFile.setUserRagId(userRagId);
         return userFile;
     }
