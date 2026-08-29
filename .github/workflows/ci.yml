@@ -1,0 +1,110 @@
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - '**'
+  push:
+    branches:
+      - main
+      - 'ci/**'
+  workflow_dispatch:
+
+jobs:
+  backend:
+    name: Backend Build & Test
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: yuagent
+          POSTGRES_USER: yuagent_user
+          POSTGRES_PASSWORD: yuagent_pass
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U yuagent_user"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      rabbitmq:
+        image: rabbitmq:3.12-management
+        env:
+          RABBITMQ_DEFAULT_USER: guest
+          RABBITMQ_DEFAULT_PASS: guest
+        ports:
+          - 5672:5672
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q ping"
+          --health-interval 10s
+          --health-timeout 10s
+          --health-retries 10
+
+    env:
+      DB_HOST: localhost
+      DB_PORT: 5432
+      DB_NAME: yuagent
+      DB_USER: yuagent_user
+      DB_PASSWORD: yuagent_pass
+      RABBITMQ_HOST: localhost
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USERNAME: guest
+      RABBITMQ_PASSWORD: guest
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: 安装 psql 客户端并初始化数据库
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
+          PGPASSWORD=yuagent_pass psql -h localhost -U yuagent_user -d yuagent \
+            -f docs/sql/01_init.sql
+          PGPASSWORD=yuagent_pass psql -h localhost -U yuagent_user -d yuagent \
+            -f YuAgent/src/main/resources/schema/agent_tasks.sql || true
+          PGPASSWORD=yuagent_pass psql -h localhost -U yuagent_user -d yuagent \
+            -f YuAgent/src/main/resources/schema/alter_messages.sql || true
+
+      - name: 编译打包（跳过测试）
+        working-directory: ./YuAgent
+        run: ./mvnw -B -DskipTests package
+
+      - name: 运行测试
+        working-directory: ./YuAgent
+        run: ./mvnw -B test
+
+  frontend:
+    name: Frontend Lint & Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 安装依赖
+        working-directory: ./yuagent-frontend-plus
+        run: npm install --legacy-peer-deps
+
+      - name: Lint
+        working-directory: ./yuagent-frontend-plus
+        run: npm run lint
+
+      - name: Build
+        working-directory: ./yuagent-frontend-plus
+        env:
+          NEXT_PUBLIC_API_BASE_URL: http://localhost:8088/api
+        run: npm run build
