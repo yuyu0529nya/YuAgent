@@ -5,7 +5,6 @@ import dev.langchain4j.mcp.McpToolProvider;
 import dev.langchain4j.mcp.client.DefaultMcpClient;
 import dev.langchain4j.mcp.client.McpClient;
 import dev.langchain4j.mcp.client.transport.McpTransport;
-import dev.langchain4j.mcp.client.transport.PresetParameter;
 import dev.langchain4j.mcp.client.transport.http.HttpMcpTransport;
 import dev.langchain4j.service.tool.ToolExecutor;
 import dev.langchain4j.service.tool.ToolProvider;
@@ -99,14 +98,12 @@ public class AgentToolManager {
 
                 McpClient mcpClient = new DefaultMcpClient.Builder().transport(transport).build();
                 if (toolPresetParams != null && toolPresetParams.containsKey(mcpServerName)) {
-                    List<PresetParameter> presetParameters = new ArrayList<>();
                     Map<String, Map<String, String>> presetMap = toolPresetParams.get(mcpServerName);
-                    if (presetMap != null) {
-                        presetMap.forEach((toolName, params) -> presetParameters
-                                .add(new PresetParameter(toolName, JsonUtils.toJsonString(params))));
-                    }
-                    if (!presetParameters.isEmpty()) {
-                        mcpClient.presetParameters(presetParameters);
+                    if (presetMap != null && !presetMap.isEmpty()) {
+                        Map<String, String> presetArgumentsByTool = new HashMap<>();
+                        presetMap.forEach(
+                                (toolName, params) -> presetArgumentsByTool.put(toolName, JsonUtils.toJsonString(params)));
+                        mcpClient = new PresetParametersMcpClient(mcpClient, presetArgumentsByTool);
                     }
                 }
                 mcpClients.add(mcpClient);

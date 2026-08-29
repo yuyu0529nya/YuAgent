@@ -28,7 +28,7 @@
         <fastjson.version>2.0.47</fastjson.version>
         <hutool.version>5.8.26</hutool.version>
         <httpclient.version>4.5.14</httpclient.version>
-        <langchain4j.version>1.0.4.3-beta7-SNAPSHOT</langchain4j.version>
+        <langchain4j.version>1.19.0</langchain4j.version>
         <spotless.version>2.37.0</spotless.version>
         <x-file-storage.version>2.2.0</x-file-storage.version>
         <pdf-box>3.0.2</pdf-box>
@@ -47,15 +47,15 @@
         </pluginRepository>
     </pluginRepositories>
 
-    <repositories>
-        <repository>
-            <id>jitpack.io</id>
-            <url>https://jitpack.io</url>
-        </repository>
-    </repositories>
-
     <dependencyManagement>
         <dependencies>
+            <dependency>
+                <groupId>dev.langchain4j</groupId>
+                <artifactId>langchain4j-bom</artifactId>
+                <version>${langchain4j.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
             <!-- 强制使用兼容的POI和commons-io版本 -->
             <dependency>
                 <groupId>org.apache.poi</groupId>
@@ -137,19 +137,16 @@
             <artifactId>commons-io</artifactId>
         </dependency>
         <dependency>
-            <groupId>com.github.lucky-aeon.langchain4j</groupId>
+            <groupId>dev.langchain4j</groupId>
             <artifactId>langchain4j-document-parser-apache-poi</artifactId>
-            <version>${langchain4j.version}</version>
         </dependency>
 
         <dependency>
-            <groupId>com.github.lucky-aeon.langchain4j</groupId>
+            <groupId>dev.langchain4j</groupId>
             <artifactId>langchain4j-pgvector</artifactId>
-            <version>${langchain4j.version}</version>
         </dependency>
 
-        <!-- 文件上传服务 -->
-
+        <!-- AWS S3 SDK v1（x-file-storage 的 amazon-s3 平台与图片代理共用） -->
         <dependency>
             <groupId>com.amazonaws</groupId>
             <artifactId>aws-java-sdk-s3</artifactId>
@@ -247,25 +244,25 @@
             <scope>test</scope>
         </dependency>
         <dependency>
-            <groupId>com.github.lucky-aeon.langchain4j</groupId>
+            <groupId>dev.langchain4j</groupId>
             <artifactId>langchain4j-anthropic</artifactId>
-            <version>${langchain4j.version}</version>
         </dependency>
         <dependency>
-            <groupId>com.github.lucky-aeon.langchain4j</groupId>
+            <groupId>dev.langchain4j</groupId>
             <artifactId>langchain4j-open-ai</artifactId>
-            <version>${langchain4j.version}</version>
         </dependency>
 
         <dependency>
-            <groupId>com.github.lucky-aeon.langchain4j</groupId>
+            <groupId>dev.langchain4j</groupId>
             <artifactId>langchain4j</artifactId>
-            <version>${langchain4j.version}</version>
         </dependency>
         <dependency>
-            <groupId>com.github.lucky-aeon.langchain4j</groupId>
+            <groupId>dev.langchain4j</groupId>
             <artifactId>langchain4j-mcp</artifactId>
-            <version>${langchain4j.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>dev.langchain4j</groupId>
+            <artifactId>langchain4j-http-client-jdk</artifactId>
         </dependency>
 
 
@@ -312,20 +309,6 @@
             <groupId>net.lingala.zip4j</groupId>
             <artifactId>zip4j</artifactId>
             <version>2.11.5</version> <!-- 或最新稳定版 -->
-        </dependency>
-
-        <!-- AWS S3 SDK for S3-compatible object storage -->
-        <dependency>
-            <groupId>software.amazon.awssdk</groupId>
-            <artifactId>s3</artifactId>
-            <version>2.20.162</version>
-        </dependency>
-
-        <!-- AWS SDK Core -->
-        <dependency>
-            <groupId>software.amazon.awssdk</groupId>
-            <artifactId>url-connection-client</artifactId>
-            <version>2.20.162</version>
         </dependency>
 
         <!-- Docker Java 客户端 -->

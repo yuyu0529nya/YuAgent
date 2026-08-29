@@ -19,17 +19,15 @@ import org.springframework.web.bind.annotation.RestController;
 import org.yu.infrastructure.config.OssProperties;
 import org.yu.infrastructure.exception.BusinessException;
 
-import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
-import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
-import software.amazon.awssdk.core.ResponseBytes;
-import software.amazon.awssdk.http.urlconnection.UrlConnectionHttpClient;
-import software.amazon.awssdk.regions.Region;
-import software.amazon.awssdk.services.s3.S3Client;
-import software.amazon.awssdk.services.s3.S3Configuration;
-import software.amazon.awssdk.services.s3.model.GetObjectRequest;
-import software.amazon.awssdk.services.s3.model.GetObjectResponse;
-import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
-import software.amazon.awssdk.services.s3.model.HeadObjectResponse;
+import com.amazonaws.auth.AWSStaticCredentialsProvider;
+import com.amazonaws.auth.BasicAWSCredentials;
+import com.amazonaws.client.builder.AwsClientBuilder;
+import com.amazonaws.services.s3.AmazonS3;
+import com.amazonaws.services.s3.AmazonS3ClientBuilder;
+import com.amazonaws.services.s3.model.GetObjectRequest;
+import com.amazonaws.services.s3.model.ObjectMetadata;
+import com.amazonaws.services.s3.model.S3Object;
+import com.amazonaws.util.IOUtils;
 
 @RestController
 @RequestMapping("/files")
@@ -37,7 +35,7 @@ public class ImageProxyController {
 
     private final OssProperties ossProperties;
     private final Object s3ClientMonitor = new Object();
-    private volatile S3Client s3Client;
+    private volatile AmazonS3 s3Client;
 
     public ImageProxyController(OssProperties ossProperties) {
         this.ossProperties = ossProperties;
@@ -53,15 +51,18 @@ public class ImageProxyController {
         validateImageRequest(uri);
 
         String objectKey = extractObjectKey(uri);
-        ResponseBytes<GetObjectResponse> responseBytes = downloadObject(objectKey);
-        MediaType mediaType = resolveMediaType(responseBytes.response().contentType(), uri);
+        DownloadedObject downloaded = downloadObject(objectKey);
+        MediaType mediaType = resolveMediaType(downloaded.contentType(), uri);
         if (!"image".equalsIgnoreCase(mediaType.getType())) {
             throw new BusinessException("对象不是图片类型");
         }
 
         return ResponseEntity.ok().cacheControl(CacheControl.maxAge(10, TimeUnit.MINUTES).cachePrivate())
                 .header(HttpHeaders.CONTENT_DISPOSITION, "inline").contentType(mediaType)
-                .body(responseBytes.asByteArray());
+                .body(downloaded.content());
+    }
+
+    private record DownloadedObject(String contentType, byte[] content) {
     }
 
     private URI parseUrl(String url) {
@@ -151,7 +152,7 @@ public class ImageProxyController {
         return path.startsWith("/") ? path.substring(1) : path;
     }
 
-    private ResponseBytes<GetObjectResponse> downloadObject(String objectKey) {
+    private DownloadedObject downloadObject(String objectKey) {
         String endpoint = resolveEndpoint();
         String accessKey = resolveAccessKey();
         String secretKey = resolveSecretKey();
@@ -164,10 +165,11 @@ public class ImageProxyController {
         }
 
         try {
-            GetObjectRequest request = GetObjectRequest.builder().bucket(bucketName).key(objectKey).build();
-            S3Client client = getOrCreateS3Client(endpoint, region, accessKey, secretKey);
+            AmazonS3 client = getOrCreateS3Client(endpoint, region, accessKey, secretKey);
             ensureObjectSize(client, bucketName, objectKey);
-            return client.getObjectAsBytes(request);
+            S3Object object = client.getObject(new GetObjectRequest(bucketName, objectKey));
+            ObjectMetadata metadata = object.getObjectMetadata();
+            return new DownloadedObject(metadata.getContentType(), IOUtils.toByteArray(object.getObjectContent()));
         } catch (BusinessException e) {
             throw e;
         } catch (Exception e) {
@@ -175,32 +177,30 @@ public class ImageProxyController {
         }
     }
 
-    private void ensureObjectSize(S3Client client, String bucketName, String objectKey) {
-        HeadObjectResponse metadata = client
-                .headObject(HeadObjectRequest.builder().bucket(bucketName).key(objectKey).build());
+    private void ensureObjectSize(AmazonS3 client, String bucketName, String objectKey) {
+        ObjectMetadata metadata = client.getObjectMetadata(bucketName, objectKey);
         long maxSize = ossProperties.getImageProxyMaxSize();
         if (maxSize <= 0) {
             throw new BusinessException("图片代理最大文件大小必须大于 0");
         }
-        if (metadata.contentLength() > maxSize) {
+        if (metadata.getContentLength() > maxSize) {
             throw new BusinessException("图片大小超过代理限制");
         }
     }
 
-    private S3Client getOrCreateS3Client(String endpoint, String region, String accessKey, String secretKey) {
-        S3Client current = s3Client;
+    private AmazonS3 getOrCreateS3Client(String endpoint, String region, String accessKey, String secretKey) {
+        AmazonS3 current = s3Client;
         if (current != null) {
             return current;
         }
 
         synchronized (s3ClientMonitor) {
             if (s3Client == null) {
-                S3Configuration serviceConfiguration = S3Configuration.builder()
-                        .pathStyleAccessEnabled(ossProperties.isPathStyleAccess()).build();
-                s3Client = S3Client.builder().endpointOverride(URI.create(endpoint)).region(Region.of(region))
-                        .httpClientBuilder(UrlConnectionHttpClient.builder()).serviceConfiguration(serviceConfiguration)
-                        .credentialsProvider(
-                                StaticCredentialsProvider.create(AwsBasicCredentials.create(accessKey, secretKey)))
+                s3Client = AmazonS3ClientBuilder.standard()
+                        .withEndpointConfiguration(new AwsClientBuilder.EndpointConfiguration(endpoint, region))
+                        .withPathStyleAccessEnabled(ossProperties.isPathStyleAccess())
+                        .withCredentials(
+                                new AWSStaticCredentialsProvider(new BasicAWSCredentials(accessKey, secretKey)))
                         .build();
             }
             return s3Client;
@@ -209,9 +209,9 @@ public class ImageProxyController {
 
     @PreDestroy
     public void closeS3Client() {
-        S3Client current = s3Client;
+        AmazonS3 current = s3Client;
         if (current != null) {
-            current.close();
+            current.shutdown();
         }
     }
 
