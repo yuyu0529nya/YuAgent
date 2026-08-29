@@ -5,6 +5,7 @@ oss:
   bucket-name: ${OSS_BUCKET:${S3_BUCKET_NAME:}}
   custom-domain: ${OSS_DOMAIN:${S3_DOMAIN:}}
   url-prefix: ${OSS_URL_PREFIX:${OSS_DOMAIN:${S3_DOMAIN:}}}
+  image-proxy-max-size: ${OSS_IMAGE_PROXY_MAX_SIZE:20971520}
 
 server:
   port: ${SERVER_PORT:8088}
@@ -81,7 +82,9 @@ mybatis-plus:
 logging:
   level:
     root: info
-    org.yu: debug
+    # SQL and request-level DEBUG logs generate significant I/O under normal use.
+    # Set LOG_LEVEL_ORG_YU=debug only while diagnosing a specific issue.
+    org.yu: ${LOG_LEVEL_ORG_YU:info}
   file:
     name: logs/yu-agent.log
 
@@ -202,6 +205,7 @@ mcp:
     base-url: ${MCP_BASE_URL:${HIGH_AVAILABILITY_GATEWAY_URL:http://api-gateway:8081}}
     api-key: ${MCP_API_KEY:123456}
     connect-timeout: ${MCP_GATEWAY_CONNECT_TIMEOUT:60000}
+    connection-request-timeout: ${MCP_GATEWAY_CONNECTION_REQUEST_TIMEOUT:10000}
 
 tool:
   review:

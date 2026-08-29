@@ -9,8 +9,12 @@ WORKDIR /app
 COPY YuAgent/pom.xml ./
 COPY YuAgent/.mvn ./.mvn
 
-# 预下载依赖（go-offline），加速后续构建
-RUN mvn -B -e -Dmaven.test.skip=true dependency:go-offline
+# Maven 依赖由 docker-compose 的 maven-cache 卷持久化。避免在镜像构建阶段
+# 运行 dependency:go-offline：该目标会解析大量与运行无关的插件，且每次 pom
+# 变更都会让本地重建等待数分钟。首次启动仍会正常下载项目实际所需依赖。
+
+# Spotless uses this file at runtime, but it must not invalidate dependency caching.
+COPY YuAgent/eclipse-formatter.xml ./eclipse-formatter.xml
 
 # 复制源代码
 COPY YuAgent/src ./src

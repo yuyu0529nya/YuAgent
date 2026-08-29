@@ -1,0 +1,19 @@
+# VCS and editor metadata
+.git
+.DS_Store
+
+# Reproducible build artifacts and local dependency caches
+**/node_modules
+**/.next
+**/target
+**/dist
+
+# Runtime data and local logs are mounted or created by containers at runtime.
+logs
+deploy/logs
+YuAgent/logs
+YuAgent/storage
+
+# Test and coverage output
+**/coverage
+**/.turbo

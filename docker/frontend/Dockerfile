@@ -1,8 +1,12 @@
 # YuAgent前端生产环境Dockerfile
-FROM node:18-alpine AS builder
+FROM node:20-alpine AS builder
 
 # 设置工作目录
 WORKDIR /app
+
+# NEXT_PUBLIC_* variables are inlined into browser bundles during next build.
+ARG NEXT_PUBLIC_API_BASE_URL
+ENV NEXT_PUBLIC_API_BASE_URL=${NEXT_PUBLIC_API_BASE_URL}
 
 # 复制package文件
 COPY yuagent-frontend-plus/package*.json ./
@@ -17,7 +21,7 @@ COPY yuagent-frontend-plus/ .
 RUN npm run build
 
 # 生产运行时镜像
-FROM node:18-alpine
+FROM node:20-alpine
 
 # 安装必要工具
 RUN apk add --no-cache curl

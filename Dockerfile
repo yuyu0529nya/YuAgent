@@ -14,6 +14,8 @@ RUN mvn clean package -DskipTests
 # 第二阶段：构建前端
 FROM node:18-alpine AS frontend-builder
 WORKDIR /build
+ARG NEXT_PUBLIC_API_BASE_URL=/api
+ENV NEXT_PUBLIC_API_BASE_URL=${NEXT_PUBLIC_API_BASE_URL}
 COPY yuagent-frontend-plus/package*.json ./
 RUN npm install --legacy-peer-deps
 COPY yuagent-frontend-plus/ .

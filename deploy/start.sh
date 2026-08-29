@@ -62,6 +62,25 @@ prepare_env() {
     fi
 }
 
+wait_for_service() {
+    local name="$1"
+    local url="$2"
+    shift 2
+    local attempt
+
+    echo -e "${BLUE}等待${name}就绪...${NC}"
+    for attempt in {1..60}; do
+        if curl --fail --silent --show-error --max-time 2 "$@" "$url" > /dev/null 2>&1; then
+            echo -e "${GREEN}✅ ${name}已就绪${NC}"
+            return 0
+        fi
+        sleep 2
+    done
+
+    echo -e "${RED}错误: ${name}在120秒内未就绪，请运行 docker compose logs 查看详情${NC}"
+    return 1
+}
+
 # 启动服务
 start_services() {
     echo -e "${BLUE}启动YuAgent服务...${NC}"
@@ -74,12 +93,16 @@ start_services() {
     # 启动开发环境服务 (使用local和dev profile)
     docker compose --profile local --profile dev up -d --build
 
+    wait_for_service "后端API" "http://localhost:8088/api/health"
+    wait_for_service "前端" "http://localhost:3000/login"
+    wait_for_service "MCP网关" "http://localhost:8081/services" -H "Authorization: Bearer 123456"
+
     echo
     echo -e "${GREEN}🎉 YuAgent启动完成！${NC}"
     echo
     echo -e "${BLUE}服务访问地址:${NC}"
     echo "  前端: http://localhost:3000"
-    echo "  后端API: http://localhost:8080"
+    echo "  后端API: http://localhost:8088/api"
     echo "  API网关: http://localhost:8081"
     
     if [ "$MODE" = "dev" ]; then

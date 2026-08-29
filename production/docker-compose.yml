@@ -25,6 +25,7 @@ services:
       POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256"
     volumes:
       - postgres-data:/var/lib/postgresql/data
+      - ../docs/sql/01_init.sql:/docker-entrypoint-initdb.d/01_init.sql:ro
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
     networks:

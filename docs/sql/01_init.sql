@@ -289,7 +289,8 @@ create table public.context (
                                 updated_at timestamp without time zone not null default CURRENT_TIMESTAMP, -- 更新时间
                                 deleted_at timestamp without time zone -- 逻辑删除时间
 );
-create index idx_context_session_id on context using btree (session_id);
+create unique index if not exists uq_context_session_id_active
+    on context using btree (session_id) where deleted_at is null;
 comment on table public.context is '上下文实体类，管理会话的上下文窗口';
 comment on column public.context.id is '上下文唯一ID';
 comment on column public.context.session_id is '所属会话ID';
@@ -418,6 +419,10 @@ create table public.messages (
                                  deleted_at timestamp without time zone -- 逻辑删除时间
 );
 create index idx_messages_session_id on messages using btree (session_id);
+-- Conversation history is always read by session and chronological order. This
+-- composite partial index avoids a per-session sort while excluding soft-deleted rows.
+create index if not exists idx_messages_session_created_active
+    on messages using btree (session_id, created_at asc) where deleted_at is null;
 comment on table public.messages is '消息实体类，代表对话中的一条消息';
 comment on column public.messages.id is '消息唯一ID';
 comment on column public.messages.session_id is '所属会话ID';
@@ -747,6 +752,8 @@ create table public.tool_versions (
                                       updated_at timestamp without time zone not null default CURRENT_TIMESTAMP, -- 更新时间
                                       deleted_at timestamp without time zone -- 逻辑删除时间
 );
+create index idx_tool_versions_public_latest on tool_versions using btree (tool_id, created_at desc, id desc)
+    where public_status = true and deleted_at is null;
 comment on table public.tool_versions is '工具版本实体类';
 comment on column public.tool_versions.id is '版本唯一ID';
 comment on column public.tool_versions.name is '工具名称';
@@ -839,6 +846,10 @@ comment on column public.usage_records.service_type is '服务类型（如：模
 comment on column public.usage_records.service_description is '服务描述';
 comment on column public.usage_records.pricing_rule is '定价规则说明（如：输入 ¥0.002/1K tokens，输出 ¥0.006/1K tokens）';
 comment on column public.usage_records.related_entity_name is '关联实体名称（如：具体的模型名称或Agent名称）';
+create unique index if not exists uq_usage_records_request_id_active
+    on public.usage_records using btree (request_id) where deleted_at is null;
+create index if not exists idx_usage_records_user_billed_active
+    on public.usage_records using btree (user_id, billed_at desc) where deleted_at is null;
 
 create table public.user_containers (
                                         id character varying(36) primary key not null, -- 容器ID
@@ -930,6 +941,19 @@ comment on column public.user_rag_files.process_status is '处理状态（快照
 comment on column public.user_rag_files.embedding_status is '向量化状态（快照）';
 comment on column public.user_rag_files.file_page_size is '文件页数（快照）';
 
+-- User RAG snapshots are listed, copied and removed by user_rag_id. Keep the
+-- same paths indexed for both new databases and upgraded database volumes.
+create index if not exists idx_user_rag_files_user_rag_created_at
+    on public.user_rag_files (user_rag_id, created_at desc);
+create index if not exists idx_user_rag_files_user_rag_original_file
+    on public.user_rag_files (user_rag_id, original_file_id);
+create index if not exists idx_user_rag_documents_user_rag_created_at
+    on public.user_rag_documents (user_rag_id, created_at desc);
+create index if not exists idx_user_rag_documents_user_rag_file_created_at
+    on public.user_rag_documents (user_rag_id, user_rag_file_id, created_at desc);
+create index if not exists idx_user_rag_documents_file_page
+    on public.user_rag_documents (user_rag_file_id, page desc);
+
 create table public.user_rags (
                                   id character varying(36) primary key not null, -- 主键ID
                                   user_id character varying(36) not null, -- 用户ID
@@ -1015,6 +1039,31 @@ comment on column public.user_tools.created_at is '创建时间';
 comment on column public.user_tools.updated_at is '更新时间';
 comment on column public.user_tools.deleted_at is '逻辑删除时间';
 comment on column public.user_tools.is_global is '是否为全局工具（继承自原始工具的全局状态）';
+
+-- User-scoped pages repeatedly filter and sort these records. Keep the
+-- ownership and list lookups indexed for both fresh databases and upgrades.
+create index if not exists idx_agent_workspace_user_agent_active
+    on public.agent_workspace (user_id, agent_id) where deleted_at is null;
+create index if not exists idx_sessions_agent_user_created_active
+    on public.sessions (agent_id, user_id, created_at desc) where deleted_at is null;
+create index if not exists idx_sessions_user_updated_active
+    on public.sessions (user_id, updated_at desc) where deleted_at is null;
+create index if not exists idx_user_tools_user_tool_active
+    on public.user_tools (user_id, tool_id) where deleted_at is null;
+create index if not exists idx_user_tools_tool_active
+    on public.user_tools (tool_id) where deleted_at is null;
+create index if not exists idx_user_tools_user_server_active
+    on public.user_tools (user_id, mcp_server_name) where deleted_at is null;
+create index if not exists idx_tool_versions_tool_version_active
+    on public.tool_versions (tool_id, version) where deleted_at is null;
+create index if not exists idx_tool_versions_tool_created_active
+    on public.tool_versions (tool_id, created_at desc) where deleted_at is null;
+create index if not exists idx_user_rags_user_installed_active
+    on public.user_rags (user_id, installed_at desc) where deleted_at is null;
+create index if not exists idx_user_rags_user_version_active
+    on public.user_rags (user_id, rag_version_id) where deleted_at is null;
+create index if not exists idx_user_rags_user_original_active
+    on public.user_rags (user_id, original_rag_id) where deleted_at is null;
 
 create table public.users (
                               id character varying(36) primary key not null, -- 主键
@@ -1189,3 +1238,15 @@ CREATE TABLE IF NOT EXISTS public.memory_items (
     updated_at timestamp without time zone default CURRENT_TIMESTAMP, -- 更新时间
     deleted_at timestamp without time zone -- 删除时间（软删除）
     )
+
+CREATE INDEX IF NOT EXISTS idx_memory_items_user_dedupe_hash
+    ON public.memory_items (user_id, dedupe_hash)
+    WHERE deleted_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_memory_items_user_updated_at
+    ON public.memory_items (user_id, updated_at DESC)
+    WHERE deleted_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_memory_items_user_type_updated_at
+    ON public.memory_items (user_id, type, updated_at DESC)
+    WHERE deleted_at IS NULL;

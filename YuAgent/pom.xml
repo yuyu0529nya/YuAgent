@@ -340,17 +340,6 @@
             <version>3.3.6</version>
         </dependency>
 
-        <dependency>
-            <groupId>org.tinylog</groupId>
-            <artifactId>tinylog-impl</artifactId>
-            <version>2.6.2</version>
-        </dependency>
-        <dependency>
-            <groupId>org.tinylog</groupId>
-            <artifactId>slf4j-tinylog</artifactId>
-            <version>2.6.2</version>
-        </dependency>
-
         <!-- Apache HTTP Core 5 for Docker Java -->
         <dependency>
             <groupId>org.apache.httpcomponents.core5</groupId>
