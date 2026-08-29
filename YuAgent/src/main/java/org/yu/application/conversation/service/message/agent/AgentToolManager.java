@@ -101,8 +101,8 @@ public class AgentToolManager {
                     Map<String, Map<String, String>> presetMap = toolPresetParams.get(mcpServerName);
                     if (presetMap != null && !presetMap.isEmpty()) {
                         Map<String, String> presetArgumentsByTool = new HashMap<>();
-                        presetMap.forEach(
-                                (toolName, params) -> presetArgumentsByTool.put(toolName, JsonUtils.toJsonString(params)));
+                        presetMap.forEach((toolName, params) -> presetArgumentsByTool.put(toolName,
+                                JsonUtils.toJsonString(params)));
                         mcpClient = new PresetParametersMcpClient(mcpClient, presetArgumentsByTool);
                     }
                 }

@@ -58,8 +58,7 @@ public class ImageProxyController {
         }
 
         return ResponseEntity.ok().cacheControl(CacheControl.maxAge(10, TimeUnit.MINUTES).cachePrivate())
-                .header(HttpHeaders.CONTENT_DISPOSITION, "inline").contentType(mediaType)
-                .body(downloaded.content());
+                .header(HttpHeaders.CONTENT_DISPOSITION, "inline").contentType(mediaType).body(downloaded.content());
     }
 
     private record DownloadedObject(String contentType, byte[] content) {

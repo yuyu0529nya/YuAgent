@@ -156,8 +156,8 @@ public class MCPGatewayService {
      * @throws BusinessException 如果API调用失败 */
     public List<ToolDefinition> listTools(String toolName) throws Exception {
         String url = properties.getBaseUrl() + "/" + toolName + "?api_key=" + properties.getApiKey();
-        StreamableHttpMcpTransport transport = StreamableHttpMcpTransport.builder().url(url).timeout(getMcpClientTimeout())
-                .logRequests(false).logResponses(false).build();
+        StreamableHttpMcpTransport transport = StreamableHttpMcpTransport.builder().url(url)
+                .timeout(getMcpClientTimeout()).logRequests(false).logResponses(false).build();
         McpClient client = new DefaultMcpClient.Builder().transport(transport).build();
         try {
             List<ToolSpecification> toolSpecifications = client.listTools();
@@ -185,8 +185,8 @@ public class MCPGatewayService {
         logger.info("Fetching MCP tools from review container: tool={}, host={}:{}", toolName, containerIp,
                 containerPort);
 
-        StreamableHttpMcpTransport transport = StreamableHttpMcpTransport.builder().url(url).timeout(getMcpClientTimeout())
-                .logRequests(false).logResponses(false).build();
+        StreamableHttpMcpTransport transport = StreamableHttpMcpTransport.builder().url(url)
+                .timeout(getMcpClientTimeout()).logRequests(false).logResponses(false).build();
         McpClient client = new DefaultMcpClient.Builder().transport(transport).build();
         try {
             List<ToolSpecification> toolSpecifications = client.listTools();
