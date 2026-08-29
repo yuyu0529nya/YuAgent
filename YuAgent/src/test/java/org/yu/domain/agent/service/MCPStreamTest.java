@@ -4,7 +4,7 @@ import dev.langchain4j.mcp.McpToolProvider;
 import dev.langchain4j.mcp.client.DefaultMcpClient;
 import dev.langchain4j.mcp.client.McpClient;
 import dev.langchain4j.mcp.client.transport.McpTransport;
-import dev.langchain4j.mcp.client.transport.http.HttpMcpTransport;
+import dev.langchain4j.mcp.client.transport.http.StreamableHttpMcpTransport;
 import dev.langchain4j.model.chat.response.ChatResponse;
 import dev.langchain4j.model.openai.OpenAiStreamingChatModel;
 import dev.langchain4j.rag.content.Content;
@@ -25,7 +25,7 @@ public class MCPStreamTest {
                 .build();
         //
         // npx -y @smithery/cli@latest run @smithery-ai/github --key def1f067-c5b7-443f-af21-2a80c5f176d9
-        McpTransport transport = new HttpMcpTransport.Builder().sseUrl("http://127.0.0.1:8006/time/sse")
+        McpTransport transport = StreamableHttpMcpTransport.builder().url("http://127.0.0.1:8006/time")
                 .logRequests(true) // if you want to see the traffic in the log
                 .logResponses(true).build();
 

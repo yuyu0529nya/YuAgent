@@ -3,6 +3,7 @@ package org.yu.application.conversation.service.message;
 import dev.langchain4j.data.message.SystemMessage;
 import dev.langchain4j.memory.chat.MessageWindowChatMemory;
 import dev.langchain4j.model.chat.StreamingChatModel;
+import dev.langchain4j.model.chat.response.PartialThinking;
 import dev.langchain4j.service.TokenStream;
 import dev.langchain4j.service.tool.ToolProvider;
 import dev.langchain4j.store.memory.chat.InMemoryChatMemoryStore;
@@ -259,10 +260,11 @@ public class RagMessageHandler extends AbstractMessageHandler {
         });
 
         // 思维链处理
-        tokenStream.onPartialReasoning(reasoning -> {
+        tokenStream.onPartialThinking((PartialThinking thinking) -> {
             if (shouldStopStreaming(ragContext, streamStopped)) {
                 return;
             }
+            String reasoning = thinking.text();
             hasThinkingProcess[0] = true;
             if (!thinkingStarted[0]) {
                 transport.sendMessage(connection, AgentChatResponse.build("开始思考...", MessageType.RAG_THINKING_START));

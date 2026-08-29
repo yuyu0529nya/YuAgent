@@ -30,9 +30,9 @@ class McpUrlProviderServiceTest {
         when(toolDomainService.getToolByServerNameForUsage("weather", "user-id")).thenReturn(tool);
         when(containerAppService.getOrCreateReviewContainer()).thenReturn(container);
         when(gatewayService.buildUserContainerUrl("weather", "10.0.0.5", 8080))
-                .thenReturn("http://10.0.0.5:8080/weather/sse");
+                .thenReturn("http://10.0.0.5:8080/weather?api_key=secret");
 
-        assertEquals("http://10.0.0.5:8080/weather/sse", service.getSSEUrl("weather", "user-id"));
+        assertEquals("http://10.0.0.5:8080/weather?api_key=secret", service.getSSEUrl("weather", "user-id"));
         verify(toolDomainService, times(1)).getToolByServerNameForUsage("weather", "user-id");
     }
 

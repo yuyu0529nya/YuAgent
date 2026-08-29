@@ -3,7 +3,7 @@ package org.yu.infrastructure.mcp_gateway;
 import dev.langchain4j.agent.tool.ToolSpecification;
 import dev.langchain4j.mcp.client.DefaultMcpClient;
 import dev.langchain4j.mcp.client.McpClient;
-import dev.langchain4j.mcp.client.transport.http.HttpMcpTransport;
+import dev.langchain4j.mcp.client.transport.http.StreamableHttpMcpTransport;
 import org.apache.http.HttpEntity;
 import org.apache.http.client.config.RequestConfig;
 import org.apache.http.client.methods.CloseableHttpResponse;
@@ -69,26 +69,26 @@ public class MCPGatewayService {
         }
     }
 
-    /** 构建用户容器SSE URL（纯技术方法）
+    /** 构建用户容器 Streamable HTTP URL（纯技术方法）
      * 
      * @param mcpServerName 工具服务名称
      * @param containerIp 容器IP地址
      * @param containerPort 容器端口
-     * @return 用户容器SSE URL */
+     * @return 用户容器 Streamable HTTP URL */
     public String buildUserContainerUrl(String mcpServerName, String containerIp, Integer containerPort) {
         String containerBaseUrl = "http://" + containerIp + ":" + containerPort;
-        return containerBaseUrl + "/" + mcpServerName + "/sse?api_key=" + properties.getApiKey();
+        return containerBaseUrl + "/" + mcpServerName + "?api_key=" + properties.getApiKey();
     }
 
-    /** 构建全局工具SSE URL（纯技术方法）
+    /** 构建全局工具 Streamable HTTP URL（纯技术方法）
      * 
      * @param mcpServerName 工具服务名称
-     * @return 全局工具SSE URL */
+     * @return 全局工具 Streamable HTTP URL */
     public String buildGlobalSSEUrl(String mcpServerName) {
         // Hosted MCP services are aggregated by the gateway's global SSE
         // endpoint. This also lets the gateway bridge Streamable HTTP services
         // for the application's SSE-only MCP client.
-        return properties.getBaseUrl() + "/sse?api_key=" + properties.getApiKey();
+        return properties.getBaseUrl() + "/stream?api_key=" + properties.getApiKey();
     }
 
     /** 部署工具到MCP Gateway
@@ -155,8 +155,8 @@ public class MCPGatewayService {
      * @return 工具定义列表
      * @throws BusinessException 如果API调用失败 */
     public List<ToolDefinition> listTools(String toolName) throws Exception {
-        String url = properties.getBaseUrl() + "/" + toolName + "/sse?api_key=" + properties.getApiKey();
-        HttpMcpTransport transport = new HttpMcpTransport.Builder().sseUrl(url).timeout(getMcpClientTimeout())
+        String url = properties.getBaseUrl() + "/" + toolName + "?api_key=" + properties.getApiKey();
+        StreamableHttpMcpTransport transport = StreamableHttpMcpTransport.builder().url(url).timeout(getMcpClientTimeout())
                 .logRequests(false).logResponses(false).build();
         McpClient client = new DefaultMcpClient.Builder().transport(transport).build();
         try {
@@ -179,13 +179,13 @@ public class MCPGatewayService {
      * @throws BusinessException 如果API调用失败 */
     public List<ToolDefinition> listToolsFromReviewContainer(String toolName, String containerIp, Integer containerPort)
             throws Exception {
-        String url = "http://" + containerIp + ":" + containerPort + "/" + toolName + "/sse?api_key="
+        String url = "http://" + containerIp + ":" + containerPort + "/" + toolName + "?api_key="
                 + properties.getApiKey();
 
         logger.info("Fetching MCP tools from review container: tool={}, host={}:{}", toolName, containerIp,
                 containerPort);
 
-        HttpMcpTransport transport = new HttpMcpTransport.Builder().sseUrl(url).timeout(getMcpClientTimeout())
+        StreamableHttpMcpTransport transport = StreamableHttpMcpTransport.builder().url(url).timeout(getMcpClientTimeout())
                 .logRequests(false).logResponses(false).build();
         McpClient client = new DefaultMcpClient.Builder().transport(transport).build();
         try {

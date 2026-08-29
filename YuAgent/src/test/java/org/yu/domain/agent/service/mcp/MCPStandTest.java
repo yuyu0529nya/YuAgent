@@ -7,20 +7,18 @@ import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.data.message.SystemMessage;
 import dev.langchain4j.mcp.client.DefaultMcpClient;
 import dev.langchain4j.mcp.client.McpClient;
-import dev.langchain4j.mcp.client.transport.http.HttpMcpTransport;
+import dev.langchain4j.mcp.client.transport.http.StreamableHttpMcpTransport;
 import dev.langchain4j.service.AiServices;
 import dev.langchain4j.service.tool.ToolProvider;
 import dev.langchain4j.mcp.McpToolProvider;
 import dev.langchain4j.model.openai.OpenAiChatModel;
 import dev.langchain4j.memory.chat.MessageWindowChatMemory;
 import dev.langchain4j.store.memory.chat.InMemoryChatMemoryStore;
-import okhttp3.OkHttpClient;
 import org.yu.domain.agent.service.AgentStandTest;
 import org.yu.domain.tool.model.config.ToolDefinition;
 import org.yu.domain.tool.model.config.ToolSpecificationConverter;
 import org.yu.infrastructure.utils.JsonUtils;
 
-import java.lang.reflect.Field;
 import java.time.Duration;
 import java.util.*;
 
@@ -28,27 +26,15 @@ public class MCPStandTest {
 
     public static void main(String[] args) throws Exception {
         // 1) 要监听的 SSE 地址列表
-        List<String> sseUrls = List.of("http://localhost:8005/surge/sse/sse?api_key=123456");
+        List<String> mcpUrls = List.of("http://localhost:8005/surge?api_key=123456");
 
-        // 用于并行监听的订阅器和 McpClient 列表
-        List<RawSseSubscriber> subscribers = new ArrayList<>();
+        // 用于并行监听的 McpClient 列表
         List<McpClient> mcpClients = new ArrayList<>();
 
         // 2) 为每个 URL 分别创建拦截器、订阅器和 McpClient
-        for (String url : sseUrls) {
-            // 每个 URL 单独一个 IdToToolInterceptor
-            IdToToolInterceptor idMap = new IdToToolInterceptor();
-
-            // 2.2) 构造 HttpMcpTransport 并注入拦截器
-            HttpMcpTransport transport = new HttpMcpTransport.Builder().sseUrl(url).timeout(Duration.ofHours(1))
-                    .logRequests(false).logResponses(true).build();
-
-            // 通过反射替换 OkHttpClient，加入 interceptor
-            Field clientField = HttpMcpTransport.class.getDeclaredField("client");
-            clientField.setAccessible(true);
-            OkHttpClient origClient = (OkHttpClient) clientField.get(transport);
-            OkHttpClient hookedClient = origClient.newBuilder().addInterceptor(idMap).build();
-            clientField.set(transport, hookedClient);
+        for (String url : mcpUrls) {
+            StreamableHttpMcpTransport transport = StreamableHttpMcpTransport.builder().url(url)
+                    .timeout(Duration.ofHours(1)).logRequests(false).logResponses(true).build();
 
             // 2.3) 用这个 transport 构造 McpClient
             McpClient client = new DefaultMcpClient.Builder().transport(transport)
@@ -96,6 +82,5 @@ public class MCPStandTest {
         //
         // // 7) 等待 SSE 输出刷完，再关闭所有订阅
         // Thread.sleep(5_000);
-        // subscribers.forEach(RawSseSubscriber::close);
     }
 }

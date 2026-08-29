@@ -139,7 +139,7 @@ public class PresetParametersMcpClient implements McpClient {
     }
 
     @Override
-    public void close() {
+    public void close() throws Exception {
         delegate.close();
     }
 }

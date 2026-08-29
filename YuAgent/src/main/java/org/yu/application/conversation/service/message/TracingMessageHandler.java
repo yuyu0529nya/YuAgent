@@ -26,12 +26,12 @@ import org.yu.infrastructure.llm.LLMServiceFactory;
 import dev.langchain4j.memory.chat.MessageWindowChatMemory;
 import dev.langchain4j.model.chat.StreamingChatModel;
 import dev.langchain4j.model.chat.response.ChatResponse;
+import dev.langchain4j.model.chat.response.PartialThinking;
 import dev.langchain4j.service.TokenStream;
 import dev.langchain4j.service.tool.ToolExecution;
 import dev.langchain4j.service.tool.ToolProvider;
 
 import java.util.List;
-import java.util.function.BiFunction;
 import java.util.function.Consumer;
 
 /** 带追踪功能的消息处理器基类 在关键节点集成链路追踪逻辑
@@ -283,48 +283,18 @@ public abstract class TracingMessageHandler extends AbstractMessageHandler {
         }
 
         @Override
-        public TokenStream onPartialReasoning(Consumer<String> consumer) {
-            Consumer<String> wrappedHandler = reasoning -> {
+        public TokenStream onPartialThinking(Consumer<PartialThinking> consumer) {
+            Consumer<PartialThinking> wrappedHandler = thinking -> {
                 if (capturedTraceContext != null) {
                     currentTraceContext.set(capturedTraceContext);
                 }
                 try {
-                    consumer.accept(reasoning);
+                    consumer.accept(thinking);
                 } finally {
                     currentTraceContext.remove();
                 }
             };
-            return originalStream.onPartialReasoning(wrappedHandler);
-        }
-
-        @Override
-        public TokenStream onCompleteReasoning(Consumer<String> consumer) {
-            Consumer<String> wrappedHandler = reasoning -> {
-                if (capturedTraceContext != null) {
-                    currentTraceContext.set(capturedTraceContext);
-                }
-                try {
-                    consumer.accept(reasoning);
-                } finally {
-                    currentTraceContext.remove();
-                }
-            };
-            return originalStream.onCompleteReasoning(wrappedHandler);
-        }
-
-        @Override
-        public TokenStream onReasoningDetected(BiFunction<String, Object, Boolean> biFunction, String s) {
-            BiFunction<String, Object, Boolean> wrappedHandler = (reasoning, metadata) -> {
-                if (capturedTraceContext != null) {
-                    currentTraceContext.set(capturedTraceContext);
-                }
-                try {
-                    return biFunction.apply(reasoning, metadata);
-                } finally {
-                    currentTraceContext.remove();
-                }
-            };
-            return originalStream.onReasoningDetected(wrappedHandler, s);
+            return originalStream.onPartialThinking(wrappedHandler);
         }
 
         @Override

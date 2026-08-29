@@ -5,7 +5,7 @@ import dev.langchain4j.mcp.McpToolProvider;
 import dev.langchain4j.mcp.client.DefaultMcpClient;
 import dev.langchain4j.mcp.client.McpClient;
 import dev.langchain4j.mcp.client.transport.McpTransport;
-import dev.langchain4j.mcp.client.transport.http.HttpMcpTransport;
+import dev.langchain4j.mcp.client.transport.http.StreamableHttpMcpTransport;
 import dev.langchain4j.service.tool.ToolExecutor;
 import dev.langchain4j.service.tool.ToolProvider;
 import dev.langchain4j.service.tool.ToolProviderResult;
@@ -85,15 +85,15 @@ public class AgentToolManager {
         for (Map.Entry<String, String> toolUrl : resolvedToolUrls.entrySet()) {
             String mcpServerName = toolUrl.getKey();
             try {
-                String sseUrl = toolUrl.getValue();
+                String mcpUrl = toolUrl.getValue();
                 // Hosted MCP tools share one gateway SSE endpoint. Connecting
                 // once avoids registering the gateway's aggregated tools more
                 // than once (which LangChain rejects as duplicate definitions).
-                if (!connectedUrls.add(sseUrl)) {
+                if (!connectedUrls.add(mcpUrl)) {
                     logger.debug("Skipping duplicate hosted MCP endpoint for {}", mcpServerName);
                     continue;
                 }
-                McpTransport transport = new HttpMcpTransport.Builder().sseUrl(sseUrl).logRequests(false)
+                McpTransport transport = StreamableHttpMcpTransport.builder().url(mcpUrl).logRequests(false)
                         .logResponses(false).timeout(MCP_TOOL_TIMEOUT).build();
 
                 McpClient mcpClient = new DefaultMcpClient.Builder().transport(transport).build();

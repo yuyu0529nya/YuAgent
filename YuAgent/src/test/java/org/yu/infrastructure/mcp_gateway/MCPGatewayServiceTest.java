@@ -21,4 +21,32 @@ class MCPGatewayServiceTest {
             service.close();
         }
     }
+
+    @Test
+    void buildsStreamableHttpEndpointForUserContainer() {
+        MCPGatewayProperties properties = new MCPGatewayProperties();
+        properties.setApiKey("secret");
+
+        MCPGatewayService service = new MCPGatewayService(properties);
+        try {
+            assertEquals("http://10.0.0.5:8080/weather?api_key=secret",
+                    service.buildUserContainerUrl("weather", "10.0.0.5", 8080));
+        } finally {
+            service.close();
+        }
+    }
+
+    @Test
+    void buildsGlobalStreamableHttpEndpoint() {
+        MCPGatewayProperties properties = new MCPGatewayProperties();
+        properties.setBaseUrl("http://gateway:8080");
+        properties.setApiKey("secret");
+
+        MCPGatewayService service = new MCPGatewayService(properties);
+        try {
+            assertEquals("http://gateway:8080/stream?api_key=secret", service.buildGlobalSSEUrl("weather"));
+        } finally {
+            service.close();
+        }
+    }
 }
