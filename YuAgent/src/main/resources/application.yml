@@ -95,8 +95,8 @@ mail:
     username: ${MAIL_SMTP_USERNAME:}
     password: ${MAIL_SMTP_PASSWORD:}
   verification:
-    template: ${MAIL_VERIFICATION_TEMPLATE:鎮ㄧ殑楠岃瘉鐮佹槸:%s锛屾湁鏁堟湡10鍒嗛挓锛岃鍕挎硠闇茬粰浠栦汉銆倉
-    subject: ${MAIL_VERIFICATION_SUBJECT:YuAgent - 閭楠岃瘉鐮亇
+    template: ${MAIL_VERIFICATION_TEMPLATE:您的验证码是:%s，有效期10分钟，请勿泄露给他人。}
+    subject: ${MAIL_VERIFICATION_SUBJECT:YuAgent - 邮箱验证码}
 
 github:
   target:

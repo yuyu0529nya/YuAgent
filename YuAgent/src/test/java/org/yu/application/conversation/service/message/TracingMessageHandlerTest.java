@@ -52,9 +52,9 @@ class TracingMessageHandlerTest {
         CleanupTestHandler() {
             super(mock(LLMServiceFactory.class), mock(MessageDomainService.class),
                     mock(HighAvailabilityDomainService.class), mock(SessionDomainService.class),
-                    mock(UserSettingsDomainService.class), mock(LLMDomainService.class), mock(BuiltInToolRegistry.class),
-                    mock(BillingService.class), mock(AccountDomainService.class), mock(ChatSessionManager.class),
-                    mock(TraceCollector.class));
+                    mock(UserSettingsDomainService.class), mock(LLMDomainService.class),
+                    mock(BuiltInToolRegistry.class), mock(BillingService.class), mock(AccountDomainService.class),
+                    mock(ChatSessionManager.class), mock(TraceCollector.class));
         }
 
         @Override

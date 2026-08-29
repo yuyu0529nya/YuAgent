@@ -15,16 +15,12 @@ import dev.langchain4j.mcp.client.McpResourceTemplate;
 import dev.langchain4j.mcp.client.McpRoot;
 import dev.langchain4j.service.tool.ToolExecutionResult;
 
-/**
- * Preset tool parameters for an MCP server.
+/** Preset tool parameters for an MCP server.
  *
  * <p>
- * The project used to get this feature from a custom langchain4j fork
- * ({@code McpClient#presetParameters}). With the official langchain4j
- * artifacts, the same behavior is kept by wrapping the client: when a tool
- * with configured preset parameters is called, the model-supplied arguments
- * are replaced by the preset JSON, exactly like the fork did.
- */
+ * The project used to get this feature from a custom langchain4j fork ({@code McpClient#presetParameters}). With the
+ * official langchain4j artifacts, the same behavior is kept by wrapping the client: when a tool with configured preset
+ * parameters is called, the model-supplied arguments are replaced by the preset JSON, exactly like the fork did. */
 public class PresetParametersMcpClient implements McpClient {
 
     private final McpClient delegate;
@@ -61,8 +57,7 @@ public class PresetParametersMcpClient implements McpClient {
     }
 
     @Override
-    public ToolExecutionResult executeTool(ToolExecutionRequest executionRequest,
-            InvocationContext invocationContext) {
+    public ToolExecutionResult executeTool(ToolExecutionRequest executionRequest, InvocationContext invocationContext) {
         return delegate.executeTool(withPresetArguments(executionRequest), invocationContext);
     }
 
