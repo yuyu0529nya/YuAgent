@@ -1,6 +1,7 @@
 package org.yu.application.container.service;
 
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
@@ -33,7 +34,17 @@ import java.util.Objects;
 public class ContainerAppService {
 
     private static final Logger logger = LoggerFactory.getLogger(ContainerAppService.class);
-    private static final String USER_VOLUME_BASE_PATH = System.getProperty("user.dir") + "/data/users";
+    private static final String FALLBACK_USER_VOLUME_BASE_PATH = System.getProperty("user.dir") + "/data/users";
+
+    /** Host-visible path used for Docker bind mounts. */
+    @Value("${yuagent.container.user-volume-base-path:${YUAGENT_CONTAINER_USER_VOLUME_PATH:}}")
+    private String userVolumeBasePath;
+
+    private String getUserVolumeBasePath() {
+        return userVolumeBasePath == null || userVolumeBasePath.isBlank()
+                ? FALLBACK_USER_VOLUME_BASE_PATH
+                : userVolumeBasePath;
+    }
 
     private final ContainerDomainService containerDomainService;
     private final ContainerTemplateDomainService templateDomainService;
@@ -516,7 +527,7 @@ public class ContainerAppService {
 
     /** 创建用户数据卷目录 */
     private String createUserVolumeDirectory(String userId) {
-        String volumePath = USER_VOLUME_BASE_PATH + "/" + userId;
+        String volumePath = getUserVolumeBasePath() + "/" + userId;
         File directory = new File(volumePath);
 
         if (!directory.exists()) {
@@ -740,7 +751,7 @@ public class ContainerAppService {
 
     /** 创建审核容器数据卷目录 */
     private String createReviewVolumeDirectory() {
-        String volumePath = USER_VOLUME_BASE_PATH + "/review-system";
+        String volumePath = getUserVolumeBasePath() + "/review-system";
         File directory = new File(volumePath);
 
         if (!directory.exists()) {

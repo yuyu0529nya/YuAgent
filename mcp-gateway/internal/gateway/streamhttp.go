@@ -20,6 +20,12 @@ import (
 
 const (
 	headerMcpSessionID       = "Mcp-Session-Id"
+	// LangChain4j 1.19 probes 2026-07-28 and 2025-11-25.  The gateway's
+	// Streamable HTTP envelope is compatible with the latter, while the
+	// embedded mcp-go version still reports 2025-03-26 as its latest constant.
+	// Keep the wire declaration explicit so newer clients do not reject the
+	// gateway before tools can be listed.
+	streamHTTPProtocolVersion = "2025-11-25"
 	streamHTTPWaitTimeout    = 30 * time.Second
 	streamHTTPKeepAliveEvery = 30 * time.Second
 	methodNotificationsInit  = "notifications/initialized"
@@ -461,7 +467,7 @@ func writeJSONRPCError(c echo.Context, statusCode int, id json.RawMessage, code 
 // 确保网关只向 client 声明至少有一个下游真的支持的能力。
 func buildGatewayInitializeResult(session *sessions.Session) *mcp.InitializeResult {
 	return &mcp.InitializeResult{
-		ProtocolVersion: mcp.LATEST_PROTOCOL_VERSION,
+		ProtocolVersion: streamHTTPProtocolVersion,
 		ServerInfo: mcp.Implementation{
 			Name:    "mcp-gateway",
 			Version: "1.0.0",

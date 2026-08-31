@@ -71,7 +71,11 @@ func (m *SessionManager) CreateSession(xl xlog.Logger) (*Session, error) {
 
 		headers := downstreamAuthHeaders(mcpService)
 		var err error
-		if mcpService.IsSSE() && mcpService.Config.GatewayProtocol != "streamhttp" {
+		// Stdio services are exposed by the gateway's SSE bridge unless they
+		// explicitly opt into the Streamable HTTP bridge.  IsSSE only describes
+		// remote URL services, so using it here caused every default stdio
+		// service to be connected with the wrong transport.
+		if mcpService.Config.GatewayProtocol != "streamhttp" {
 			err = session.SubscribeSSE(xl, mcpService.Name, mcpService.GetSSEUrl(), headers)
 		} else {
 			err = session.SubscribeStreamHTTP(xl, mcpService.Name, mcpService.GetMessageUrl(), headers)

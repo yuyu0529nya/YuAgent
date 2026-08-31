@@ -34,6 +34,8 @@ import java.util.Map;
 public class MCPGatewayService {
 
     private static final Logger logger = LoggerFactory.getLogger(MCPGatewayService.class);
+    /** The gateway exposes the session-based Streamable HTTP 2025 protocol. */
+    private static final String MCP_GATEWAY_PROTOCOL_VERSION = "2025-11-25";
 
     private final MCPGatewayProperties properties;
     private final CloseableHttpClient httpClient;
@@ -158,7 +160,9 @@ public class MCPGatewayService {
         String url = properties.getBaseUrl() + "/" + toolName + "?api_key=" + properties.getApiKey();
         StreamableHttpMcpTransport transport = StreamableHttpMcpTransport.builder().url(url)
                 .timeout(getMcpClientTimeout()).logRequests(false).logResponses(false).build();
-        McpClient client = new DefaultMcpClient.Builder().transport(transport).build();
+        McpClient client = new DefaultMcpClient.Builder().transport(transport)
+                .protocolVersion(MCP_GATEWAY_PROTOCOL_VERSION).initializationTimeout(getMcpClientTimeout())
+                .autoHealthCheck(false).build();
         try {
             List<ToolSpecification> toolSpecifications = client.listTools();
             return ToolSpecificationConverter.convert(toolSpecifications);
@@ -187,7 +191,9 @@ public class MCPGatewayService {
 
         StreamableHttpMcpTransport transport = StreamableHttpMcpTransport.builder().url(url)
                 .timeout(getMcpClientTimeout()).logRequests(false).logResponses(false).build();
-        McpClient client = new DefaultMcpClient.Builder().transport(transport).build();
+        McpClient client = new DefaultMcpClient.Builder().transport(transport)
+                .protocolVersion(MCP_GATEWAY_PROTOCOL_VERSION).initializationTimeout(getMcpClientTimeout())
+                .autoHealthCheck(false).build();
         try {
             List<ToolSpecification> toolSpecifications = client.listTools();
             List<ToolDefinition> result = ToolSpecificationConverter.convert(toolSpecifications);

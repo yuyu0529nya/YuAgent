@@ -310,8 +310,7 @@ public class ContainerTemplateDomainService {
         template.setName("MCP网关默认模板");
         template.setDescription("内置的MCP网关容器模板，用于用户容器创建");
         template.setType(ContainerType.USER);
-        template.setImage(DEFAULT_MCP_GATEWAY_IMAGE);
-        template.setImageTag(DEFAULT_MCP_GATEWAY_TAG);
+        applyGatewayDefaults(template);
         template.setInternalPort(DEFAULT_MCP_GATEWAY_PORT);
         template.setCpuLimit(1.0);
         template.setMemoryLimit(512);
@@ -331,8 +330,7 @@ public class ContainerTemplateDomainService {
         template.setName("审核容器默认模板");
         template.setDescription("内置的审核容器模板，用于工具审核环境");
         template.setType(ContainerType.REVIEW);
-        template.setImage(DEFAULT_MCP_GATEWAY_IMAGE);
-        template.setImageTag(DEFAULT_MCP_GATEWAY_TAG);
+        applyGatewayDefaults(template);
         template.setInternalPort(DEFAULT_MCP_GATEWAY_PORT);
         template.setCpuLimit(1.0);
         template.setMemoryLimit(512);
@@ -344,6 +342,22 @@ public class ContainerTemplateDomainService {
         template.setCreatedBy("SYSTEM");
         template.setSortOrder(0);
         return template;
+    }
+
+    /** Apply the runtime image and non-interactive startup command consistently. */
+    private void applyGatewayDefaults(ContainerTemplateEntity template) {
+        String configuredImage = containerConfig.getDefaultMcpGatewayImage();
+        if (configuredImage != null && configuredImage.contains(":")) {
+            int separator = configuredImage.lastIndexOf(':');
+            template.setImage(configuredImage.substring(0, separator));
+            template.setImageTag(configuredImage.substring(separator + 1));
+        } else {
+            template.setImage(configuredImage != null && !configuredImage.isBlank()
+                    ? configuredImage
+                    : DEFAULT_MCP_GATEWAY_IMAGE);
+            template.setImageTag(DEFAULT_MCP_GATEWAY_TAG);
+        }
+        template.setCommand(new String[]{"-yes"});
     }
 
     /** 模板统计信息内部类 */

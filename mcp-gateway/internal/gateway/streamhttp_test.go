@@ -68,7 +68,7 @@ func TestGlobalStreamHTTP_Initialize_CreatesSessionAndReturnsResult(t *testing.T
 
 	result, ok := resp["result"].(map[string]any)
 	assert.True(t, ok, "result should be object")
-	assert.Equal(t, "2025-03-26", result["protocolVersion"])
+	assert.Equal(t, streamHTTPProtocolVersion, result["protocolVersion"])
 
 	serverInfo, ok := result["serverInfo"].(map[string]any)
 	assert.True(t, ok)

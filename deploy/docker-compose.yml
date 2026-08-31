@@ -145,6 +145,8 @@ services:
       OSS_DOMAIN: ${OSS_DOMAIN}
       OSS_URL_PREFIX: ${OSS_URL_PREFIX}
       YUAGENT_CONTAINER_DOCKER_HOST: ${YUAGENT_CONTAINER_DOCKER_HOST:-unix:///var/run/docker.sock}
+      YUAGENT_CONTAINER_DEFAULT_MCP_IMAGE: ${YUAGENT_CONTAINER_DEFAULT_MCP_IMAGE:-yuagent-mcp-gateway:local}
+      YUAGENT_CONTAINER_USER_VOLUME_PATH: ${YUAGENT_CONTAINER_USER_VOLUME_PATH:-/Users/yuyu/Desktop/YuAgent/deploy/data/users}
     volumes:
       - storage-data:/app/storage
       - maven-cache:/root/.m2

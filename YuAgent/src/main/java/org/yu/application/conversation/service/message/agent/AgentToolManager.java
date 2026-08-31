@@ -38,6 +38,8 @@ public class AgentToolManager {
     // their tool list is available. Keep this aligned with the gateway's
     // downstream initialization window.
     private static final Duration MCP_TOOL_TIMEOUT = Duration.ofSeconds(45);
+    /** The gateway exposes the session-based Streamable HTTP 2025 protocol. */
+    private static final String MCP_GATEWAY_PROTOCOL_VERSION = "2025-11-25";
     private static final String REPEATED_TOOL_RESULT_HINT = "\n\n[系统提示] 这个工具的相同参数结果在本轮对话中已经返回过了。请直接基于上面的结果完成回答，不要继续重复调用同一个工具。";
     private static final int MAX_SUCCESSFUL_WEATHER_TOOL_CALLS_PER_CHAT = 2;
     private static final String WEATHER_TOOL_LIMIT_HINT = "\n\n[系统提示] 本轮对话已经获取到足够的天气数据。对于同一城市或同一趟旅行行程，不要继续按景点逐个查询天气，请直接基于已有天气结果给出完整回答。";
@@ -96,7 +98,11 @@ public class AgentToolManager {
                 McpTransport transport = StreamableHttpMcpTransport.builder().url(mcpUrl).logRequests(false)
                         .logResponses(false).timeout(MCP_TOOL_TIMEOUT).build();
 
-                McpClient mcpClient = new DefaultMcpClient.Builder().transport(transport).build();
+                McpClient mcpClient = new DefaultMcpClient.Builder().transport(transport)
+                        .protocolVersion(MCP_GATEWAY_PROTOCOL_VERSION).initializationTimeout(MCP_TOOL_TIMEOUT)
+                        // Tool providers own the client lifecycle. A second periodic
+                        // health-check session only adds traffic and can outlive a chat.
+                        .autoHealthCheck(false).build();
                 if (toolPresetParams != null && toolPresetParams.containsKey(mcpServerName)) {
                     Map<String, Map<String, String>> presetMap = toolPresetParams.get(mcpServerName);
                     if (presetMap != null && !presetMap.isEmpty()) {

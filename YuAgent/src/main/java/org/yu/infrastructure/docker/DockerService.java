@@ -124,6 +124,15 @@ public class DockerService {
                     .withEnv(envVars).withBinds(bind).withRestartPolicy(RestartPolicy.unlessStoppedRestart())
                     .withNetworkMode(template.getNetworkMode());
 
+            // Container templates may provide entrypoint arguments (for
+            // example the gateway's non-interactive "-yes" flag). Preserve
+            // them when creating the container; silently dropping the command
+            // makes headless review/user containers wait for stdin and restart
+            // forever.
+            if (template.getCommand() != null && template.getCommand().length > 0) {
+                createCmd.withCmd(template.getCommand());
+            }
+
             HostConfig hostConfig = HostConfig.newHostConfig().withBinds(bind)
                     .withMemory(template.getMemoryLimit() * 1024L * 1024L) // MB to bytes
                     .withCpuQuota(Math.round(template.getCpuLimit() * 100000L)) // CPU限制
