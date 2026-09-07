@@ -13,10 +13,13 @@ COPY YuAgent/eclipse-formatter.xml ./eclipse-formatter.xml
 
 RUN mvn clean package -DskipTests -B
 
-FROM eclipse-temurin:17-jre-alpine
+FROM eclipse-temurin:17-jre-jammy
 
-RUN apk add --no-cache curl
-RUN addgroup -g 1000 yuagent && adduser -D -s /bin/sh -u 1000 -G yuagent yuagent
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/*
+RUN groupadd --gid 1000 yuagent \
+    && useradd --uid 1000 --gid 1000 --create-home --shell /bin/sh yuagent
 
 WORKDIR /app
 
