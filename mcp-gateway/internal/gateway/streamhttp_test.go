@@ -157,6 +157,37 @@ func TestGlobalStreamHTTP_Delete_MissingHeader(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
+func TestGlobalStreamHTTP_EventStreamFlushesHeadersImmediately(t *testing.T) {
+	srv, mockMgr := createTestServerManager()
+	sess := newTestSession("sess-stream")
+	mockMgr.On("GetProxySession", mock.Anything, mock.MatchedBy(func(n workspaces.NameArg) bool {
+		return n.Session == "sess-stream"
+	})).Return(sess, true).Once()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	req := httptest.NewRequest(http.MethodGet, "/stream", nil).WithContext(ctx)
+	req.Header.Set("Mcp-Session-Id", "sess-stream")
+	rec := httptest.NewRecorder()
+	echoCtx := echo.New().NewContext(req, rec)
+	done := make(chan error, 1)
+	go func() { done <- srv.handleGlobalStreamHTTP(echoCtx) }()
+
+	deadline := time.Now().Add(time.Second)
+	for !rec.Flushed && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	cancel()
+
+	select {
+	case err := <-done:
+		assert.NoError(t, err)
+	case <-time.After(time.Second):
+		t.Fatal("event stream did not exit after client cancellation")
+	}
+	assert.True(t, rec.Flushed, "event stream should flush response headers before the first event")
+	mockMgr.AssertExpectations(t)
+}
+
 // --- 非 GET/POST/DELETE 返回 405 ---
 func TestGlobalStreamHTTP_MethodNotAllowed(t *testing.T) {
 	srv, _ := createTestServerManager()

@@ -151,6 +151,10 @@ services:
       - storage-data:/app/storage
       - maven-cache:/root/.m2
       - ./logs:/app/logs
+      # The backend creates bind-mount sources for user MCP containers. Mount
+      # the same absolute path inside this container so the Docker daemon sees
+      # the directory that Java prepared, even when Docker runs on the host.
+      - ${YUAGENT_CONTAINER_USER_VOLUME_PATH:-/tmp/yuagent-data/users}:${YUAGENT_CONTAINER_USER_VOLUME_PATH:-/tmp/yuagent-data/users}
       - /var/run/docker.sock:/var/run/docker.sock
     ports:
       - "${BACKEND_PORT:-8088}:8088"

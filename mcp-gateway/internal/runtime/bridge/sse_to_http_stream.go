@@ -34,7 +34,7 @@ func NewSSEToHTTPStreamBridge(ctx context.Context, sseBaseURL string, mcpName st
 
 	sseClient := client.NewClient(sseTransport)
 
-	logger.Info("Starting SSE client", "mcp_name", mcpName, "base_url", sseBaseURL)
+	logger.Info("Starting SSE client", "mcp_name", mcpName, "url_configured", sseBaseURL != "")
 	if err := sseClient.Start(ctx); err != nil {
 		logger.Error("Failed to start SSE client", "error", err)
 		return nil, fmt.Errorf("failed to start SSE client: %w", err)

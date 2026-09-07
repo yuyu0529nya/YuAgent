@@ -17,7 +17,7 @@ func TestServerLogSummaryDoesNotExposeSensitiveConfigValues(t *testing.T) {
 		GatewayProtocol: "streamhttp",
 	}
 
-	summary := serverLogSummary(server)
+	summary := server.SafeSummary()
 	for _, secret := range []string{"url-secret", "argument-secret", "environment-secret"} {
 		if strings.Contains(summary, secret) {
 			t.Fatalf("summary exposed secret %q: %s", secret, summary)

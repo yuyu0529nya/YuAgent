@@ -13,7 +13,9 @@ import (
 	"time"
 
 	"github.com/labstack/echo/v4"
+	"github.com/lucky-aeon/agentx/plugin-helper/internal/platform/httpx"
 	"github.com/lucky-aeon/agentx/plugin-helper/internal/platform/identity"
+	"github.com/lucky-aeon/agentx/plugin-helper/internal/workspaces"
 )
 
 const protectedResourceMetadataPath = "/.well-known/oauth-protected-resource"
@@ -54,6 +56,24 @@ func (h *Handler) mcpAuthMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
 				"error":             "unauthorized",
 				"error_description": "invalid token",
 			})
+		}
+		// Authentication identifies the caller; in SaaS mode also authorize the
+		// workspace selected by the request. Never let a valid token choose a
+		// different tenant through X-Workspace-Id or workspaceId alone.
+		if h.auth != nil {
+			workspace := httpx.GetWorkspace(c, workspaces.DefaultWorkspace)
+			if _, err := h.auth.WorkspaceRole(c.Request().Context(), workspace, principal); err != nil {
+				if err == identity.ErrUnauthorized {
+					return c.JSON(http.StatusUnauthorized, map[string]any{
+						"error":             "unauthorized",
+						"error_description": "workspace access denied",
+					})
+				}
+				return c.JSON(http.StatusForbidden, map[string]any{
+					"error":             "forbidden",
+					"error_description": "workspace access denied",
+				})
+			}
 		}
 		c.Set("auth.principal", principal)
 		return next(c)

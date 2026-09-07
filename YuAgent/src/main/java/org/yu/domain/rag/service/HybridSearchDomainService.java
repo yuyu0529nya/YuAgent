@@ -71,31 +71,36 @@ public class HybridSearchDomainService {
         long startTime = System.currentTimeMillis();
 
         try {
-            log.info("开始混合搜索 查询: '{}', 数据集: {}, 最大结果数: {}, HyDE可用: {}", config.getQuestion(),
-                    config.getDataSetIds().size(), finalMaxResults, config.hasValidChatModelConfig());
+            String originalQuestion = config.getQuestion().trim();
+            log.info("开始混合搜索 查询: '{}', 数据集: {}, 最大结果数: {}, HyDE可用: {}", originalQuestion, config.getDataSetIds().size(),
+                    finalMaxResults, config.hasValidChatModelConfig());
 
-            // HyDE处理：生成假设文档用于向量检索
-            String hypotheticalDocument = hydeDomainService.generateHypotheticalDocument(config.getQuestion(),
-                    config.getChatModelConfig());
-            config.setQuestion(hypotheticalDocument);
-
-            CompletableFuture<List<VectorStoreResult>> vectorSearchFuture = CompletableFuture
-                    .supplyAsync(() -> embeddingDomainService.vectorSearch(config.getDataSetIds(), config.getQuestion(),
-                            finalMaxResults * 2, finalMinScore, false, config.getCandidateMultiplier(),
-                            config.getEmbeddingConfig()));
+            // Keep the original query immutable. HyDE is only an optional
+            // semantic expansion for vector search; keyword search and rerank
+            // must continue to use the exact user wording.
+            long deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(SEARCH_TIMEOUT_SECONDS);
+            CompletableFuture<String> hydeFuture = CompletableFuture
+                    .supplyAsync(() -> hydeDomainService.generateHypotheticalDocument(originalQuestion,
+                            config.getChatModelConfig()))
+                    .exceptionally(error -> originalQuestion)
+                    .completeOnTimeout(originalQuestion, SEARCH_TIMEOUT_SECONDS, TimeUnit.SECONDS);
 
             CompletableFuture<List<VectorStoreResult>> keywordSearchFuture = CompletableFuture
                     .supplyAsync(() -> keywordSearchDomainService.keywordSearch(config.getDataSetIds(),
-                            config.getQuestion(), finalMaxResults * 2));
+                            originalQuestion, finalMaxResults * 2));
 
-            // 两条检索路径共享同一个请求预算，避免顺序等待让总耗时翻倍。
-            long deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(SEARCH_TIMEOUT_SECONDS);
+            CompletableFuture<List<VectorStoreResult>> vectorSearchFuture = hydeFuture.thenApplyAsync(hypothetical -> {
+                String vectorQuestion = buildVectorQuery(originalQuestion, hypothetical);
+                return embeddingDomainService.vectorSearch(config.getDataSetIds(), vectorQuestion, finalMaxResults * 2,
+                        finalMinScore, false, config.getCandidateMultiplier(), config.getEmbeddingConfig());
+            });
+
             List<VectorStoreResult> vectorResults = awaitSearchResult(vectorSearchFuture, deadlineNanos, "向量搜索");
             List<VectorStoreResult> keywordResults = awaitSearchResult(keywordSearchFuture, deadlineNanos, "关键词搜索");
 
             // 如果两个检索都失败，返回空结果
             if (vectorResults.isEmpty() && keywordResults.isEmpty()) {
-                log.warn("向量和关键词搜索对于查询'{}'都返回空结果", config.getQuestion());
+                log.warn("向量和关键词搜索对于查询'{}'都返回空结果", originalQuestion);
                 return Collections.emptyList();
             }
 
@@ -105,7 +110,7 @@ public class HybridSearchDomainService {
             // RRF融合后进行重排序（如果启用）
             List<VectorStoreResult> rerankedResults = fusedResults;
             if (Boolean.TRUE.equals(config.getEnableRerank()) && !fusedResults.isEmpty()) {
-                rerankedResults = applyRerankToFusedResults(fusedResults, config.getQuestion());
+                rerankedResults = applyRerankToFusedResults(fusedResults, originalQuestion);
             }
 
             return convertToDocumentUnits(rerankedResults, config.getEnableQueryExpansion());
@@ -115,6 +120,15 @@ public class HybridSearchDomainService {
             log.error("混合搜索过程中出现错误，查询: '{}', 耗时: {}ms", config.getQuestion(), totalTime, e);
             return Collections.emptyList();
         }
+    }
+
+    static String buildVectorQuery(String originalQuestion, String hypotheticalDocument) {
+        String original = originalQuestion == null ? "" : originalQuestion.trim();
+        String hypothetical = hypotheticalDocument == null ? "" : hypotheticalDocument.trim();
+        if (hypothetical.isEmpty() || hypothetical.equals(original)) {
+            return original;
+        }
+        return original + "\n" + hypothetical;
     }
 
     static List<VectorStoreResult> awaitSearchResult(CompletableFuture<List<VectorStoreResult>> future,

@@ -55,12 +55,11 @@ func (h *Handler) DeployServer(name string, config config.MCPServerConfig) (work
 // handleDeploy 处理部署请求
 func (h *Handler) handleDeploy(c echo.Context) error {
 	xl := xlog.NewLogger("DEPLOY-REQ")
-	xl.Infof("Deploy request: %v", c.Request().Body)
 	var req apitypes.DeployRequest
 	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 	}
-	xl.Infof("Deploy request: %v", req)
+	xl.Infof("Deploy request received: serviceCount=%d", len(req.MCPServers))
 	workspace := httpx.GetWorkspace(c, workspaces.DefaultWorkspace)
 
 	// 初始化响应结构
@@ -74,7 +73,7 @@ func (h *Handler) handleDeploy(c echo.Context) error {
 
 	// 部署每个服务
 	for name, config := range req.MCPServers {
-		xl.Infof("Deploying %s: %v", name, config)
+		xl.Infof("Deploying %s: %s", name, config.SafeSummary())
 		if workspace != "" {
 			config.Workspace = workspace
 		} else if config.Workspace == "" {

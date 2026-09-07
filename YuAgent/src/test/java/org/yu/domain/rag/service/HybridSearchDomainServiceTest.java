@@ -43,6 +43,13 @@ class HybridSearchDomainServiceTest {
     }
 
     @Test
+    void keepsOriginalQuestionWhenBuildingVectorQuery() {
+        assertEquals("原始问题\n假设文档", HybridSearchDomainService.buildVectorQuery("原始问题", "假设文档"));
+        assertEquals("原始问题", HybridSearchDomainService.buildVectorQuery("原始问题", "原始问题"));
+        assertEquals("原始问题", HybridSearchDomainService.buildVectorQuery("原始问题", null));
+    }
+
+    @Test
     void expandsAdjacentChunksWithOneBatchQuery() {
         DocumentUnitRepository repository = Mockito.mock(DocumentUnitRepository.class);
         HybridSearchDomainService service = new HybridSearchDomainService(Mockito.mock(EmbeddingDomainService.class),

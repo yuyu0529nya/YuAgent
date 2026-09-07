@@ -74,7 +74,7 @@ func main() {
 	e.HideBanner = true
 
 	// 添加中间件
-	e.Use(middleware.Logger())
+	e.Use(server.AccessLogMiddleware())
 	e.Use(middleware.Recover())
 	e.Use(middleware.CORSWithConfig(server.CORSConfig()))
 

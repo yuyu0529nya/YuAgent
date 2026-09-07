@@ -31,6 +31,7 @@ const (
 	mcpClientReadyTimeout      = 5 * time.Second
 	mcpClientInitializeTimeout = 30 * time.Second
 	mcpToolsListTimeout        = 30 * time.Second
+	mcpMessageSendTimeout      = 10 * time.Second
 )
 
 const remoteOAuthAccessTokenEnv = "MCP_REMOTE_AUTH_ACCESS_TOKEN"
@@ -161,6 +162,18 @@ func (s *Session) GetId() string {
 }
 
 func (s *Session) SendMessage(xl xlog.Logger, content json.RawMessage) (err error) {
+	ctx, cancel := context.WithTimeout(context.Background(), mcpMessageSendTimeout)
+	defer cancel()
+	return s.SendMessageContext(ctx, xl, content)
+}
+
+// SendMessageContext forwards a JSON-RPC message while honoring the caller's
+// cancellation and deadline. The legacy SendMessage method keeps its bounded
+// timeout for callers that do not have an inbound request context.
+func (s *Session) SendMessageContext(ctx context.Context, xl xlog.Logger, content json.RawMessage) (err error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	// 发送消息到 MCP 服务
 	var request mcp.JSONRPCRequest
 	if err = json.Unmarshal([]byte(content), &request); err != nil {
@@ -230,7 +243,7 @@ func (s *Session) SendMessage(xl xlog.Logger, content json.RawMessage) (err erro
 		}
 
 		for _, mcpName := range mcpNames {
-			err = s.sendToMcp(xl, mcpName, request, content)
+			err = s.sendToMcpContext(ctx, xl, mcpName, request, content)
 			if err != nil {
 				xl.Errorf("failed to send to allmcp: %v", err)
 				continue
@@ -238,7 +251,7 @@ func (s *Session) SendMessage(xl xlog.Logger, content json.RawMessage) (err erro
 		}
 	} else {
 		// xl.Infof("send to single MCP server: %s, content: %s", singleMcp, content)
-		err = s.sendToMcp(xl, singleMcp, request, content)
+		err = s.sendToMcpContext(ctx, xl, singleMcp, request, content)
 		if err != nil {
 			xl.Errorf("failed to send to singlemcp: %v", err)
 			return err
@@ -249,6 +262,12 @@ func (s *Session) SendMessage(xl xlog.Logger, content json.RawMessage) (err erro
 }
 
 func (s *Session) sendToMcp(xl xlog.Logger, mcpName McpName, baseReq mcp.JSONRPCRequest, reqRaw json.RawMessage) error {
+	ctx, cancel := context.WithTimeout(context.Background(), mcpMessageSendTimeout)
+	defer cancel()
+	return s.sendToMcpContext(ctx, xl, mcpName, baseReq, reqRaw)
+}
+
+func (s *Session) sendToMcpContext(ctx context.Context, xl xlog.Logger, mcpName McpName, baseReq mcp.JSONRPCRequest, reqRaw json.RawMessage) error {
 	xl = xlog.WithChildName(mcpName, xl)
 	isNotification := baseReq.ID.IsNil() || strings.HasPrefix(baseReq.Method, "notifications/")
 
@@ -260,9 +279,6 @@ func (s *Session) sendToMcp(xl xlog.Logger, mcpName McpName, baseReq mcp.JSONRPC
 		xl.Error(err)
 		return err
 	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
-	defer cancel()
 
 	result, err := s.handleMCPMethod(ctx, xl, mCli, mcpName, baseReq.Method, reqRaw)
 	if err != nil {

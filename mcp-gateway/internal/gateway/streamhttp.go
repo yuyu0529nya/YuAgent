@@ -19,16 +19,16 @@ import (
 )
 
 const (
-	headerMcpSessionID       = "Mcp-Session-Id"
+	headerMcpSessionID = "Mcp-Session-Id"
 	// LangChain4j 1.19 probes 2026-07-28 and 2025-11-25.  The gateway's
 	// Streamable HTTP envelope is compatible with the latter, while the
 	// embedded mcp-go version still reports 2025-03-26 as its latest constant.
 	// Keep the wire declaration explicit so newer clients do not reject the
 	// gateway before tools can be listed.
 	streamHTTPProtocolVersion = "2025-11-25"
-	streamHTTPWaitTimeout    = 30 * time.Second
-	streamHTTPKeepAliveEvery = 30 * time.Second
-	methodNotificationsInit  = "notifications/initialized"
+	streamHTTPWaitTimeout     = 30 * time.Second
+	streamHTTPKeepAliveEvery  = 30 * time.Second
+	methodNotificationsInit   = "notifications/initialized"
 )
 
 // handleStreamHTTP 单服务 Streamable HTTP 反向代理。
@@ -204,14 +204,13 @@ func (h *Handler) streamHTTPForwardAndWait(c echo.Context, xl xlog.Logger, works
 	defer closer()
 	started := time.Now()
 	detail := rpcLogDetail(info, "streamhttp")
+	ctx, cancel := context.WithTimeout(c.Request().Context(), streamHTTPWaitTimeout)
+	defer cancel()
 
 	sendErrCh := make(chan error, 1)
 	go func() {
-		sendErrCh <- session.SendMessage(xl, body)
+		sendErrCh <- session.SendMessageContext(ctx, xl, body)
 	}()
-
-	ctx, cancel := context.WithTimeout(c.Request().Context(), streamHTTPWaitTimeout)
-	defer cancel()
 
 	targetID := normalizeRawID(peek.ID)
 	var sendErr error
@@ -293,13 +292,15 @@ func (h *Handler) streamHTTPEventStream(c echo.Context, xl xlog.Logger, workspac
 	c.Response().Header().Set("Content-Type", "text/event-stream")
 	c.Response().Header().Set("Cache-Control", "no-cache")
 	c.Response().Header().Set("Connection", "keep-alive")
-	c.Response().WriteHeader(http.StatusOK)
-
 	w := c.Response().Writer
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		return c.String(http.StatusInternalServerError, "streaming not supported")
 	}
+	c.Response().WriteHeader(http.StatusOK)
+	// Send headers immediately. Without an initial flush, clients can wait for
+	// the first event or keepalive before learning that the stream is ready.
+	flusher.Flush()
 
 	eventChan, closer := session.GetEventChanWithCloser()
 	defer closer()

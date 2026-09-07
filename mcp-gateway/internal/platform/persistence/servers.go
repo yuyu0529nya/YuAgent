@@ -3,7 +3,6 @@ package persistence
 
 import (
 	"encoding/json"
-	"fmt"
 	"os"
 
 	"github.com/lucky-aeon/agentx/plugin-helper/internal/platform/config"
@@ -35,7 +34,7 @@ func LoadAndDeployServers(cfg config.Config, deploy DeployFunc) error {
 	xl.Infof("Async loading %d servers", len(servers))
 	go func() {
 		for name, srv := range servers {
-			xl.Infof("Loading server %s: %s", name, serverLogSummary(srv))
+			xl.Infof("Loading server %s: %s", name, srv.SafeSummary())
 			if err := deploy(name, srv); err != nil {
 				xl.Errorf("Error deploying server %s: %v", name, err)
 			}
@@ -43,11 +42,4 @@ func LoadAndDeployServers(cfg config.Config, deploy DeployFunc) error {
 		xl.Infof("Loaded %d servers", len(servers))
 	}()
 	return nil
-}
-
-// serverLogSummary provides enough deployment context for troubleshooting without exposing
-// environment variable values, URL query parameters, or command arguments that can contain credentials.
-func serverLogSummary(server config.MCPServerConfig) string {
-	return fmt.Sprintf("workspace=%q urlConfigured=%t commandConfigured=%t argCount=%d envCount=%d protocol=%q",
-		server.Workspace, server.URL != "", server.Command != "", len(server.Args), len(server.Env), server.GatewayProtocol)
 }

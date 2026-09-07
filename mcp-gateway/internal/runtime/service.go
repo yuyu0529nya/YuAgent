@@ -234,7 +234,7 @@ func (s *McpService) Start(logger xlog.Logger) error {
 	}
 
 	// 使用stdio-sse桥接代替supergateway
-	logger.Infof("Creating stdio-sse bridge for command: %s %s", s.Config.Command, strings.Join(s.Config.Args, " "))
+	logger.Infof("Creating stdio bridge: command=%s argCount=%d", s.Config.Command, len(s.Config.Args))
 
 	// 创建stdio-sse桥接
 	ctx, cancel := context.WithTimeout(context.Background(), bridgeInitTimeout)
@@ -459,6 +459,13 @@ func (s *McpService) GetStatus() CmdStatus {
 	s.mutex.RLock()
 	defer s.mutex.RUnlock()
 	return s.Status
+}
+
+// GetConfig returns a consistent snapshot of the deployment configuration.
+func (s *McpService) GetConfig() config.MCPServerConfig {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+	return s.Config
 }
 
 func (s *McpService) SendMessage(message string) error {

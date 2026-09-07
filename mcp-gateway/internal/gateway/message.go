@@ -14,7 +14,7 @@ import (
 // 全局MESSAGE，这里将POST请求转发到所有MCP服务
 func (h *Handler) handleGlobalMessage(c echo.Context) error {
 	xl := xlog.NewLogger("GLOBAL-MSG")
-	xl.Infof("Global message: %v", c.Request().Body)
+	xl.Infof("Global message request received")
 	sessionId, err := httpx.GetSession(c)
 	if err != nil {
 		workspace := httpx.GetWorkspace(c, workspaces.DefaultWorkspace)

@@ -83,18 +83,18 @@ public class AgentToolManager {
             }
         }
 
-        Set<String> connectedUrls = new HashSet<>();
-        for (Map.Entry<String, String> toolUrl : resolvedToolUrls.entrySet()) {
-            String mcpServerName = toolUrl.getKey();
+        Map<String, List<String>> serversByUrl = new LinkedHashMap<>();
+        resolvedToolUrls.forEach(
+                (serverName, url) -> serversByUrl.computeIfAbsent(url, ignored -> new ArrayList<>()).add(serverName));
+
+        for (Map.Entry<String, List<String>> endpoint : serversByUrl.entrySet()) {
+            String mcpUrl = endpoint.getKey();
+            List<String> serverNames = endpoint.getValue();
             try {
-                String mcpUrl = toolUrl.getValue();
+                Map<String, String> presetArgumentsByTool = mergePresetArguments(serverNames, toolPresetParams);
                 // Hosted MCP tools share one gateway SSE endpoint. Connecting
                 // once avoids registering the gateway's aggregated tools more
                 // than once (which LangChain rejects as duplicate definitions).
-                if (!connectedUrls.add(mcpUrl)) {
-                    logger.debug("Skipping duplicate hosted MCP endpoint for {}", mcpServerName);
-                    continue;
-                }
                 McpTransport transport = StreamableHttpMcpTransport.builder().url(mcpUrl).logRequests(false)
                         .logResponses(false).timeout(MCP_TOOL_TIMEOUT).build();
 
@@ -103,21 +103,18 @@ public class AgentToolManager {
                         // Tool providers own the client lifecycle. A second periodic
                         // health-check session only adds traffic and can outlive a chat.
                         .autoHealthCheck(false).build();
-                if (toolPresetParams != null && toolPresetParams.containsKey(mcpServerName)) {
-                    Map<String, Map<String, String>> presetMap = toolPresetParams.get(mcpServerName);
-                    if (presetMap != null && !presetMap.isEmpty()) {
-                        Map<String, String> presetArgumentsByTool = new HashMap<>();
-                        presetMap.forEach((toolName, params) -> presetArgumentsByTool.put(toolName,
-                                JsonUtils.toJsonString(params)));
-                        mcpClient = new PresetParametersMcpClient(mcpClient, presetArgumentsByTool);
-                    }
+
+                if (!presetArgumentsByTool.isEmpty()) {
+                    mcpClient = new PresetParametersMcpClient(mcpClient, presetArgumentsByTool);
                 }
                 mcpClients.add(mcpClient);
             } catch (Exception e) {
                 // One unavailable MCP must not make ordinary chat fail. Other
                 // configured tools can still serve the request, and the next
                 // chat can retry the unavailable service.
-                logger.warn("Skipping unavailable MCP tool {}: {}", mcpServerName, e.getMessage());
+                for (String serverName : serverNames) {
+                    logger.warn("Skipping unavailable MCP tool {}: {}", serverName, e.getMessage());
+                }
             }
         }
 
@@ -127,6 +124,46 @@ public class AgentToolManager {
 
         ToolProvider delegate = McpToolProvider.builder().mcpClients(mcpClients).build();
         return new CloseableToolProvider(wrapWithRepeatedCallGuard(delegate), mcpClients);
+    }
+
+    static Map<String, String> mergePresetArguments(List<String> serverNames,
+            Map<String, Map<String, Map<String, String>>> toolPresetParams) {
+        Map<String, String> merged = new LinkedHashMap<>();
+        Map<String, String> rawAliases = new HashMap<>();
+        Set<String> ambiguousRawNames = new HashSet<>();
+        if (toolPresetParams == null || toolPresetParams.isEmpty()) {
+            return merged;
+        }
+
+        for (String serverName : serverNames) {
+            Map<String, Map<String, String>> presetMap = toolPresetParams.get(serverName);
+            if (presetMap == null) {
+                continue;
+            }
+            for (Map.Entry<String, Map<String, String>> preset : presetMap.entrySet()) {
+                String arguments = JsonUtils.toJsonString(preset.getValue());
+                String publishedToolName = serverName + "_" + preset.getKey();
+                String previous = merged.putIfAbsent(publishedToolName, arguments);
+                if (previous != null && !previous.equals(arguments)) {
+                    throw new IllegalArgumentException(
+                            "Conflicting preset parameters for MCP tool " + publishedToolName);
+                }
+
+                // Direct container endpoints expose raw names; the shared
+                // gateway prefixes names with the MCP server. Preserve a raw
+                // alias only while it remains unambiguous.
+                String rawToolName = preset.getKey();
+                if (!ambiguousRawNames.contains(rawToolName)) {
+                    String rawPrevious = rawAliases.putIfAbsent(rawToolName, arguments);
+                    if (rawPrevious != null && !rawPrevious.equals(arguments)) {
+                        ambiguousRawNames.add(rawToolName);
+                        rawAliases.remove(rawToolName);
+                    }
+                }
+            }
+        }
+        rawAliases.forEach(merged::putIfAbsent);
+        return merged;
     }
 
     public ToolProvider createToolProvider(ChatContext chatContext) {

@@ -2,6 +2,8 @@ package workspaces
 
 import (
 	"fmt"
+	"maps"
+	"slices"
 	"sync"
 
 	"github.com/lucky-aeon/agentx/plugin-helper/internal/platform/config"
@@ -63,6 +65,7 @@ func (w *WorkSpace) AddMcpService(xl xlog.Logger, serviceName string, mcpConfig 
 	existingService, serviceExists := w.servers[serviceName]
 	w.serversMutex.RUnlock()
 
+	restoreExisting := false
 	if serviceExists {
 		// service exists, check its status
 		status := existingService.GetStatus()
@@ -70,9 +73,16 @@ func (w *WorkSpace) AddMcpService(xl xlog.Logger, serviceName string, mcpConfig 
 
 		switch status {
 		case runtime.Running, runtime.Starting:
-			// service is running or starting, skip deployment
-			xl.Infof("Service %s is running/starting, skipping deployment", serviceName)
-			return AddMcpServiceResultExisted, nil
+			if sameDeploymentConfig(existingService.GetConfig(), mcpConfig) {
+				// Repeated deployment of the same configuration is idempotent.
+				xl.Infof("Service %s is running/starting with the requested configuration", serviceName)
+				return AddMcpServiceResultExisted, nil
+			}
+			xl.Infof("Service %s configuration changed, replacing the running service", serviceName)
+			restoreExisting = true
+			if err := w.removeMcpServiceInternal(xl, serviceName); err != nil {
+				return "", fmt.Errorf("failed to replace existing service: %w", err)
+			}
 
 		case runtime.Stopped, runtime.Failed:
 			// service is stopped or failed, remove and redeploy
@@ -85,10 +95,10 @@ func (w *WorkSpace) AddMcpService(xl xlog.Logger, serviceName string, mcpConfig 
 		}
 	}
 
-	// add to workspace config
-	// 注意：存入的是用户提交的原始配置，不含下面回填的运行时默认值，
-	// 避免把 workspace 名 / 日志路径等"上下文相关"的字段固化到 mcp_servers.json。
-	w.cfg.AddMcpServerCfg(serviceName, mcpConfig)
+	// Keep the caller's configuration as the persisted source of truth. Runtime
+	// defaults below belong only to the service instance and should not leak into
+	// mcp_servers.json.
+	persistedConfig := mcpConfig
 
 	// 回填 workspace 级默认值到本地副本：
 	//   - Workspace: 用于日志文件名拼接 "{workspace}.{mcpname}.log"
@@ -104,8 +114,23 @@ func (w *WorkSpace) AddMcpService(xl xlog.Logger, serviceName string, mcpConfig 
 	instance := runtime.NewMcpService(serviceName, mcpConfig, w.portManager)
 	if err := instance.Start(xl); err != nil {
 		xl.Errorf("Failed to start service %s: %v", serviceName, err)
+		if restoreExisting {
+			// Keep the last known good service available when a configuration
+			// update cannot be started. The failed update is never reported as
+			// active and the persisted config remains unchanged.
+			if restoreErr := existingService.Start(xl); restoreErr != nil {
+				xl.Errorf("Failed to restore service %s after update failure: %v", serviceName, restoreErr)
+			}
+			w.serversMutex.Lock()
+			w.servers[serviceName] = existingService
+			w.serversMutex.Unlock()
+		}
 		return "", err
 	}
+
+	// Persist only after the new service has started successfully. This keeps
+	// the workspace config aligned with the service that is actually running.
+	w.cfg.AddMcpServerCfg(serviceName, persistedConfig)
 
 	// add to workspace
 	w.serversMutex.Lock()
@@ -116,6 +141,15 @@ func (w *WorkSpace) AddMcpService(xl xlog.Logger, serviceName string, mcpConfig 
 		return AddMcpServiceResultReplaced, nil
 	}
 	return AddMcpServiceResultDeployed, nil
+}
+
+// sameDeploymentConfig compares only fields that affect the downstream MCP
+// process or transport. Workspace and log fields are runtime context and should
+// not cause a needless restart.
+func sameDeploymentConfig(a, b config.MCPServerConfig) bool {
+	return a.URL == b.URL && a.Command == b.Command && slices.Equal(a.Args, b.Args) && maps.Equal(a.Env, b.Env) &&
+		a.GatewayProtocol == b.GatewayProtocol &&
+		a.GetMcpServiceRetryCount() == b.GetMcpServiceRetryCount()
 }
 
 // GetMcpService returns the MCP service with the given name.
